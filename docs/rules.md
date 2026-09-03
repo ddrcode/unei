@@ -30,6 +30,7 @@ Some minimalistic configurability should exist (i.e. key mapping), but it should
 - tabs (tbd)
 - multiple ways of search/replace; the editor allows only standard regexp-based search and replace
 - relative line numbers
+- mouse support
 
 ## Single way of doing things
 
@@ -47,3 +48,9 @@ Assume the editor runs under Kitty terminal. It can (and is expected to) use Kit
 ## Terminal integraion
 
 None. I believe editor runs in terminal not terminal in the editor. 
+
+## Keymapping
+
+I use non-standard navigation keys - instead of vim-style HJKL, I prefer IJKL (I-uo, j-down, j-left, l-right) and H as a key for switching to insert mode. 
+That should apply everywhere where navigatrion keys are involved, i.e. `Ctrl+w+i` to navigate to panel above current one. Or `Shift+H` to insert at the beginning of the line. 
+
