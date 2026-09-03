@@ -1,0 +1,718 @@
+use crate::config::OPTIONS;
+use crate::config::keymap::{self, Key};
+use crate::core::buffer::Cursor;
+use crate::core::commands::{InsertEntry, Op, Register, ScrollCmd, SimpleCmd, Token};
+use crate::core::motion::{self, Motion, MotionCtx, MotionKind};
+use crate::core::text::{
+    self, CharClass, char_class, first_non_blank, gr_index_at_col, line_content, line_graphemes,
+    line_indent, line_len, max_normal_col, text_lines,
+};
+
+use super::{Awaiting, Editor, Mode};
+
+pub fn handle_key(ed: &mut Editor, key: Key) {
+    match ed.pending.awaiting {
+        Awaiting::Find(kind) => {
+            ed.pending.awaiting = Awaiting::None;
+            match key {
+                Key::Char(ch) => process_motion(ed, Motion::Find { kind, ch }),
+                _ => clear_pending(ed),
+            }
+        }
+        Awaiting::Replace => {
+            ed.pending.awaiting = Awaiting::None;
+            match key {
+                Key::Char(ch) => {
+                    let count = ed.pending.take_count().unwrap_or(1);
+                    replace_chars(ed, ch, count);
+                    clear_pending(ed);
+                }
+                _ => clear_pending(ed),
+            }
+        }
+        Awaiting::G => {
+            ed.pending.awaiting = Awaiting::None;
+            match key {
+                Key::Char('g') => process_motion(ed, Motion::GotoFirst),
+                _ => clear_pending(ed),
+            }
+        }
+        Awaiting::Z => {
+            ed.pending.awaiting = Awaiting::None;
+            match key {
+                Key::Char('z') => recenter(ed, ScrollCmd::CenterCursor),
+                Key::Char('t') => recenter(ed, ScrollCmd::CursorTop),
+                Key::Char('b') => recenter(ed, ScrollCmd::CursorBottom),
+                _ => {}
+            }
+            clear_pending(ed);
+        }
+        Awaiting::ZUpper => {
+            ed.pending.awaiting = Awaiting::None;
+            match key {
+                Key::Char('Z') => ed.save_and_quit(true),
+                Key::Char('Q') => ed.quit(true),
+                _ => {}
+            }
+            clear_pending(ed);
+        }
+        Awaiting::None => dispatch(ed, key),
+    }
+}
+
+fn dispatch(ed: &mut Editor, key: Key) {
+    if key == Key::Esc {
+        clear_pending(ed);
+        ed.drop_recording();
+        return;
+    }
+    if key == Key::Ctrl('c') {
+        clear_pending(ed);
+        ed.drop_recording();
+        ed.err("Type :q! and press <Enter> to abandon all changes and exit");
+        return;
+    }
+
+    // count digits (0 is a motion when no count is being typed)
+    if let Key::Char(d @ '0'..='9') = key {
+        let slot = if ed.pending.op.is_some() {
+            &mut ed.pending.count2
+        } else {
+            &mut ed.pending.count1
+        };
+        if d != '0' || slot.is_some() {
+            let v = slot.unwrap_or(0);
+            *slot = Some(v.saturating_mul(10) + (d as usize - '0' as usize));
+            return;
+        }
+    }
+
+    if ed.pending.op.is_some()
+        && let Some(m) = keymap::operator_extra_motion(key)
+    {
+        process_motion(ed, m);
+        return;
+    }
+
+    let Some(token) = keymap::normal_token(key) else {
+        clear_pending(ed);
+        return;
+    };
+
+    match token {
+        Token::Motion(m) => process_motion(ed, m),
+        Token::Op(op) => match ed.pending.op {
+            Some(p) if p == op => {
+                let count = ed.pending.take_count().unwrap_or(1);
+                ed.pending.op = None;
+                linewise_op(ed, op, ed.cursor.line, ed.cursor.line + count - 1);
+                clear_pending(ed);
+            }
+            Some(_) => clear_pending(ed),
+            None => ed.pending.op = Some(op),
+        },
+        Token::Insert(entry) => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.take_count();
+                enter_insert(ed, entry);
+            }
+        }
+        Token::Simple(cmd) => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                simple(ed, cmd);
+                clear_pending(ed);
+            }
+        }
+        Token::Scroll(s) => {
+            scroll(ed, s);
+            clear_pending(ed);
+        }
+        Token::FindStart(kind) => ed.pending.awaiting = Awaiting::Find(kind),
+        Token::ReplaceStart => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.awaiting = Awaiting::Replace;
+            }
+        }
+        Token::PrefixG => ed.pending.awaiting = Awaiting::G,
+        Token::PrefixZ => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.awaiting = Awaiting::Z;
+            }
+        }
+        Token::PrefixZUpper => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.awaiting = Awaiting::ZUpper;
+            }
+        }
+        Token::CmdLine => {
+            clear_pending(ed);
+            ed.drop_recording();
+            ed.cmdline.clear();
+            ed.mode = Mode::Command;
+        }
+    }
+}
+
+fn clear_pending(ed: &mut Editor) {
+    ed.pending = Default::default();
+}
+
+fn process_motion(ed: &mut Editor, motion: Motion) {
+    let count = ed.pending.take_count();
+    let op = ed.pending.op.take();
+
+    if let Some(op) = op {
+        apply_operator(ed, op, motion, count);
+    } else {
+        let ctx = MotionCtx {
+            rope: &ed.buffer.rope,
+            goal: ed.goal,
+            last_find: ed.last_find,
+            tabstop: OPTIONS.tabstop,
+            for_operator: false,
+        };
+        if let Some(out) = motion::resolve(motion, count, ed.cursor, &ctx) {
+            ed.cursor = out.cursor;
+            ed.goal = out.new_goal;
+            if let Some(lf) = out.new_last_find {
+                ed.last_find = Some(lf);
+            }
+        }
+    }
+    clear_pending(ed);
+}
+
+fn abs_of(ed: &Editor, cursor: Cursor) -> usize {
+    ed.buffer.rope.line_to_char(cursor.line) + cursor.col
+}
+
+/// Char range covered by an inclusive target: extends past the grapheme
+/// cluster under the target position.
+fn inclusive_end(ed: &Editor, target: Cursor) -> usize {
+    let grs = line_graphemes(&line_content(&ed.buffer.rope, target.line), OPTIONS.tabstop);
+    let base = ed.buffer.rope.line_to_char(target.line);
+    match gr_index_at_col(&grs, target.col) {
+        Some(i) => base + grs[i].char_off + grs[i].chars,
+        None => base + target.col,
+    }
+}
+
+fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>) {
+    // vim's special case: `cw` on a non-blank acts like `ce`
+    let motion = match (op, motion) {
+        (Op::Change, Motion::WordForward { big }) => {
+            let len = line_len(&ed.buffer.rope, ed.cursor.line);
+            if ed.cursor.col < len {
+                let ch = ed.buffer.rope.char(abs_of(ed, ed.cursor));
+                if char_class(ch, false) != CharClass::Blank {
+                    Motion::WordEnd { big }
+                } else {
+                    motion
+                }
+            } else {
+                motion
+            }
+        }
+        _ => motion,
+    };
+
+    let ctx = MotionCtx {
+        rope: &ed.buffer.rope,
+        goal: ed.goal,
+        last_find: ed.last_find,
+        tabstop: OPTIONS.tabstop,
+        for_operator: true,
+    };
+    let Some(out) = motion::resolve(motion, count, ed.cursor, &ctx) else {
+        return;
+    };
+    if let Some(lf) = out.new_last_find {
+        ed.last_find = Some(lf);
+    }
+    let mut target = out.cursor;
+
+    if out.kind == MotionKind::Linewise {
+        let (l1, l2) = if target.line < ed.cursor.line {
+            (target.line, ed.cursor.line)
+        } else {
+            (ed.cursor.line, target.line)
+        };
+        linewise_op(ed, op, l1, l2);
+        return;
+    }
+
+    // vim's other special case: `dw`/`yw` on the last word of a line stops at
+    // the end of the line instead of eating the newline
+    if let Motion::WordForward { .. } = motion {
+        let len = line_len(&ed.buffer.rope, ed.cursor.line);
+        if ed.cursor.col < len && target.line > ed.cursor.line {
+            let ch = ed.buffer.rope.char(abs_of(ed, ed.cursor));
+            if char_class(ch, false) != CharClass::Blank {
+                target = Cursor::new(ed.cursor.line, len);
+            }
+        }
+    }
+
+    let a_cur = abs_of(ed, ed.cursor);
+    let a_tgt = abs_of(ed, target);
+    let (start, end) = if a_cur <= a_tgt {
+        let end = if out.kind == MotionKind::Inclusive {
+            inclusive_end(ed, target)
+        } else {
+            a_tgt
+        };
+        (a_cur, end)
+    } else {
+        let end = if out.kind == MotionKind::Inclusive {
+            inclusive_end(ed, ed.cursor)
+        } else {
+            a_cur
+        };
+        (a_tgt, end)
+    };
+    if start >= end {
+        if op == Op::Change {
+            // change with an empty range still enters insert mode (e.g. c0 at col 0)
+            change_range(ed, start, start);
+        }
+        return;
+    }
+    charwise_op(ed, op, start, end);
+}
+
+fn charwise_op(ed: &mut Editor, op: Op, start: usize, end: usize) {
+    let text = ed.buffer.rope.slice(start..end).to_string();
+    ed.register = Some(Register {
+        text,
+        linewise: false,
+    });
+    ed.goal = None;
+    match op {
+        Op::Yank => {
+            let cur = motion_cursor_of_abs(ed, start);
+            if abs_of(ed, ed.cursor) > start {
+                ed.cursor = cur;
+            }
+        }
+        Op::Delete => {
+            ed.buffer.begin_change(ed.cursor);
+            ed.buffer.remove(start..end);
+            ed.cursor = motion_cursor_of_abs(ed, start);
+            let committed = ed.buffer.end_change();
+            ed.note_change_committed(committed);
+        }
+        Op::Change => change_range(ed, start, end),
+    }
+}
+
+fn change_range(ed: &mut Editor, start: usize, end: usize) {
+    ed.buffer.begin_change(ed.cursor);
+    if end > start {
+        ed.buffer.remove(start..end);
+    }
+    let line = ed
+        .buffer
+        .rope
+        .char_to_line(start.min(ed.buffer.rope.len_chars()));
+    let line = line.min(text_lines(&ed.buffer.rope) - 1);
+    let col = start - ed.buffer.rope.line_to_char(line);
+    ed.cursor = Cursor::new(line, col);
+    ed.goal = None;
+    ed.mode = Mode::Insert;
+}
+
+fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
+    let rope = &ed.buffer.rope;
+    let last = text_lines(rope) - 1;
+    let (l1, l2) = (l1.min(last), l2.min(last));
+    let start = rope.line_to_char(l1);
+    // every line carries its newline terminator (buffer invariant)
+    let end = if l2 + 1 >= rope.len_lines() {
+        rope.len_chars()
+    } else {
+        rope.line_to_char(l2 + 1)
+    };
+    let mut text = rope.slice(start..end).to_string();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    ed.register = Some(Register {
+        text,
+        linewise: true,
+    });
+    ed.goal = None;
+
+    match op {
+        Op::Yank => {
+            if l1 < ed.cursor.line {
+                ed.cursor = Cursor::new(l1, ed.cursor.col);
+            }
+        }
+        Op::Delete => {
+            ed.buffer.begin_change(ed.cursor);
+            ed.buffer.remove(start..end);
+            if ed.buffer.rope.len_chars() == 0 {
+                ed.buffer.insert(0, "\n"); // deleting every line leaves one empty line
+            }
+            let new_last = text_lines(&ed.buffer.rope) - 1;
+            let line = l1.min(new_last);
+            ed.cursor = Cursor::new(line, first_non_blank(&ed.buffer.rope, line));
+            let committed = ed.buffer.end_change();
+            ed.note_change_committed(committed);
+        }
+        Op::Change => {
+            ed.buffer.begin_change(ed.cursor);
+            let indent = line_indent(&ed.buffer.rope, l1);
+            ed.buffer.remove(start..end);
+            ed.buffer.insert(start, &format!("{indent}\n"));
+            ed.cursor = Cursor::new(l1, indent.chars().count());
+            ed.mode = Mode::Insert;
+        }
+    }
+}
+
+fn motion_cursor_of_abs(ed: &Editor, abs: usize) -> Cursor {
+    let rope = &ed.buffer.rope;
+    let last = text_lines(rope) - 1;
+    if rope.len_chars() == 0 {
+        return Cursor::default();
+    }
+    let line = rope.char_to_line(abs.min(rope.len_chars())).min(last);
+    let col = abs.saturating_sub(rope.line_to_char(line));
+    let col = col.min(max_normal_col(rope, line, OPTIONS.tabstop));
+    let grs = line_graphemes(&line_content(rope, line), OPTIONS.tabstop);
+    Cursor::new(line, text::snap_to_grapheme(&grs, col))
+}
+
+fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
+    ed.buffer.begin_change(ed.cursor);
+    ed.goal = None;
+    let rope = &ed.buffer.rope;
+    let line = ed.cursor.line;
+    match entry {
+        InsertEntry::Before => {}
+        InsertEntry::FirstNonBlank => {
+            ed.cursor.col = first_non_blank(rope, line).min(line_len(rope, line));
+        }
+        InsertEntry::After => {
+            let grs = line_graphemes(&line_content(rope, line), OPTIONS.tabstop);
+            ed.cursor.col = match gr_index_at_col(&grs, ed.cursor.col) {
+                Some(i) => grs[i].char_off + grs[i].chars,
+                None => line_len(rope, line),
+            };
+        }
+        InsertEntry::LineEnd => ed.cursor.col = line_len(rope, line),
+        InsertEntry::OpenBelow => {
+            let indent = line_indent(rope, line);
+            let at = if line + 1 >= rope.len_lines() {
+                rope.len_chars()
+            } else {
+                rope.line_to_char(line + 1)
+            };
+            ed.buffer.insert(at, &format!("{indent}\n"));
+            ed.cursor = Cursor::new(line + 1, indent.chars().count());
+        }
+        InsertEntry::OpenAbove => {
+            let indent = line_indent(rope, line);
+            let at = ed.buffer.rope.line_to_char(line);
+            ed.buffer.insert(at, &format!("{indent}\n"));
+            ed.cursor = Cursor::new(line, indent.chars().count());
+        }
+    }
+    ed.mode = Mode::Insert;
+}
+
+fn simple(ed: &mut Editor, cmd: SimpleCmd) {
+    let count = ed.pending.take_count().unwrap_or(1);
+    match cmd {
+        SimpleCmd::DeleteRight => delete_graphemes(ed, count, true),
+        SimpleCmd::DeleteLeft => delete_graphemes(ed, count, false),
+        SimpleCmd::ToggleCase => toggle_case(ed, count),
+        SimpleCmd::Join => join_lines(ed, count),
+        SimpleCmd::PasteAfter => paste(ed, true, count),
+        SimpleCmd::PasteBefore => paste(ed, false, count),
+        SimpleCmd::Undo => {
+            for _ in 0..count {
+                match ed.buffer.undo(ed.cursor) {
+                    Some(cur) => ed.cursor = cur,
+                    None => {
+                        ed.err("Already at oldest change");
+                        break;
+                    }
+                }
+            }
+            ed.goal = None;
+        }
+        SimpleCmd::Redo => {
+            for _ in 0..count {
+                match ed.buffer.redo(ed.cursor) {
+                    Some(cur) => ed.cursor = cur,
+                    None => {
+                        ed.err("Already at newest change");
+                        break;
+                    }
+                }
+            }
+            ed.goal = None;
+        }
+        SimpleCmd::Repeat => ed.repeat_last_change(),
+        SimpleCmd::DeleteToEol => apply_operator(ed, Op::Delete, Motion::LineEnd, Some(count)),
+        SimpleCmd::ChangeToEol => apply_operator(ed, Op::Change, Motion::LineEnd, Some(count)),
+        SimpleCmd::YankToEol => apply_operator(ed, Op::Yank, Motion::LineEnd, Some(count)),
+        SimpleCmd::SubstChar => {
+            let len = line_len(&ed.buffer.rope, ed.cursor.line);
+            let grs = line_graphemes(
+                &line_content(&ed.buffer.rope, ed.cursor.line),
+                OPTIONS.tabstop,
+            );
+            let base = ed.buffer.rope.line_to_char(ed.cursor.line);
+            let start = base + ed.cursor.col;
+            let end = match gr_index_at_col(&grs, ed.cursor.col) {
+                Some(i) => {
+                    let e = grs[(i + count - 1).min(grs.len() - 1)];
+                    base + e.char_off + e.chars
+                }
+                None => base + len,
+            };
+            let text = ed.buffer.rope.slice(start..end).to_string();
+            if !text.is_empty() {
+                ed.register = Some(Register {
+                    text,
+                    linewise: false,
+                });
+            }
+            change_range(ed, start, end);
+        }
+        SimpleCmd::SubstLine => {
+            linewise_op(ed, Op::Change, ed.cursor.line, ed.cursor.line + count - 1)
+        }
+    }
+}
+
+fn delete_graphemes(ed: &mut Editor, count: usize, forward: bool) {
+    let rope = &ed.buffer.rope;
+    let grs = line_graphemes(&line_content(rope, ed.cursor.line), OPTIONS.tabstop);
+    if grs.is_empty() {
+        return;
+    }
+    let base = rope.line_to_char(ed.cursor.line);
+    let Some(idx) = gr_index_at_col(&grs, ed.cursor.col) else {
+        return;
+    };
+    let (start, end) = if forward {
+        let last = (idx + count - 1).min(grs.len() - 1);
+        (
+            base + grs[idx].char_off,
+            base + grs[last].char_off + grs[last].chars,
+        )
+    } else {
+        if idx == 0 {
+            return;
+        }
+        let first = idx.saturating_sub(count);
+        (base + grs[first].char_off, base + grs[idx].char_off)
+    };
+    if start >= end {
+        return;
+    }
+    let text = ed.buffer.rope.slice(start..end).to_string();
+    ed.register = Some(Register {
+        text,
+        linewise: false,
+    });
+    ed.buffer.begin_change(ed.cursor);
+    ed.buffer.remove(start..end);
+    ed.cursor = motion_cursor_of_abs(ed, start);
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.goal = None;
+}
+
+fn replace_chars(ed: &mut Editor, ch: char, count: usize) {
+    if ch == '\n' {
+        return;
+    }
+    let rope = &ed.buffer.rope;
+    let grs = line_graphemes(&line_content(rope, ed.cursor.line), OPTIONS.tabstop);
+    let Some(idx) = gr_index_at_col(&grs, ed.cursor.col) else {
+        return;
+    };
+    if idx + count > grs.len() {
+        return; // not enough characters to replace — vim aborts
+    }
+    let base = rope.line_to_char(ed.cursor.line);
+    let start = base + grs[idx].char_off;
+    let last = grs[idx + count - 1];
+    let end = base + last.char_off + last.chars;
+    ed.buffer.begin_change(ed.cursor);
+    ed.buffer.remove(start..end);
+    let replacement: String = std::iter::repeat_n(ch, count).collect();
+    ed.buffer.insert(start, &replacement);
+    ed.cursor = Cursor::new(ed.cursor.line, grs[idx].char_off + count - 1);
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.goal = None;
+}
+
+fn toggle_case(ed: &mut Editor, count: usize) {
+    let rope = &ed.buffer.rope;
+    let grs = line_graphemes(&line_content(rope, ed.cursor.line), OPTIONS.tabstop);
+    let Some(idx) = gr_index_at_col(&grs, ed.cursor.col) else {
+        return;
+    };
+    let base = rope.line_to_char(ed.cursor.line);
+    let last = grs[(idx + count - 1).min(grs.len() - 1)];
+    let start = base + grs[idx].char_off;
+    let end = base + last.char_off + last.chars;
+    let toggled: String = rope
+        .slice(start..end)
+        .chars()
+        .flat_map(|c| {
+            if c.is_lowercase() {
+                c.to_uppercase().collect::<Vec<_>>()
+            } else if c.is_uppercase() {
+                c.to_lowercase().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect();
+    ed.buffer.begin_change(ed.cursor);
+    ed.buffer.remove(start..end);
+    ed.buffer.insert(start, &toggled);
+    ed.cursor = motion_cursor_of_abs(
+        ed,
+        end.min(base + line_len(&ed.buffer.rope, ed.cursor.line)),
+    );
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.goal = None;
+}
+
+fn join_lines(ed: &mut Editor, count: usize) {
+    let joins = count.max(2) - 1;
+    ed.buffer.begin_change(ed.cursor);
+    for _ in 0..joins {
+        let rope = &ed.buffer.rope;
+        let line = ed.cursor.line;
+        if line + 1 >= text_lines(rope) {
+            break;
+        }
+        let cur_len = line_len(rope, line);
+        let nl = rope.line_to_char(line) + cur_len;
+        let next_content = line_content(rope, line + 1);
+        let lead_blanks = next_content
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .count();
+        let trimmed_empty = next_content.chars().count() == lead_blanks;
+        ed.buffer.remove(nl..nl + 1 + lead_blanks);
+        let needs_space = cur_len > 0
+            && !trimmed_empty
+            && !line_content(&ed.buffer.rope, line).ends_with([' ', '\t']);
+        if needs_space {
+            ed.buffer.insert(nl, " ");
+        }
+        ed.cursor = Cursor::new(line, cur_len);
+    }
+    ed.clamp_cursor();
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.goal = None;
+}
+
+fn paste(ed: &mut Editor, after: bool, count: usize) {
+    let Some(reg) = ed.register.clone() else {
+        return;
+    };
+    ed.goal = None;
+    ed.buffer.begin_change(ed.cursor);
+    if reg.linewise {
+        let text = reg.text.repeat(count);
+        let rope = &ed.buffer.rope;
+        let last = text_lines(rope) - 1;
+        let line = if after {
+            ed.cursor.line + 1
+        } else {
+            ed.cursor.line
+        };
+        let at = if line > last {
+            rope.len_chars()
+        } else {
+            rope.line_to_char(line)
+        };
+        ed.buffer.insert(at, &text);
+        let line = line.min(text_lines(&ed.buffer.rope) - 1);
+        ed.cursor = Cursor::new(line, first_non_blank(&ed.buffer.rope, line));
+    } else {
+        let text = reg.text.repeat(count);
+        let rope = &ed.buffer.rope;
+        let base = rope.line_to_char(ed.cursor.line);
+        let grs = line_graphemes(&line_content(rope, ed.cursor.line), OPTIONS.tabstop);
+        let col = if after {
+            match gr_index_at_col(&grs, ed.cursor.col) {
+                Some(i) => grs[i].char_off + grs[i].chars,
+                None => line_len(rope, ed.cursor.line),
+            }
+        } else {
+            ed.cursor.col
+        };
+        let at = base + col;
+        ed.buffer.insert(at, &text);
+        let end = at + text.chars().count();
+        ed.cursor = motion_cursor_of_abs(ed, end.saturating_sub(1));
+    }
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+}
+
+fn scroll(ed: &mut Editor, cmd: ScrollCmd) {
+    let h = ed.view.height;
+    match cmd {
+        ScrollCmd::HalfDown => {
+            let n = (h / 2).max(1);
+            ed.top_line += n;
+            ed.move_vertical(n as isize);
+        }
+        ScrollCmd::HalfUp => {
+            let n = (h / 2).max(1);
+            ed.top_line = ed.top_line.saturating_sub(n);
+            ed.move_vertical(-(n as isize));
+        }
+        ScrollCmd::PageDown => {
+            let n = h.saturating_sub(2).max(1);
+            ed.top_line += n;
+            ed.move_vertical(n as isize);
+        }
+        ScrollCmd::PageUp => {
+            let n = h.saturating_sub(2).max(1);
+            ed.top_line = ed.top_line.saturating_sub(n);
+            ed.move_vertical(-(n as isize));
+        }
+        ScrollCmd::CenterCursor | ScrollCmd::CursorTop | ScrollCmd::CursorBottom => {
+            recenter(ed, cmd)
+        }
+    }
+    let last = text_lines(&ed.buffer.rope) - 1;
+    ed.top_line = ed.top_line.min(last);
+}
+
+fn recenter(ed: &mut Editor, cmd: ScrollCmd) {
+    let h = ed.view.height;
+    ed.top_line = match cmd {
+        ScrollCmd::CenterCursor => ed.cursor.line.saturating_sub(h / 2),
+        ScrollCmd::CursorTop => ed.cursor.line,
+        ScrollCmd::CursorBottom => (ed.cursor.line + 1).saturating_sub(h),
+        _ => ed.top_line,
+    };
+}

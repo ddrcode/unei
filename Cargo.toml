@@ -1,0 +1,21 @@
+[package]
+name = "tailored"
+version = "0.1.0"
+edition = "2024"
+description = "tailorED - bespoke, zero-config, vim-like editor"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+ropey = "1.6"
+ratatui = "0.29"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[[bin]]
+name = "tailored"
+path = "src/main.rs"
+
+[lib]
+name = "tailored"
+path = "src/lib.rs"
