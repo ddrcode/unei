@@ -1,5 +1,6 @@
 mod buffer_list;
 mod cmdline;
+pub mod file_picker;
 mod insert;
 mod normal;
 pub mod testing;
@@ -121,6 +122,9 @@ pub struct Editor {
     pub should_quit: bool,
     pub view: View,
     pub buffer_list: Option<BufferList>,
+    pub file_picker: Option<file_picker::FilePicker>,
+    /// Working folder: picker listings and relative opens resolve against it.
+    root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
     /// `buffer` and its slot holds `None`.
     slots: Vec<Slot>,
@@ -188,6 +192,8 @@ impl Editor {
                 height: 22,
             },
             buffer_list: None,
+            file_picker: None,
+            root: std::path::PathBuf::from("."),
             slots,
             current: 1,
             alternate: None,
@@ -465,6 +471,53 @@ impl Editor {
             .unwrap_or(&self.buffer)
     }
 
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    pub fn set_root(&mut self, root: std::path::PathBuf) {
+        self.root = root;
+    }
+
+    /// Opens `rel` (relative to the working folder) in the focused window,
+    /// optionally splitting first. Reuses an existing buffer for the same
+    /// file; otherwise loads it (a missing file becomes a "[New File]"
+    /// buffer that materializes on :w).
+    pub(crate) fn open_path(&mut self, rel: &str, split: Option<SplitDir>) {
+        let abs = self.root.join(rel);
+        let canon = std::fs::canonicalize(&abs).unwrap_or_else(|_| abs.clone());
+        let existing = self.slots.iter().find_map(|slot| {
+            let buffer = slot.buffer.as_ref().unwrap_or(&self.buffer);
+            let path = buffer.path.as_ref()?;
+            let buf_canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            (buf_canon == canon).then_some(slot.id)
+        });
+        if let Some(dir) = split {
+            self.split_window(dir, false);
+        }
+        match existing {
+            Some(id) => self.switch_to(id),
+            None => match Buffer::from_path(&abs) {
+                Ok((buffer, existed)) => {
+                    let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+                    self.slots.push(Slot {
+                        id,
+                        buffer: Some(buffer),
+                        cursor: Cursor::default(),
+                        goal: None,
+                        top_line: 0,
+                        left_cell: 0,
+                    });
+                    self.switch_to(id);
+                    if !existed {
+                        self.msg(format!("\"{}\" [New File]", abs.display()));
+                    }
+                }
+                Err(e) => self.err(format!("{e:#}")),
+            },
+        }
+    }
+
     fn live_win_state(&self) -> WinState {
         WinState {
             buf_id: self.current,
@@ -667,6 +720,12 @@ impl Editor {
     pub fn handle_key(&mut self, key: Key) {
         if self.mode != Mode::Command {
             self.message = None;
+        }
+        if self.file_picker.is_some() {
+            file_picker::handle_key(self, key);
+            self.clamp_cursor();
+            self.scroll_to_cursor();
+            return;
         }
         if self.buffer_list.is_some() {
             buffer_list::handle_key(self, key);

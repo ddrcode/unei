@@ -67,6 +67,7 @@ pub fn keys(spec: &str) -> Vec<Key> {
                 Key::Alt(s.chars().nth(2).unwrap())
             }
             "Space" => Key::Char(' '),
+            "C-CR" => Key::CtrlEnter,
             other => panic!("unknown key spec <{other}>"),
         };
         out.push(key);

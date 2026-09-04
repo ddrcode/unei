@@ -69,6 +69,17 @@ semantics (push the border in the pressed direction; steps live in
 `config::OPTIONS`). Zoom is a render-level flag that any window operation
 clears.
 
+## 2026-09-04 — File picker: nucleo + ignore, one mechanism each
+
+Fuzzy matching is nucleo (the Helix engine) and file listing is ripgrep's
+`ignore` walker (gitignore honored even outside git repos, hidden files
+skipped) — one matcher, one walker, no fallbacks. The picker is the single
+file-opening mechanism (no `:e`); it dedupes against open buffers by
+canonical path. Launched on a directory the editor opens straight into the
+picker (resolving the ticket's TBD). Ctrl+Enter creates the queried path:
+parent directories eagerly, the file itself on first `:w`; new paths must
+stay inside the working folder. Preview is #26.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

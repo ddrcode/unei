@@ -67,6 +67,11 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     super::buffer_list::open(ed);
                     clear_pending(ed);
                 }
+                Some(LeaderCmd::FilePicker) => {
+                    ed.drop_recording();
+                    super::file_picker::open(ed);
+                    clear_pending(ed);
+                }
                 Some(LeaderCmd::WindowPrefix) => {
                     ed.pending.awaiting = Awaiting::Window;
                 }
@@ -198,6 +203,11 @@ fn dispatch(ed: &mut Editor, key: Key) {
             clear_pending(ed);
             ed.drop_recording();
             ed.switch_alternate();
+        }
+        Token::FilePicker => {
+            clear_pending(ed);
+            ed.drop_recording();
+            super::file_picker::open(ed);
         }
         Token::PrefixG => ed.pending.awaiting = Awaiting::G,
         Token::PrefixZ => {

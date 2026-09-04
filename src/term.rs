@@ -84,6 +84,7 @@ pub fn convert(ev: KeyEvent) -> Option<Key> {
         KeyCode::Char(c) if alt => Key::Alt(c.to_ascii_lowercase()),
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Esc => Key::Esc,
+        KeyCode::Enter if ctrl => Key::CtrlEnter,
         KeyCode::Enter => Key::Enter,
         KeyCode::Backspace => Key::Backspace,
         KeyCode::Tab => Key::Tab,
