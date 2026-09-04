@@ -86,6 +86,10 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
 
     draw_message_line(f, ed, Rect::new(0, area.height - 1, area.width, 1));
 
+    if ed.file_picker.is_some() {
+        draw_file_picker(f, ed, windows_area);
+        return; // the picker positions its own query cursor
+    }
     if ed.buffer_list.is_some() {
         draw_buffer_list(f, ed, windows_area);
         return; // the overlay owns the focus; no text cursor
@@ -191,6 +195,110 @@ fn draw_buffer_list(f: &mut Frame, ed: &Editor, area: Rect) {
         ),
         rect,
     );
+}
+
+/// The fuzzy file picker: query line on top, ranked matches below, matched
+/// characters accented, snacks-style.
+fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear};
+
+    let Some(p) = &ed.file_picker else { return };
+
+    let w = (area.width.saturating_sub(10)).clamp(30, 72);
+    let h = (area.height.saturating_sub(4)).clamp(6, 16);
+    let x = (area.width - w) / 2;
+    let y = area.height.saturating_sub(h) / 6 + 1;
+    let rect = Rect::new(x, y, w, h);
+    let inner_w = w.saturating_sub(2) as usize;
+    let list_rows = h.saturating_sub(3) as usize; // border + query line
+
+    let float = Style::default().bg(palette::FLOAT_BG).fg(palette::FG);
+    let dim = Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT);
+    let accent = Style::default()
+        .bg(palette::FLOAT_BG)
+        .fg(palette::MODE_NORMAL)
+        .add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(list_rows + 1);
+    lines.push(Line::from(vec![
+        Span::styled(" > ", accent),
+        Span::styled(p.query.clone(), float),
+    ]));
+
+    let offset = p
+        .selected
+        .saturating_sub(list_rows.saturating_sub(1))
+        .min(p.matches.len().saturating_sub(list_rows));
+    if p.matches.is_empty() {
+        lines.push(Line::styled("   ── no matches ──", dim));
+    }
+    for (row, m) in p.matches.iter().enumerate().skip(offset).take(list_rows) {
+        let item = p.item(m);
+        let selected = row == p.selected;
+        // left-truncate long paths, shifting match indices with the cut
+        let (shown, cut) = {
+            let max = inner_w.saturating_sub(3);
+            let n = item.chars().count();
+            if n > max {
+                let cut = n - (max - 1);
+                (
+                    format!("…{}", item.chars().skip(cut).collect::<String>()),
+                    cut as i64 - 1, // the ellipsis occupies one slot
+                )
+            } else {
+                (item.to_string(), 0)
+            }
+        };
+        let (row_style, hit_style) = if selected {
+            let sel = Style::default()
+                .bg(palette::MODE_NORMAL)
+                .fg(palette::MODE_LABEL_FG);
+            (sel, sel.add_modifier(Modifier::BOLD | Modifier::UNDERLINED))
+        } else {
+            (float, accent)
+        };
+        let mut spans = vec![Span::styled(
+            if selected { " ▸ " } else { "   " },
+            row_style,
+        )];
+        for (ci, ch) in shown.chars().enumerate() {
+            let orig = ci as i64 + cut;
+            let hit = orig >= 0 && m.indices.contains(&(orig as u32));
+            spans.push(Span::styled(
+                ch.to_string(),
+                if hit { hit_style } else { row_style },
+            ));
+        }
+        let used: usize = 3 + shown.width();
+        spans.push(Span::styled(
+            " ".repeat(inner_w.saturating_sub(used)),
+            row_style,
+        ));
+        lines.push(Line::from(spans));
+    }
+
+    let count = format!(
+        " {}/{}{} ",
+        p.matches.len(),
+        p.total(),
+        if p.truncated { "+" } else { "" }
+    );
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).style(float).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
+                .title(" files ")
+                .title_style(Style::default().bg(palette::FLOAT_BG).fg(palette::FG))
+                .title_bottom(Line::styled(count, dim).right_aligned()),
+        ),
+        rect,
+    );
+    // terminal cursor sits in the query line
+    let qx = rect.x + 4 + p.query.width() as u16;
+    f.set_cursor_position((qx.min(rect.x + w - 2), rect.y + 1));
 }
 
 fn draw_text(f: &mut Frame, view: &WinView, area: Rect) {

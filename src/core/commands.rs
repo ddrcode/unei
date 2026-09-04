@@ -98,6 +98,8 @@ pub enum Token {
     PrefixWindow,
     /// `Ctrl+^` — switch to the alternate (previously shown) buffer.
     AlternateBuffer,
+    /// `Ctrl+p` — file picker.
+    FilePicker,
     CmdLine,
 }
 
@@ -106,6 +108,8 @@ pub enum Token {
 pub enum LeaderCmd {
     /// `<leader>b` — buffer list.
     BufferList,
+    /// `<leader>p` — file picker.
+    FilePicker,
     /// `<leader>w` — same as `Ctrl+w`.
     WindowPrefix,
 }
@@ -117,6 +121,26 @@ pub enum ListCmd {
     Down,
     Select,
     CloseBuffer,
+    Dismiss,
+}
+
+/// Keys inside the file-picker overlay (typed chars edit the query and are
+/// handled before this table).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerCmd {
+    Up,
+    Down,
+    /// Enter — open in the focused window.
+    Open,
+    /// `Ctrl+v` — open in a vertical split.
+    OpenVsplit,
+    /// `Ctrl+x` — open in a horizontal split.
+    OpenHsplit,
+    /// `Ctrl+Enter` — create the file the query names (with parent dirs).
+    CreatePath,
+    /// `Ctrl+u` — clear the query.
+    ClearQuery,
+    DeleteChar,
     Dismiss,
 }
 

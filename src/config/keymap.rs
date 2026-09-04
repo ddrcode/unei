@@ -6,7 +6,8 @@
 //! so `dh` still deletes left, exactly like the author's nvim.
 
 use crate::core::commands::{
-    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, ScrollCmd, SimpleCmd, Token, WinCmd, WinDir,
+    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, Token, WinCmd,
+    WinDir,
 };
 use crate::core::motion::Motion;
 
@@ -18,6 +19,7 @@ pub enum Key {
     Char(char),
     Ctrl(char),
     Alt(char),
+    CtrlEnter,
     Esc,
     Enter,
     Backspace,
@@ -110,6 +112,9 @@ pub fn normal_token(key: Key) -> Option<Token> {
         // buffers
         Key::Ctrl('^') | Key::Ctrl('6') => Token::AlternateBuffer,
 
+        // file picker
+        Key::Ctrl('p') => Token::FilePicker,
+
         // windows
         Key::Ctrl('w') => Token::PrefixWindow,
 
@@ -128,6 +133,7 @@ pub fn normal_token(key: Key) -> Option<Token> {
 pub fn leader_token(key: Key) -> Option<LeaderCmd> {
     match key {
         Key::Char('b') => Some(LeaderCmd::BufferList),
+        Key::Char('p') => Some(LeaderCmd::FilePicker),
         Key::Char('w') => Some(LeaderCmd::WindowPrefix),
         _ => None,
     }
@@ -174,6 +180,24 @@ pub fn list_token(key: Key) -> Option<ListCmd> {
         Key::Enter => ListCmd::Select,
         Key::Char('x') => ListCmd::CloseBuffer,
         Key::Esc | Key::Char('q') | Key::Ctrl('c') => ListCmd::Dismiss,
+        _ => return None,
+    })
+}
+
+/// Keys inside the file-picker overlay. Plain chars edit the query, so all
+/// commands sit on control keys; navigation is Ctrl+i/Ctrl+k (IJKL, distinct
+/// from Tab/Enter under the Kitty keyboard protocol) plus the arrows.
+pub fn picker_token(key: Key) -> Option<PickerCmd> {
+    Some(match key {
+        Key::Up | Key::Ctrl('i') => PickerCmd::Up,
+        Key::Down | Key::Ctrl('k') => PickerCmd::Down,
+        Key::Enter => PickerCmd::Open,
+        Key::Ctrl('v') => PickerCmd::OpenVsplit,
+        Key::Ctrl('x') => PickerCmd::OpenHsplit,
+        Key::CtrlEnter => PickerCmd::CreatePath,
+        Key::Ctrl('u') => PickerCmd::ClearQuery,
+        Key::Backspace => PickerCmd::DeleteChar,
+        Key::Esc | Key::Ctrl('c') => PickerCmd::Dismiss,
         _ => return None,
     })
 }

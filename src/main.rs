@@ -12,27 +12,35 @@ use tailored::{term, ui};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+    let launch = tailored::launch::resolve(&args, cwd);
 
-    let mut editor = if args.is_empty() {
+    let mut editor = if launch.files.is_empty() {
         Editor::new(Buffer::from_text(""))
     } else {
         let mut buffers = Vec::new();
         let mut new_file = None;
-        for arg in &args {
-            let (buffer, existed) = Buffer::from_path(Path::new(arg))?;
+        for path in &launch.files {
+            let (buffer, existed) = Buffer::from_path(path)?;
             if !existed && new_file.is_none() {
-                new_file = Some(arg.clone());
+                new_file = Some(path.clone());
             }
             buffers.push(buffer);
         }
         let mut ed = Editor::with_buffers(buffers);
         match new_file {
             // matches the displayed (first) buffer only
-            Some(arg) if arg == args[0] => ed.msg(format!("\"{arg}\" [New File]")),
+            Some(p) if p == launch.files[0] => {
+                ed.msg(format!("\"{}\" [New File]", p.display()));
+            }
             _ => {}
         }
         ed
     };
+    editor.set_root(launch.root);
+    if launch.open_picker {
+        tailored::editor::file_picker::open(&mut editor);
+    }
 
     term::install_panic_hook();
     let mut terminal = term::init()?;
