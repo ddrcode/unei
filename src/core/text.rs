@@ -11,12 +11,30 @@ pub enum CharClass {
     Blank,
     Word,
     Punct,
+    /// CJK scripts form their own word classes, like vim's utf_class: a run of
+    /// kanji and a run of latin are separate small words.
+    Script(u8),
+}
+
+fn script_class(c: char) -> Option<u8> {
+    Some(match c as u32 {
+        0x3040..=0x309F => 1,                     // hiragana
+        0x30A0..=0x30FF => 2,                     // katakana
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF => 3,   // CJK ideographs
+        0xF900..=0xFAFF | 0x20000..=0x2FA1F => 3, // CJK compat / ext
+        0xAC00..=0xD7A3 => 4,                     // hangul
+        _ => return None,
+    })
 }
 
 pub fn char_class(c: char, big: bool) -> CharClass {
     if c.is_whitespace() {
         CharClass::Blank
-    } else if big || c.is_alphanumeric() || c == '_' {
+    } else if big {
+        CharClass::Word
+    } else if let Some(s) = script_class(c) {
+        CharClass::Script(s)
+    } else if c.is_alphanumeric() || c == '_' {
         CharClass::Word
     } else {
         CharClass::Punct

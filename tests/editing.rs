@@ -54,6 +54,51 @@ golf!(d_up_linewise, "a\nb\nc\n", "Gdi", "a\n");
 golf!(dj_deletes_left, "abc\n", "ldj", "bc\n");
 golf!(dh_still_deletes_left, "abc\n", "ldh", "bc\n");
 golf!(dgg_to_top, "a\nb\nc\n", "Gdgg", "\n");
+// vim's exclusive-motion adjustments (:h word, :h exclusive), nvim-verified
+golf!(
+    dw_on_trailing_blank_keeps_newline,
+    "one \nbar\n",
+    "3ldw",
+    "one\nbar\n"
+);
+golf!(
+    dw_whole_word_leaves_empty_line,
+    "foo\nbar\n",
+    "dw",
+    "\nbar\n"
+);
+golf!(
+    dw_stops_at_empty_line_word,
+    "foo\n\nbar\n",
+    "dw",
+    "\n\nbar\n"
+);
+golf!(dw_on_empty_line_eats_it, "\nbar\nx\n", "dw", "bar\nx\n");
+golf!(
+    d_para_from_indent_goes_linewise,
+    "  one\ntwo\n\nrest\n",
+    "^d}",
+    "\nrest\n"
+);
+golf!(
+    d_para_mid_line_backs_up,
+    "one\ntwo\n\nX Y\n",
+    "ld}",
+    "o\n\nX Y\n"
+);
+golf!(d_brace_back_col0_linewise, "a\nb\nc\nd\n", "3Gd{", "c\nd\n");
+golf!(
+    d_brace_back_mid_col_charwise,
+    "aa\nbb\ncc\ndd\n",
+    "3Gld{",
+    "c\ndd\n"
+);
+golf!(
+    y_brace_back_col0_linewise,
+    "aa\nbb\ncc\n",
+    "3Gy{P",
+    "aa\nbb\naa\nbb\ncc\n"
+);
 golf!(d_to_line_via_count_g, "a\nb\nc\nd\n", "d2G", "c\nd\n");
 golf!(dfx_inclusive, "abcxdef\n", "dfx", "def\n");
 golf!(dtx_exclusive_of_target, "abcxdef\n", "dtx", "xdef\n");

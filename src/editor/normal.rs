@@ -251,21 +251,24 @@ fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>)
         return;
     }
 
-    // vim's other special case: `dw`/`yw` on the last word of a line stops at
-    // the end of the line instead of eating the newline
-    if let Motion::WordForward { .. } = motion {
-        let len = line_len(&ed.buffer.rope, ed.cursor.line);
-        if ed.cursor.col < len && target.line > ed.cursor.line {
-            let ch = ed.buffer.rope.char(abs_of(ed, ed.cursor));
-            if char_class(ch, false) != CharClass::Blank {
-                target = Cursor::new(ed.cursor.line, len);
-            }
-        }
+    // vim's word-motion adjustment (:h word, nv_wordcmd): a w-family target
+    // landing in column 0 of a later line backs up to the end of the previous
+    // line; an empty previous line is consumed including its newline.
+    let mut word_adjusted_end = None;
+    if matches!(motion, Motion::WordForward { .. })
+        && target.line > ed.cursor.line
+        && target.col == 0
+    {
+        let prev = target.line - 1;
+        let plen = line_len(&ed.buffer.rope, prev);
+        let base = ed.buffer.rope.line_to_char(prev);
+        word_adjusted_end = Some(base + if plen > 0 { plen } else { 1 });
+        target = Cursor::new(prev, plen);
     }
 
     let a_cur = abs_of(ed, ed.cursor);
     let a_tgt = abs_of(ed, target);
-    let (start, end) = if a_cur <= a_tgt {
+    let (mut start, mut end) = if a_cur <= a_tgt {
         let end = if out.kind == MotionKind::Inclusive {
             inclusive_end(ed, target)
         } else {
@@ -280,6 +283,30 @@ fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>)
         };
         (a_tgt, end)
     };
+    if let Some(e) = word_adjusted_end {
+        end = e;
+    } else if out.kind == MotionKind::Exclusive {
+        // vim's general exclusive adjustment (:h exclusive): an exclusive
+        // motion ending in column 0 below its start ends at the last character
+        // of the previous line instead — and becomes linewise when the start
+        // sits within its line's indent.
+        let (s_cur, e_cur) = if a_cur <= a_tgt {
+            (ed.cursor, target)
+        } else {
+            (target, ed.cursor)
+        };
+        if e_cur.col == 0 && e_cur.line > s_cur.line {
+            let prev = e_cur.line - 1;
+            let indent = line_indent(&ed.buffer.rope, s_cur.line).chars().count();
+            if s_cur.col <= indent {
+                linewise_op(ed, op, s_cur.line, prev);
+                return;
+            }
+            let plen = line_len(&ed.buffer.rope, prev);
+            end = ed.buffer.rope.line_to_char(prev) + plen;
+            start = start.min(end);
+        }
+    }
     if start >= end {
         if op == Op::Change {
             // change with an empty range still enters insert mode (e.g. c0 at col 0)
@@ -316,7 +343,14 @@ fn charwise_op(ed: &mut Editor, op: Op, start: usize, end: usize) {
 }
 
 fn change_range(ed: &mut Editor, start: usize, end: usize) {
-    ed.buffer.begin_change(ed.cursor);
+    // undo puts the cursor at the start of the changed text
+    let s_line = ed
+        .buffer
+        .rope
+        .char_to_line(start.min(ed.buffer.rope.len_chars()))
+        .min(text_lines(&ed.buffer.rope) - 1);
+    let s_col = start - ed.buffer.rope.line_to_char(s_line);
+    ed.buffer.begin_change(Cursor::new(s_line, s_col));
     if end > start {
         ed.buffer.remove(start..end);
     }
@@ -371,8 +405,10 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
             ed.note_change_committed(committed);
         }
         Op::Change => {
-            ed.buffer.begin_change(ed.cursor);
             let indent = line_indent(&ed.buffer.rope, l1);
+            // undo puts the cursor where the change began: at the kept indent
+            ed.buffer
+                .begin_change(Cursor::new(l1, indent.chars().count()));
             ed.buffer.remove(start..end);
             ed.buffer.insert(start, &format!("{indent}\n"));
             ed.cursor = Cursor::new(l1, indent.chars().count());
@@ -395,14 +431,22 @@ fn motion_cursor_of_abs(ed: &Editor, abs: usize) -> Cursor {
 }
 
 fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
-    ed.buffer.begin_change(ed.cursor);
     ed.goal = None;
     let rope = &ed.buffer.rope;
     let line = ed.cursor.line;
     match entry {
-        InsertEntry::Before => {}
+        // for the plain entries the undo snapshot records the position where
+        // the insert begins, so `u` returns there (clamped)
+        InsertEntry::Before => ed.buffer.begin_change(ed.cursor),
         InsertEntry::FirstNonBlank => {
-            ed.cursor.col = first_non_blank(rope, line).min(line_len(rope, line));
+            let content = line_content(rope, line);
+            // vim's I on a whitespace-only line inserts after all the blanks
+            ed.cursor.col = if content.chars().all(char::is_whitespace) {
+                line_len(rope, line)
+            } else {
+                first_non_blank(rope, line)
+            };
+            ed.buffer.begin_change(ed.cursor);
         }
         InsertEntry::After => {
             let grs = line_graphemes(&line_content(rope, line), OPTIONS.tabstop);
@@ -410,8 +454,13 @@ fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
                 Some(i) => grs[i].char_off + grs[i].chars,
                 None => line_len(rope, line),
             };
+            ed.buffer.begin_change(ed.cursor);
         }
-        InsertEntry::LineEnd => ed.cursor.col = line_len(rope, line),
+        InsertEntry::LineEnd => {
+            ed.cursor.col = line_len(rope, line);
+            ed.buffer.begin_change(ed.cursor);
+        }
+        // undoing o/O puts the cursor back on the original line
         InsertEntry::OpenBelow => {
             let indent = line_indent(rope, line);
             let at = if line + 1 >= rope.len_lines() {
@@ -419,12 +468,16 @@ fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
             } else {
                 rope.line_to_char(line + 1)
             };
+            ed.buffer
+                .begin_change(Cursor::new(line, first_non_blank(rope, line)));
             ed.buffer.insert(at, &format!("{indent}\n"));
             ed.cursor = Cursor::new(line + 1, indent.chars().count());
         }
         InsertEntry::OpenAbove => {
             let indent = line_indent(rope, line);
-            let at = ed.buffer.rope.line_to_char(line);
+            let at = rope.line_to_char(line);
+            ed.buffer
+                .begin_change(Cursor::new(line, first_non_blank(rope, line)));
             ed.buffer.insert(at, &format!("{indent}\n"));
             ed.cursor = Cursor::new(line, indent.chars().count());
         }
@@ -433,7 +486,8 @@ fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
 }
 
 fn simple(ed: &mut Editor, cmd: SimpleCmd) {
-    let count = ed.pending.take_count().unwrap_or(1);
+    let count_given = ed.pending.take_count();
+    let count = count_given.unwrap_or(1);
     match cmd {
         SimpleCmd::DeleteRight => delete_graphemes(ed, count, true),
         SimpleCmd::DeleteLeft => delete_graphemes(ed, count, false),
@@ -465,7 +519,7 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
             }
             ed.goal = None;
         }
-        SimpleCmd::Repeat => ed.repeat_last_change(),
+        SimpleCmd::Repeat => ed.repeat_last_change(count_given),
         SimpleCmd::DeleteToEol => apply_operator(ed, Op::Delete, Motion::LineEnd, Some(count)),
         SimpleCmd::ChangeToEol => apply_operator(ed, Op::Change, Motion::LineEnd, Some(count)),
         SimpleCmd::YankToEol => apply_operator(ed, Op::Yank, Motion::LineEnd, Some(count)),
@@ -530,7 +584,7 @@ fn delete_graphemes(ed: &mut Editor, count: usize, forward: bool) {
         text,
         linewise: false,
     });
-    ed.buffer.begin_change(ed.cursor);
+    ed.buffer.begin_change(motion_cursor_of_abs(ed, start));
     ed.buffer.remove(start..end);
     ed.cursor = motion_cursor_of_abs(ed, start);
     let committed = ed.buffer.end_change();
@@ -574,16 +628,23 @@ fn toggle_case(ed: &mut Editor, count: usize) {
     let last = grs[(idx + count - 1).min(grs.len() - 1)];
     let start = base + grs[idx].char_off;
     let end = base + last.char_off + last.chars;
+    // like vim, ~ never changes the character count, so multi-char case
+    // mappings (ß→SS and friends) are replaced one-to-one or left alone
     let toggled: String = rope
         .slice(start..end)
         .chars()
-        .flat_map(|c| {
-            if c.is_lowercase() {
-                c.to_uppercase().collect::<Vec<_>>()
+        .map(|c| {
+            let mapped: Vec<char> = if c.is_lowercase() {
+                c.to_uppercase().collect()
             } else if c.is_uppercase() {
-                c.to_lowercase().collect::<Vec<_>>()
+                c.to_lowercase().collect()
             } else {
-                vec![c]
+                return c;
+            };
+            match mapped[..] {
+                [single] => single,
+                _ if c == 'ß' => 'ẞ',
+                _ => c,
             }
         })
         .collect();

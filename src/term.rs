@@ -27,9 +27,12 @@ pub fn init() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    // Kitty is the one supported terminal; the flag removes the Esc-key
-    // ambiguity delay. Still guarded so a plain terminal survives.
-    if matches!(supports_keyboard_enhancement(), Ok(true)) {
+    // Kitty is the one supported terminal; the flag makes a lone Esc
+    // unambiguous, so it arrives with zero disambiguation delay. The support
+    // query can fail through wrappers, so a TERM naming kitty is trusted
+    // outright (inside tmux TERM is tmux-*/screen-* and the query decides).
+    let kitty_term = std::env::var("TERM").is_ok_and(|t| t.contains("kitty"));
+    if kitty_term || matches!(supports_keyboard_enhancement(), Ok(true)) {
         execute!(
             stdout,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)

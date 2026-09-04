@@ -150,13 +150,27 @@ impl Editor {
         self.scroll_to_cursor();
     }
 
-    pub(crate) fn repeat_last_change(&mut self) {
+    pub(crate) fn repeat_last_change(&mut self, count: Option<usize>) {
         // drop the '.' itself from the recording so it never becomes
         // the next last-change
         self.recording.clear();
-        let Some(keys) = self.last_change.clone() else {
+        let Some(mut keys) = self.last_change.clone() else {
             return;
         };
+        // a count on '.' replaces the leading count of the recorded change
+        // (vim keeps any count typed after an operator)
+        if let Some(n) = count {
+            let lead = if matches!(keys.first(), Some(Key::Char('1'..='9'))) {
+                keys.iter()
+                    .take_while(|k| matches!(k, Key::Char('0'..='9')))
+                    .count()
+            } else {
+                0
+            };
+            let mut with_count: Vec<Key> = n.to_string().chars().map(Key::Char).collect();
+            with_count.extend_from_slice(&keys[lead..]);
+            keys = with_count;
+        }
         self.replaying = true;
         for key in keys {
             self.handle_key(key);

@@ -95,10 +95,10 @@ pub fn next_word_start(rope: &Rope, abs: usize, big: bool) -> usize {
         }
     }
     while i < len && cls_at(rope, i, big) == CharClass::Blank {
-        // stop on an empty line: its position is the char right after a newline
-        // that is immediately followed by another newline (or EOF)
-        if rope.char(i) == '\n' && i + 1 < len && rope.char(i + 1) == '\n' {
-            return i + 1;
+        // stop on an empty line: a newline directly preceded by another
+        // newline marks the position of an empty line, which counts as a word
+        if rope.char(i) == '\n' && rope.char(i - 1) == '\n' {
+            return i;
         }
         i += 1;
     }

@@ -75,8 +75,10 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
 }
 
 fn leave_insert(ed: &mut Editor) {
-    let committed = ed.buffer.end_change();
-    ed.note_change_committed(committed);
+    // an unchanged session leaves no undo entry, but like vim any completed
+    // insert — even an empty one — becomes the dot-repeat
+    ed.buffer.end_change();
+    ed.note_change_committed(true);
     ed.mode = Mode::Normal;
     ed.goal = None;
     // vim moves the cursor one position left when leaving insert mode

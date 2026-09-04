@@ -60,10 +60,8 @@ fn draw_text(f: &mut Frame, ed: &Editor, area: Rect, gutter_w: u16, lines_total:
     for row in 0..area.height {
         let line_idx = ed.top_line + row as usize;
         if line_idx >= lines_total {
-            rows.push(Line::styled(
-                "~",
-                Style::default().bg(palette::BG).fg(palette::COMMENT),
-            ));
+            // nvim look: blank past end of buffer, no vim-style tildes
+            rows.push(Line::default());
             continue;
         }
         let is_cursor_line = line_idx == ed.cursor.line;
