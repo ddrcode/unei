@@ -26,6 +26,16 @@ pub struct Options {
     pub resize_step_rows: u16,
 }
 
+/// Width of the line-number gutter for a buffer of `lines_total` lines
+/// (shared by the renderer and the window-geometry code).
+pub fn gutter_width(lines_total: usize) -> u16 {
+    if OPTIONS.number {
+        (lines_total.to_string().len().max(3) + 1) as u16
+    } else {
+        0
+    }
+}
+
 pub const OPTIONS: Options = Options {
     tabstop: 4,
     shiftwidth: 4,

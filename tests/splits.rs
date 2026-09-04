@@ -334,3 +334,79 @@ fn window_chord_cancels_cleanly_on_unknown_key() {
     assert_eq!(ed.window_count(), 1);
     assert_eq!(text(&ed), "bc\n");
 }
+
+/// What `ui::render` does before drawing: hand the focused window its true
+/// text dimensions. The event loop draws after every key, so scroll math
+/// always runs against dimensions set by a previous frame.
+fn render_pass(ed: &mut Editor) {
+    ed.set_window_area(tailored::editor::testing::window_area(ed));
+    let rects = ed.window_rects();
+    let focused = ed.focused_window_id();
+    if let Some((_, r)) = rects.iter().find(|(id, _)| *id == focused) {
+        let lines = tailored::core::text::text_lines(&ed.buffer.rope);
+        let gutter = tailored::config::gutter_width(lines);
+        ed.set_view(
+            r.width.saturating_sub(gutter) as usize,
+            r.height.saturating_sub(1) as usize,
+        );
+    }
+}
+
+#[test]
+fn focus_switch_preserves_scroll_position() {
+    // the reported bug: two columns, left column split horizontally, long
+    // file in the right column - switching away and back lost the scroll
+    let long = (1..=60).map(|i| format!("line {i}\n")).collect::<String>();
+    let mut ed = editor_with_buffers(&[("short.txt", "a\nb\n"), ("long.txt", &long)]);
+    feed(&mut ed, "<C-w>v"); // right column, focused
+    render_pass(&mut ed);
+    let right = ed.focused_window_id();
+    feed(&mut ed, " bk<CR>"); // open the long file there
+    feed(&mut ed, "30G"); // scroll somewhere below the top
+    render_pass(&mut ed);
+    let (line, top) = (ed.cursor.line, ed.top_line);
+    assert!(top > 0, "top of the file must be scrolled out");
+
+    feed(&mut ed, "<C-w>j"); // to the left column
+    render_pass(&mut ed);
+    feed(&mut ed, "<C-w>s"); // split it horizontally (short bottom pane)
+    render_pass(&mut ed); // the frame that used to plant stale dimensions
+    feed(&mut ed, "kik"); // wiggle around in the small pane
+    render_pass(&mut ed);
+    feed(&mut ed, "<C-w>l"); // and back to the right column
+    render_pass(&mut ed);
+    assert_eq!(ed.focused_window_id(), right);
+    assert_eq!(ed.cursor.line, line, "cursor position survives");
+    assert_eq!(ed.top_line, top, "scroll position survives");
+}
+
+#[test]
+fn focus_switch_between_horizontal_splits_keeps_top_line() {
+    // the off-by-one variant: sibling h-splits with slightly different heights
+    let long = (1..=60).map(|i| format!("l{i}\n")).collect::<String>();
+    let mut ed = editor_from(&long);
+    feed(&mut ed, "<C-w>s"); // bottom window focused, same buffer
+    render_pass(&mut ed);
+    feed(&mut ed, "40G");
+    render_pass(&mut ed);
+    let top = ed.top_line;
+    feed(&mut ed, "<C-w>i");
+    render_pass(&mut ed);
+    feed(&mut ed, "<C-w>k"); // up and straight back
+    render_pass(&mut ed);
+    assert_eq!(ed.top_line, top);
+}
+
+#[test]
+fn zoom_rescrolls_for_the_larger_viewport() {
+    let long = (1..=60).map(|i| format!("z{i}\n")).collect::<String>();
+    let mut ed = editor_from(&long);
+    feed(&mut ed, "<C-w>s30G");
+    render_pass(&mut ed);
+    let small_top = ed.top_line;
+    feed(&mut ed, "<C-w>z"); // zoom: taller viewport, scrolloff re-applies
+    render_pass(&mut ed);
+    assert!(ed.is_zoomed());
+    assert!(ed.top_line <= small_top);
+    assert_eq!(ed.cursor.line, 29); // cursor itself never moves
+}

@@ -277,7 +277,7 @@ impl Editor {
         self.checkout_buffer(id);
         self.alternate = Some(old);
         self.clamp_cursor();
-        self.scroll_to_cursor();
+        self.refresh_focused_view();
         self.msg(Self::buffer_name(&self.buffer));
     }
 
@@ -388,6 +388,26 @@ impl Editor {
     /// Called by the renderer (and tests) with the region windows occupy.
     pub fn set_window_area(&mut self, area: Rect) {
         self.win_area = area;
+        self.refresh_focused_view();
+    }
+
+    /// Points `view` at the focused window's actual text dimensions (from
+    /// the current layout) and re-scrolls. Must run after anything that
+    /// changes focus or geometry — scrolling against the previous window's
+    /// dimensions clobbers the restored scroll position.
+    pub(crate) fn refresh_focused_view(&mut self) {
+        let Some((_, rect)) = self
+            .window_rects()
+            .into_iter()
+            .find(|(id, _)| *id == self.focused_win)
+        else {
+            return;
+        };
+        let gutter = crate::config::gutter_width(text_lines(&self.buffer.rope));
+        self.set_view(
+            rect.width.saturating_sub(gutter) as usize,
+            rect.height.saturating_sub(1) as usize,
+        );
     }
 
     /// Screen rectangles of all windows (each includes its statusline row).
@@ -482,7 +502,7 @@ impl Editor {
         self.alternate = state.alternate;
         self.focused_win = id;
         self.clamp_cursor();
-        self.scroll_to_cursor();
+        self.refresh_focused_view();
     }
 
     pub(crate) fn focus_direction(&mut self, dir: WinDir) {
@@ -575,6 +595,7 @@ impl Editor {
         };
         self.focus_window(target);
         self.win_root.close(closing);
+        self.refresh_focused_view();
     }
 
     /// `Ctrl+w o` — the focused window becomes the only one. Buffers shown
@@ -586,26 +607,31 @@ impl Editor {
                 self.win_root.close(id);
             }
         }
+        self.refresh_focused_view();
     }
 
     pub(crate) fn equalize_windows(&mut self) {
         self.zoomed = false;
         self.win_root.equalize();
+        self.refresh_focused_view();
     }
 
     pub(crate) fn rotate_windows(&mut self) {
         self.zoomed = false;
         self.win_root.rotate(self.focused_win);
+        self.refresh_focused_view();
     }
 
     pub(crate) fn flip_layout(&mut self) {
         self.zoomed = false;
         self.win_root.flip(self.focused_win);
+        self.refresh_focused_view();
     }
 
     pub(crate) fn zoom_toggle(&mut self) {
         if self.window_count() > 1 {
             self.zoomed = !self.zoomed;
+            self.refresh_focused_view();
         }
     }
 
@@ -617,6 +643,7 @@ impl Editor {
         };
         self.win_root
             .resize(self.focused_win, dir, step, self.win_area);
+        self.refresh_focused_view();
     }
 
     /// `:q`-family behavior: with splits open, closes the window; the last

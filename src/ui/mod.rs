@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::{OPTIONS, palette};
+use crate::config::{OPTIONS, gutter_width, palette};
 use crate::core::text::{cell_at_col, line_content, line_graphemes, text_lines};
 use crate::editor::{Editor, Mode};
 
@@ -21,14 +21,6 @@ struct WinView<'a> {
     top_line: usize,
     left_cell: usize,
     focused: bool,
-}
-
-fn gutter_width(lines_total: usize) -> u16 {
-    if OPTIONS.number {
-        (lines_total.to_string().len().max(3) + 1) as u16
-    } else {
-        0
-    }
 }
 
 pub fn render(f: &mut Frame, ed: &mut Editor) {
