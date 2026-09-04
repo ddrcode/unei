@@ -80,6 +80,25 @@ picker (resolving the ticket's TBD). Ctrl+Enter creates the queried path:
 parent directories eagerly, the file itself on first `:w`; new paths must
 stay inside the working folder. Preview is #26.
 
+## 2026-09-04 — Syntax highlighting: own tree-sitter engine, full reparse
+
+Highlighting (ticket #17) drives tree-sitter core directly instead of the
+`tree-sitter-highlight` crate: that crate's merged event stream mangles
+ordering across injection layers (markdown inline/fences lost or misnested
+captures), while direct control gives deterministic layering — captures
+paint a per-byte canvas parents-before-children, injected languages parse
+with included ranges and paint on top, innermost last. Queries come bundled
+with the grammar crates (nvim-treesitter-lineage, including `@none` as the
+reset capture); the capture→style table lives in `config/theme.rs` and the
+grammar registry in `config/languages.rs` (adding/removing a language is a
+registry entry + a Cargo dependency). Buffers re-highlight by full reparse
+when their version changes, lazily at render — measured at ~5-10ms per
+keystroke on a 1000-line Rust file (release); the named future optimization
+is incremental parsing via `InputEdit` plumbed through `Buffer::insert/remove`.
+Scope: highlighting only — indentation patterns and folds are separate
+tickets. Files over 2MB and unregistered languages render plain (no
+fallback, per the rules).
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

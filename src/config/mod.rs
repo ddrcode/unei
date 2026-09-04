@@ -2,7 +2,9 @@
 //! that is the point (see docs/rules.md).
 
 pub mod keymap;
+pub mod languages;
 pub mod palette;
+pub mod theme;
 
 /// Editor options, mirroring the author's nvim `settings.lua`.
 pub struct Options {

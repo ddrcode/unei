@@ -13,6 +13,11 @@ ropey = "1.6"
 ratatui = "0.29"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+tree-sitter = "0.27.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-md = "0.5.3"
+tree-sitter-toml-ng = "0.7.0"
+streaming-iterator = "0.1.9"
 
 [[bin]]
 name = "tailored"

@@ -123,6 +123,7 @@ pub struct Editor {
     pub view: View,
     pub buffer_list: Option<BufferList>,
     pub file_picker: Option<file_picker::FilePicker>,
+    pub syntax: crate::syntax::Syntax,
     /// Working folder: picker listings and relative opens resolve against it.
     root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
@@ -193,6 +194,7 @@ impl Editor {
             },
             buffer_list: None,
             file_picker: None,
+            syntax: crate::syntax::Syntax::default(),
             root: std::path::PathBuf::from("."),
             slots,
             current: 1,
@@ -337,6 +339,7 @@ impl Editor {
         }
         let idx = self.slot_index(id).expect("still present");
         self.slots.remove(idx);
+        self.syntax.invalidate(id);
         if self.alternate == Some(id) {
             self.alternate = None;
         }
@@ -516,6 +519,24 @@ impl Editor {
                 Err(e) => self.err(format!("{e:#}")),
             },
         }
+    }
+
+    /// Lazily refreshes syntax highlights for a buffer (render prefetch).
+    pub fn ensure_syntax(&mut self, buf_id: BufId) -> bool {
+        let buffer = if buf_id == self.current {
+            &self.buffer
+        } else {
+            match self
+                .slots
+                .iter()
+                .find(|s| s.id == buf_id)
+                .and_then(|s| s.buffer.as_ref())
+            {
+                Some(b) => b,
+                None => return false,
+            }
+        };
+        self.syntax.ensure(buf_id, buffer)
     }
 
     fn live_win_state(&self) -> WinState {

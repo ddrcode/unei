@@ -10,7 +10,8 @@ tailorED is a bespoke, personal vim-like terminal editor written in Rust (Ratatu
 
 The crate is a library (headless, fully testable editor core) plus a thin binary (`src/main.rs`, terminal event loop):
 
-- `config/` — ALL configuration, compiled in: options (`OPTIONS`), the key→command tables (`keymap.rs` — the IJKL layout lives here), chrome palette. Behavior changes happen here first.
+- `config/` — ALL configuration, compiled in: options (`OPTIONS`), the key→command tables (`keymap.rs` — the IJKL layout lives here), chrome palette, capture→style theme (`theme.rs`), and the tree-sitter grammar registry (`languages.rs` — add a language here + Cargo dep). Behavior changes happen here first.
+- `syntax.rs` — per-buffer highlight cache driving tree-sitter core directly (deterministic injection layering; see docs/decisions.md). Version-checked full reparse, lazily at render.
 - `core/` — buffer (ropey rope + snapshot undo + newline invariant), grapheme/width-aware text helpers, motion resolution (`motion.rs` returns target + linewise/inclusive/exclusive kind), shared command enums.
 - `editor/` — the modal state machine: `Editor::handle_key` consumes `Key`s with no terminal coupling; `normal.rs` (operators, pending state, registers, dot-repeat), `insert.rs`, `cmdline.rs`, `buffer_list.rs` + `file_picker.rs` (overlays; the picker is the one file-opening mechanism), `windows.rs` (split tree + geometry); buffers AND windows use the same checkout model (the focused window's buffer and view state live in flat `Editor` fields, everything else is parked — see docs/decisions.md); `testing.rs` feeds key specs like `"cwfoo<Esc>"` for tests.
 - `launch.rs` — CLI working-folder rules (ticket #3): dir arg → root + picker; file arg → parent is root.

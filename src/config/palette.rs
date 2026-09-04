@@ -25,3 +25,13 @@ pub const MODE_COMMAND: Color = Color::Rgb(0xC7, 0x92, 0xEA);
 pub const MODE_LABEL_FG: Color = Color::Rgb(0x1B, 0x26, 0x2B);
 
 pub const ERROR_FG: Color = Color::Rgb(0xF0, 0x71, 0x78);
+
+// material oceanic accents (see config/theme.rs for the capture mapping)
+pub const RED: Color = Color::Rgb(0xF0, 0x71, 0x78);
+pub const GREEN: Color = Color::Rgb(0xC3, 0xE8, 0x8D);
+pub const YELLOW: Color = Color::Rgb(0xFF, 0xCB, 0x6B);
+pub const BLUE: Color = Color::Rgb(0x82, 0xAA, 0xFF);
+pub const CYAN: Color = Color::Rgb(0x89, 0xDD, 0xFF);
+pub const PURPLE: Color = Color::Rgb(0xC7, 0x92, 0xEA);
+pub const ORANGE: Color = Color::Rgb(0xF7, 0x8C, 0x6C);
+pub const PALE: Color = Color::Rgb(0xB0, 0xC9, 0xFF);
