@@ -226,11 +226,11 @@ fn draw_text(f: &mut Frame, view: &WinView, area: Rect) {
                 Style::default().bg(palette::GUTTER_BG).fg(num_fg),
             ));
         }
-        let visible = visible_slice(
-            &line_content(view.rope, line_idx),
-            view.left_cell,
-            area.width.saturating_sub(gutter_w) as usize,
-        );
+        let text_w = area.width.saturating_sub(gutter_w) as usize;
+        let mut visible = visible_slice(&line_content(view.rope, line_idx), view.left_cell, text_w);
+        // pad to full width so the cursorline highlight spans the window
+        let pad = text_w.saturating_sub(visible.width());
+        visible.push_str(&" ".repeat(pad));
         spans.push(Span::styled(
             visible,
             Style::default().bg(line_bg).fg(palette::FG),
