@@ -6,7 +6,7 @@
 //! so `dh` still deletes left, exactly like the author's nvim.
 
 use crate::core::commands::{
-    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, ScrollCmd, SimpleCmd, Token,
+    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, ScrollCmd, SimpleCmd, Token, WinCmd, WinDir,
 };
 use crate::core::motion::Motion;
 
@@ -17,6 +17,7 @@ pub const LEADER: Key = Key::Char(' ');
 pub enum Key {
     Char(char),
     Ctrl(char),
+    Alt(char),
     Esc,
     Enter,
     Backspace,
@@ -109,6 +110,9 @@ pub fn normal_token(key: Key) -> Option<Token> {
         // buffers
         Key::Ctrl('^') | Key::Ctrl('6') => Token::AlternateBuffer,
 
+        // windows
+        Key::Ctrl('w') => Token::PrefixWindow,
+
         // prefixes
         k if k == LEADER => Token::Leader,
         Key::Char('g') => Token::PrefixG,
@@ -124,8 +128,41 @@ pub fn normal_token(key: Key) -> Option<Token> {
 pub fn leader_token(key: Key) -> Option<LeaderCmd> {
     match key {
         Key::Char('b') => Some(LeaderCmd::BufferList),
+        Key::Char('w') => Some(LeaderCmd::WindowPrefix),
         _ => None,
     }
+}
+
+/// Second key of a window chord (`Ctrl+w …` / `<leader>w …`).
+///
+/// Ticket #4 wanted `l` for "swap layout", but the rules make IJKL navigation
+/// universal (`Ctrl+w+i` = panel above is the rules' own example), so `l`
+/// focuses right and layout-flip sits on Space (tmux's next-layout key).
+pub fn window_token(key: Key) -> Option<WinCmd> {
+    Some(match key {
+        // focus: IJKL and arrows
+        Key::Char('i') | Key::Up => WinCmd::Focus(WinDir::Up),
+        Key::Char('k') | Key::Down => WinCmd::Focus(WinDir::Down),
+        Key::Char('j') | Key::Left => WinCmd::Focus(WinDir::Left),
+        Key::Char('l') | Key::Right => WinCmd::Focus(WinDir::Right),
+
+        // resize: left-Alt + navigation, tmux style
+        Key::Alt('i') => WinCmd::Resize(WinDir::Up),
+        Key::Alt('k') => WinCmd::Resize(WinDir::Down),
+        Key::Alt('j') => WinCmd::Resize(WinDir::Left),
+        Key::Alt('l') => WinCmd::Resize(WinDir::Right),
+
+        Key::Char('=') => WinCmd::Equalize,
+        Key::Char('r') => WinCmd::Rotate,
+        Key::Char(' ') => WinCmd::FlipLayout,
+        Key::Char('z') => WinCmd::ZoomToggle,
+        Key::Char('s') | Key::Char('x') => WinCmd::SplitH,
+        Key::Char('v') => WinCmd::SplitV,
+        Key::Char('n') => WinCmd::SplitNew,
+        Key::Char('q') => WinCmd::CloseWindow,
+        Key::Char('o') => WinCmd::OnlyWindow,
+        _ => return None,
+    })
 }
 
 /// Keys inside the buffer-list overlay: IJKL navigation, Enter picks,

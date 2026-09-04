@@ -75,11 +75,13 @@ pub fn convert(ev: KeyEvent) -> Option<Key> {
         return None;
     }
     let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = ev.modifiers.contains(KeyModifiers::ALT);
     Some(match ev.code {
         KeyCode::Char(c) if ctrl => match c {
             '[' => Key::Esc,
             _ => Key::Ctrl(c.to_ascii_lowercase()),
         },
+        KeyCode::Char(c) if alt => Key::Alt(c.to_ascii_lowercase()),
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Esc => Key::Esc,
         KeyCode::Enter => Key::Enter,

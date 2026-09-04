@@ -20,6 +20,20 @@ pub struct Options {
     pub cursorline: bool,
     /// Ensure the file ends with a newline on save (editorconfig: insert_final_newline).
     pub final_newline: bool,
+    /// Cells a window border moves per `Ctrl+w Alt+j/l` press (tmux uses 5).
+    pub resize_step_cols: u16,
+    /// Rows a window border moves per `Ctrl+w Alt+i/k` press.
+    pub resize_step_rows: u16,
+}
+
+/// Width of the line-number gutter for a buffer of `lines_total` lines
+/// (shared by the renderer and the window-geometry code).
+pub fn gutter_width(lines_total: usize) -> u16 {
+    if OPTIONS.number {
+        (lines_total.to_string().len().max(3) + 1) as u16
+    } else {
+        0
+    }
 }
 
 pub const OPTIONS: Options = Options {
@@ -30,4 +44,6 @@ pub const OPTIONS: Options = Options {
     number: true,
     cursorline: true,
     final_newline: true,
+    resize_step_cols: 5,
+    resize_step_rows: 2,
 };

@@ -1,12 +1,15 @@
 use crate::config::OPTIONS;
 use crate::config::keymap::{self, Key};
 use crate::core::buffer::Cursor;
-use crate::core::commands::{InsertEntry, LeaderCmd, Op, Register, ScrollCmd, SimpleCmd, Token};
+use crate::core::commands::{
+    InsertEntry, LeaderCmd, Op, Register, ScrollCmd, SimpleCmd, Token, WinCmd,
+};
 use crate::core::motion::{self, Motion, MotionCtx, MotionKind};
 use crate::core::text::{
     self, CharClass, char_class, first_non_blank, gr_index_at_col, line_content, line_graphemes,
     line_indent, line_len, max_normal_col, text_lines,
 };
+use crate::editor::windows::SplitDir;
 
 use super::{Awaiting, Editor, Mode};
 
@@ -51,7 +54,7 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
             ed.pending.awaiting = Awaiting::None;
             match key {
                 Key::Char('Z') => ed.save_and_quit(true),
-                Key::Char('Q') => ed.quit(true),
+                Key::Char('Q') => ed.close_window_or_quit(true),
                 _ => {}
             }
             clear_pending(ed);
@@ -62,12 +65,39 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 Some(LeaderCmd::BufferList) => {
                     ed.drop_recording();
                     super::buffer_list::open(ed);
+                    clear_pending(ed);
                 }
-                None => {}
+                Some(LeaderCmd::WindowPrefix) => {
+                    ed.pending.awaiting = Awaiting::Window;
+                }
+                None => clear_pending(ed),
+            }
+        }
+        Awaiting::Window => {
+            ed.pending.awaiting = Awaiting::None;
+            if let Some(cmd) = keymap::window_token(key) {
+                ed.drop_recording();
+                window_cmd(ed, cmd);
             }
             clear_pending(ed);
         }
         Awaiting::None => dispatch(ed, key),
+    }
+}
+
+fn window_cmd(ed: &mut Editor, cmd: WinCmd) {
+    match cmd {
+        WinCmd::Focus(dir) => ed.focus_direction(dir),
+        WinCmd::Resize(dir) => ed.resize_window(dir),
+        WinCmd::Equalize => ed.equalize_windows(),
+        WinCmd::Rotate => ed.rotate_windows(),
+        WinCmd::FlipLayout => ed.flip_layout(),
+        WinCmd::ZoomToggle => ed.zoom_toggle(),
+        WinCmd::SplitH => ed.split_window(SplitDir::Horizontal, false),
+        WinCmd::SplitV => ed.split_window(SplitDir::Vertical, false),
+        WinCmd::SplitNew => ed.split_window(SplitDir::Horizontal, true),
+        WinCmd::CloseWindow => ed.close_window(false),
+        WinCmd::OnlyWindow => ed.only_window(),
     }
 }
 
@@ -155,6 +185,13 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 clear_pending(ed);
             } else {
                 ed.pending.awaiting = Awaiting::Leader;
+            }
+        }
+        Token::PrefixWindow => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.awaiting = Awaiting::Window;
             }
         }
         Token::AlternateBuffer => {

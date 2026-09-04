@@ -63,6 +63,10 @@ pub fn keys(spec: &str) -> Vec<Key> {
             s if s.starts_with("C-") && s.chars().count() == 3 => {
                 Key::Ctrl(s.chars().nth(2).unwrap())
             }
+            s if s.starts_with("A-") && s.chars().count() == 3 => {
+                Key::Alt(s.chars().nth(2).unwrap())
+            }
+            "Space" => Key::Char(' '),
             other => panic!("unknown key spec <{other}>"),
         };
         out.push(key);
@@ -78,4 +82,10 @@ pub fn feed(ed: &mut Editor, spec: &str) {
 
 pub fn text(ed: &Editor) -> String {
     ed.buffer.rope.to_string()
+}
+
+/// The screen region the window tree occupies in tests (see `editor_from`).
+pub fn window_area(ed: &Editor) -> ratatui::layout::Rect {
+    let _ = ed;
+    ratatui::layout::Rect::new(0, 0, 80, 23)
 }

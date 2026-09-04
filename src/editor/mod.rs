@@ -3,15 +3,19 @@ mod cmdline;
 mod insert;
 mod normal;
 pub mod testing;
+pub mod windows;
+
+use ratatui::layout::Rect;
 
 use crate::config::OPTIONS;
 use crate::config::keymap::Key;
 use crate::core::buffer::{Buffer, Cursor};
-use crate::core::commands::{FindKind, Op, Register};
+use crate::core::commands::{FindKind, Op, Register, WinDir};
 use crate::core::text::{
     cell_at_col, first_non_blank, gr_index_at_col, line_content, line_graphemes, line_len,
     max_normal_col, text_lines,
 };
+use windows::{MIN_WIN_HEIGHT, MIN_WIN_WIDTH, Node, SplitDir, WinId, WinState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -30,6 +34,8 @@ pub enum Awaiting {
     Z,
     ZUpper,
     Leader,
+    /// `Ctrl+w` / `<leader>w` pressed, second key pending.
+    Window,
 }
 
 #[derive(Debug, Default)]
@@ -119,7 +125,17 @@ pub struct Editor {
     /// `buffer` and its slot holds `None`.
     slots: Vec<Slot>,
     current: BufId,
+    /// The focused window's alternate buffer (parked windows keep theirs
+    /// in their `WinState`).
     alternate: Option<BufId>,
+    /// Split-window tree; the focused window's view state is checked out
+    /// into the flat fields above.
+    win_root: Node,
+    focused_win: WinId,
+    next_win_id: WinId,
+    zoomed: bool,
+    /// Screen region the window tree occupies (updated by the renderer).
+    win_area: Rect,
     recording: Vec<Key>,
     last_change: Option<Vec<Key>>,
     replaying: bool,
@@ -175,6 +191,11 @@ impl Editor {
             slots,
             current: 1,
             alternate: None,
+            win_root: Node::leaf(1, None),
+            focused_win: 1,
+            next_win_id: 2,
+            zoomed: false,
+            win_area: Rect::new(0, 0, 80, 23),
             recording: Vec::new(),
             last_change: None,
             replaying: false,
@@ -219,8 +240,9 @@ impl Editor {
         self.slots.iter().position(|s| s.id == id)
     }
 
-    /// Checks the current buffer back into its slot and checks `id` out.
-    pub(crate) fn switch_to(&mut self, id: BufId) {
+    /// Checks the current buffer back into its slot (remembering its view)
+    /// and checks `id` out, loading that buffer's remembered view.
+    fn checkout_buffer(&mut self, id: BufId) {
         if id == self.current {
             return;
         }
@@ -243,10 +265,19 @@ impl Editor {
         self.goal = slot.goal;
         self.top_line = slot.top_line;
         self.left_cell = slot.left_cell;
-        self.alternate = Some(self.current);
         self.current = id;
+    }
+
+    /// Switches the focused window to buffer `id` (sets the alternate).
+    pub(crate) fn switch_to(&mut self, id: BufId) {
+        if id == self.current || self.slot_index(id).is_none() {
+            return;
+        }
+        let old = self.current;
+        self.checkout_buffer(id);
+        self.alternate = Some(old);
         self.clamp_cursor();
-        self.scroll_to_cursor();
+        self.refresh_focused_view();
         self.msg(Self::buffer_name(&self.buffer));
     }
 
@@ -302,6 +333,326 @@ impl Editor {
         self.slots.remove(idx);
         if self.alternate == Some(id) {
             self.alternate = None;
+        }
+        // parked windows showing the closed buffer move to their alternate
+        // (falling back to the first remaining buffer), at that buffer's
+        // remembered view
+        let fallback = self.slots.first().map(|s| s.id).unwrap_or(self.current);
+        let views: Vec<(BufId, Cursor, usize)> = self
+            .slots
+            .iter()
+            .map(|s| (s.id, s.cursor, s.top_line))
+            .collect();
+        let mut states = Vec::new();
+        self.win_root.states_mut(&mut states);
+        for (_, state) in states {
+            if state.alternate == Some(id) {
+                state.alternate = None;
+            }
+            if state.buf_id == id {
+                let new_buf = state
+                    .alternate
+                    .filter(|a| views.iter().any(|(b, ..)| b == a))
+                    .unwrap_or(fallback);
+                let (cursor, top) = views
+                    .iter()
+                    .find(|(b, ..)| *b == new_buf)
+                    .map(|(_, c, t)| (*c, *t))
+                    .unwrap_or_default();
+                state.buf_id = new_buf;
+                state.cursor = cursor;
+                state.top_line = top;
+                state.goal = None;
+                state.left_cell = 0;
+                state.alternate = None;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Windows
+    // ------------------------------------------------------------------
+
+    pub fn window_count(&self) -> usize {
+        self.win_root.window_count()
+    }
+
+    pub fn focused_window_id(&self) -> WinId {
+        self.focused_win
+    }
+
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
+    }
+
+    /// Called by the renderer (and tests) with the region windows occupy.
+    pub fn set_window_area(&mut self, area: Rect) {
+        self.win_area = area;
+        self.refresh_focused_view();
+    }
+
+    /// Points `view` at the focused window's actual text dimensions (from
+    /// the current layout) and re-scrolls. Must run after anything that
+    /// changes focus or geometry — scrolling against the previous window's
+    /// dimensions clobbers the restored scroll position.
+    pub(crate) fn refresh_focused_view(&mut self) {
+        let Some((_, rect)) = self
+            .window_rects()
+            .into_iter()
+            .find(|(id, _)| *id == self.focused_win)
+        else {
+            return;
+        };
+        let gutter = crate::config::gutter_width(text_lines(&self.buffer.rope));
+        self.set_view(
+            rect.width.saturating_sub(gutter) as usize,
+            rect.height.saturating_sub(1) as usize,
+        );
+    }
+
+    /// Screen rectangles of all windows (each includes its statusline row).
+    /// While zoomed only the focused window is visible, full-area.
+    pub fn window_rects(&self) -> Vec<(WinId, Rect)> {
+        if self.zoomed {
+            return vec![(self.focused_win, self.win_area)];
+        }
+        let mut out = Vec::new();
+        self.win_root.layout(self.win_area, &mut out);
+        out
+    }
+
+    /// Separator columns between vertical splits (empty while zoomed).
+    pub fn window_separators(&self) -> Vec<Rect> {
+        if self.zoomed {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        self.win_root.separators(self.win_area, &mut out);
+        out
+    }
+
+    /// View state of a parked window (the focused one lives in the editor
+    /// fields). Cloned, for rendering.
+    pub fn parked_window(&self, id: WinId) -> Option<WinState> {
+        fn find(node: &Node, id: WinId) -> Option<&Option<WinState>> {
+            match node {
+                Node::Leaf { id: nid, state } if *nid == id => Some(state),
+                Node::Leaf { .. } => None,
+                Node::Split { children, .. } => children.iter().find_map(|c| find(c, id)),
+            }
+        }
+        find(&self.win_root, id).and_then(|s| s.clone())
+    }
+
+    /// The buffer shown by window `id` — the checked-out one or a parked slot.
+    pub fn window_buffer(&self, id: WinId) -> &Buffer {
+        let buf_id = if id == self.focused_win {
+            self.current
+        } else {
+            self.parked_window(id)
+                .map(|s| s.buf_id)
+                .unwrap_or(self.current)
+        };
+        self.buffer_ref(buf_id)
+    }
+
+    pub fn buffer_ref(&self, buf_id: BufId) -> &Buffer {
+        if buf_id == self.current {
+            return &self.buffer;
+        }
+        self.slot_index(buf_id)
+            .and_then(|i| self.slots[i].buffer.as_ref())
+            .unwrap_or(&self.buffer)
+    }
+
+    fn live_win_state(&self) -> WinState {
+        WinState {
+            buf_id: self.current,
+            cursor: self.cursor,
+            goal: self.goal,
+            top_line: self.top_line,
+            left_cell: self.left_cell,
+            alternate: self.alternate,
+        }
+    }
+
+    /// Moves focus to window `id`, checking view state (and, when needed,
+    /// the buffer) in and out.
+    pub(crate) fn focus_window(&mut self, id: WinId) {
+        if id == self.focused_win || !self.win_root.contains(id) {
+            return;
+        }
+        self.zoomed = false;
+        let parked = self.live_win_state();
+        if let Some(slot) = self.win_root.state_mut(self.focused_win) {
+            *slot = Some(parked);
+        }
+        let state = self
+            .win_root
+            .state_mut(id)
+            .and_then(Option::take)
+            .expect("parked window state");
+        if state.buf_id != self.current {
+            self.checkout_buffer(state.buf_id);
+        }
+        self.cursor = state.cursor;
+        self.goal = state.goal;
+        self.top_line = state.top_line;
+        self.left_cell = state.left_cell;
+        self.alternate = state.alternate;
+        self.focused_win = id;
+        self.clamp_cursor();
+        self.refresh_focused_view();
+    }
+
+    pub(crate) fn focus_direction(&mut self, dir: WinDir) {
+        let was_zoomed = std::mem::replace(&mut self.zoomed, false);
+        let rects = self.window_rects();
+        let pref = match dir {
+            WinDir::Left | WinDir::Right => {
+                // cursor's screen row within the focused window
+                let top = rects
+                    .iter()
+                    .find(|(id, _)| *id == self.focused_win)
+                    .map(|(_, r)| r.y)
+                    .unwrap_or(0);
+                top + (self.cursor.line.saturating_sub(self.top_line)) as u16
+            }
+            WinDir::Up | WinDir::Down => {
+                let left = rects
+                    .iter()
+                    .find(|(id, _)| *id == self.focused_win)
+                    .map(|(_, r)| r.x)
+                    .unwrap_or(0);
+                left + self.cursor.col.saturating_sub(self.left_cell) as u16
+            }
+        };
+        match windows::neighbor(&rects, self.focused_win, dir, pref) {
+            Some(id) => self.focus_window(id),
+            None => self.zoomed = was_zoomed,
+        }
+    }
+
+    /// `Ctrl+w s/v/n` — splits the focused window. `with_new_buffer` creates
+    /// an empty buffer for the new window (vim `Ctrl+w n`).
+    pub(crate) fn split_window(&mut self, dir: SplitDir, with_new_buffer: bool) {
+        self.zoomed = false;
+        let rect = self
+            .window_rects()
+            .into_iter()
+            .find(|(id, _)| *id == self.focused_win)
+            .map(|(_, r)| r)
+            .unwrap_or(self.win_area);
+        let fits = match dir {
+            SplitDir::Horizontal => rect.height >= 2 * MIN_WIN_HEIGHT,
+            SplitDir::Vertical => rect.width > 2 * MIN_WIN_WIDTH,
+        };
+        if !fits {
+            self.err("E36: Not enough room");
+            return;
+        }
+        let state = if with_new_buffer {
+            let buf_id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+            self.slots.push(Slot {
+                id: buf_id,
+                buffer: Some(Buffer::from_text("")),
+                cursor: Cursor::default(),
+                goal: None,
+                top_line: 0,
+                left_cell: 0,
+            });
+            WinState {
+                buf_id,
+                ..Default::default()
+            }
+        } else {
+            // same buffer, same view — vim keeps the position in both windows
+            let mut s = self.live_win_state();
+            s.alternate = None;
+            s
+        };
+        let id = self.next_win_id;
+        self.next_win_id += 1;
+        self.win_root
+            .split(self.focused_win, dir, Node::leaf(id, Some(state)));
+        self.focus_window(id);
+    }
+
+    /// `Ctrl+w q` — closes the focused window; the last one quits the editor.
+    pub(crate) fn close_window(&mut self, force: bool) {
+        self.zoomed = false;
+        if self.window_count() == 1 {
+            self.quit(force);
+            return;
+        }
+        let closing = self.focused_win;
+        let ids = self.win_root.window_ids();
+        let pos = ids.iter().position(|w| *w == closing).unwrap_or(0);
+        let target = if pos + 1 < ids.len() {
+            ids[pos + 1]
+        } else {
+            ids[pos - 1]
+        };
+        self.focus_window(target);
+        self.win_root.close(closing);
+        self.refresh_focused_view();
+    }
+
+    /// `Ctrl+w o` — the focused window becomes the only one. Buffers shown
+    /// elsewhere stay open (hidden), like vim with 'hidden' set.
+    pub(crate) fn only_window(&mut self) {
+        self.zoomed = false;
+        for id in self.win_root.window_ids() {
+            if id != self.focused_win {
+                self.win_root.close(id);
+            }
+        }
+        self.refresh_focused_view();
+    }
+
+    pub(crate) fn equalize_windows(&mut self) {
+        self.zoomed = false;
+        self.win_root.equalize();
+        self.refresh_focused_view();
+    }
+
+    pub(crate) fn rotate_windows(&mut self) {
+        self.zoomed = false;
+        self.win_root.rotate(self.focused_win);
+        self.refresh_focused_view();
+    }
+
+    pub(crate) fn flip_layout(&mut self) {
+        self.zoomed = false;
+        self.win_root.flip(self.focused_win);
+        self.refresh_focused_view();
+    }
+
+    pub(crate) fn zoom_toggle(&mut self) {
+        if self.window_count() > 1 {
+            self.zoomed = !self.zoomed;
+            self.refresh_focused_view();
+        }
+    }
+
+    pub(crate) fn resize_window(&mut self, dir: WinDir) {
+        self.zoomed = false;
+        let step = match dir {
+            WinDir::Left | WinDir::Right => OPTIONS.resize_step_cols,
+            WinDir::Up | WinDir::Down => OPTIONS.resize_step_rows,
+        };
+        self.win_root
+            .resize(self.focused_win, dir, step, self.win_area);
+        self.refresh_focused_view();
+    }
+
+    /// `:q`-family behavior: with splits open, closes the window; the last
+    /// window quits the editor (with the modified-buffer checks).
+    pub(crate) fn close_window_or_quit(&mut self, force: bool) {
+        if self.window_count() > 1 {
+            self.close_window(force);
+        } else {
+            self.quit(force);
         }
     }
 
@@ -521,6 +872,10 @@ impl Editor {
         if (!only_if_modified || self.buffer.is_modified()) && !self.save() {
             return;
         }
+        if self.window_count() > 1 {
+            self.close_window(false);
+            return;
+        }
         if let Some(name) = self.any_modified_buffer() {
             self.err(format!(
                 "E162: No write since last change for buffer \"{name}\""
@@ -563,6 +918,7 @@ impl Editor {
             Awaiting::Z => s.push('z'),
             Awaiting::ZUpper => s.push('Z'),
             Awaiting::Leader => s.push('␣'),
+            Awaiting::Window => s.push_str("^W"),
         }
         s
     }
