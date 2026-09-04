@@ -14,6 +14,7 @@ use crate::editor::{Editor, Mode};
 /// editor fields (focused) or a parked `WinState`.
 struct WinView<'a> {
     rope: &'a ropey::Rope,
+    buf_id: crate::editor::BufId,
     name: String,
     modified: bool,
     cursor_line: usize,
@@ -40,6 +41,23 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
         ed.set_view(text_w as usize, rect.height.saturating_sub(1) as usize);
     }
 
+    // refresh syntax caches for every visible buffer before drawing
+    let visible_bufs: Vec<crate::editor::BufId> = rects
+        .iter()
+        .map(|(id, _)| {
+            if *id == focused_id {
+                ed.current_buffer_id()
+            } else {
+                ed.parked_window(*id)
+                    .map(|s| s.buf_id)
+                    .unwrap_or_else(|| ed.current_buffer_id())
+            }
+        })
+        .collect();
+    for b in visible_bufs {
+        ed.ensure_syntax(b);
+    }
+
     for (id, rect) in &rects {
         if rect.height < 2 || rect.width < 3 {
             continue;
@@ -47,6 +65,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
         let view = if *id == focused_id {
             WinView {
                 rope: &ed.buffer.rope,
+                buf_id: ed.current_buffer_id(),
                 name: buffer_display_name(ed.buffer.path.as_deref()),
                 modified: ed.buffer.is_modified(),
                 cursor_line: ed.cursor.line,
@@ -63,6 +82,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
             let last = text_lines(&buffer.rope) - 1;
             WinView {
                 rope: &buffer.rope,
+                buf_id: state.buf_id,
                 name: buffer_display_name(buffer.path.as_deref()),
                 modified: buffer.is_modified(),
                 cursor_line: state.cursor.line.min(last),
@@ -129,7 +149,7 @@ fn buffer_display_name(path: Option<&std::path::Path>) -> String {
 fn draw_window(f: &mut Frame, ed: &Editor, view: &WinView, rect: Rect) {
     let text_rect = Rect::new(rect.x, rect.y, rect.width, rect.height - 1);
     let status_rect = Rect::new(rect.x, rect.y + rect.height - 1, rect.width, 1);
-    draw_text(f, view, text_rect);
+    draw_text(f, ed, view, text_rect);
     draw_statusline(f, ed, view, status_rect);
 }
 
@@ -301,10 +321,11 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
     f.set_cursor_position((qx.min(rect.x + w - 2), rect.y + 1));
 }
 
-fn draw_text(f: &mut Frame, view: &WinView, area: Rect) {
+fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
     let base = Style::default().bg(palette::BG).fg(palette::FG);
     let lines_total = text_lines(view.rope);
     let gutter_w = gutter_width(lines_total);
+    let highlighted = ed.syntax.has_highlights(view.buf_id);
     let mut rows: Vec<Line> = Vec::with_capacity(area.height as usize);
 
     for row in 0..area.height {
@@ -335,23 +356,54 @@ fn draw_text(f: &mut Frame, view: &WinView, area: Rect) {
             ));
         }
         let text_w = area.width.saturating_sub(gutter_w) as usize;
-        let mut visible = visible_slice(&line_content(view.rope, line_idx), view.left_cell, text_w);
-        // pad to full width so the cursorline highlight spans the window
-        let pad = text_w.saturating_sub(visible.width());
-        visible.push_str(&" ".repeat(pad));
-        spans.push(Span::styled(
-            visible,
-            Style::default().bg(line_bg).fg(palette::FG),
-        ));
+        let syntax_spans = if highlighted {
+            ed.syntax.line_spans(view.buf_id, line_idx)
+        } else {
+            &[]
+        };
+        styled_visible(
+            &line_content(view.rope, line_idx),
+            view.left_cell,
+            text_w,
+            syntax_spans,
+            line_bg,
+            &mut spans,
+        );
         rows.push(Line::from(spans).style(Style::default().bg(line_bg)));
     }
 
     f.render_widget(Paragraph::new(rows).style(base), area);
 }
 
-/// Cuts the horizontally-scrolled window out of a line, expanding tabs.
-fn visible_slice(content: &str, left: usize, width: usize) -> String {
-    let mut out = String::new();
+/// Renders the horizontally-scrolled window of a line as styled spans:
+/// tree-sitter capture colors over the line background, tabs expanded,
+/// padded to full width (so the cursorline highlight spans the window).
+fn styled_visible(
+    content: &str,
+    left: usize,
+    width: usize,
+    syntax: &[crate::syntax::LineSpan],
+    line_bg: ratatui::style::Color,
+    out: &mut Vec<Span<'static>>,
+) {
+    let default_style = Style::default().bg(line_bg).fg(palette::FG);
+    let style_at = |char_off: usize| -> Style {
+        let off = char_off as u32;
+        for (start, end, capture) in syntax {
+            if *start <= off && off < *end {
+                return crate::config::theme::capture_style(*capture as usize).bg(line_bg);
+            }
+            if *start > off {
+                break;
+            }
+        }
+        default_style
+    };
+
+    let mut run = String::new();
+    let mut run_style = default_style;
+    let mut used = 0usize;
+    let mut char_off = 0usize;
     let mut cell = 0usize;
     for g in content.graphemes(true) {
         let w = if g == "\t" {
@@ -361,26 +413,36 @@ fn visible_slice(content: &str, left: usize, width: usize) -> String {
         };
         let start = cell;
         cell += w;
+        let chars = g.chars().count();
+        let this_off = char_off;
+        char_off += chars;
         if cell <= left {
             continue;
         }
         if start >= left + width {
             break;
         }
-        if g == "\t" {
-            let vis_from = start.max(left);
-            let vis_to = cell.min(left + width);
-            out.push_str(&" ".repeat(vis_to - vis_from));
-        } else if start < left || cell > left + width {
-            // partially visible wide grapheme
-            let vis_from = start.max(left);
-            let vis_to = cell.min(left + width);
-            out.push_str(&" ".repeat(vis_to.saturating_sub(vis_from)));
+        let vis_from = start.max(left);
+        let vis_to = cell.min(left + width);
+        let piece: String = if g == "\t" || start < left || cell > left + width {
+            " ".repeat(vis_to.saturating_sub(vis_from))
         } else {
-            out.push_str(g);
+            g.to_string()
+        };
+        let style = style_at(this_off);
+        if style != run_style && !run.is_empty() {
+            out.push(Span::styled(std::mem::take(&mut run), run_style));
         }
+        run_style = style;
+        used += piece.width();
+        run.push_str(&piece);
     }
-    out
+    if !run.is_empty() {
+        out.push(Span::styled(run, run_style));
+    }
+    if used < width {
+        out.push(Span::styled(" ".repeat(width - used), default_style));
+    }
 }
 
 /// Per-window statusline: the focused window carries the mode badge (and a
