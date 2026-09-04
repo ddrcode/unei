@@ -347,8 +347,10 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
             let num = format!("{:>width$} ", line_idx + 1, width = gutter_w as usize - 1);
             let num_fg = if is_cursor_line {
                 palette::GUTTER_CURRENT_FG
-            } else {
+            } else if view.focused {
                 palette::GUTTER_FG
+            } else {
+                palette::dimmed(palette::GUTTER_FG)
             };
             spans.push(Span::styled(
                 num,
@@ -367,6 +369,7 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
             text_w,
             syntax_spans,
             line_bg,
+            view.focused,
             &mut spans,
         );
         rows.push(Line::from(spans).style(Style::default().bg(line_bg)));
@@ -384,14 +387,18 @@ fn styled_visible(
     width: usize,
     syntax: &[crate::syntax::LineSpan],
     line_bg: ratatui::style::Color,
+    focused: bool,
     out: &mut Vec<Span<'static>>,
 ) {
-    let default_style = Style::default().bg(line_bg).fg(palette::FG);
+    // inactive panels render with all inks blended toward the background
+    let ink = |c: ratatui::style::Color| if focused { c } else { palette::dimmed(c) };
+    let default_style = Style::default().bg(line_bg).fg(ink(palette::FG));
     let style_at = |char_off: usize| -> Style {
         let off = char_off as u32;
         for (start, end, capture) in syntax {
             if *start <= off && off < *end {
-                return crate::config::theme::capture_style(*capture as usize).bg(line_bg);
+                let style = crate::config::theme::capture_style(*capture as usize);
+                return style.fg(ink(style.fg.unwrap_or(palette::FG))).bg(line_bg);
             }
             if *start > off {
                 break;
