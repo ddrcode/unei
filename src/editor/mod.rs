@@ -936,16 +936,50 @@ impl Editor {
     }
 
     pub(crate) fn save(&mut self) -> bool {
-        match self.buffer.save() {
-            Ok((path, lines)) => {
-                self.msg(format!("\"{}\" {}L written", path.display(), lines));
-                true
-            }
+        let (path, lines) = match self.buffer.save() {
+            Ok(ok) => ok,
             Err(e) => {
                 self.err(format!("E212: {e:#}"));
-                false
+                return false;
+            }
+        };
+        match crate::format::format_file(&path) {
+            crate::format::Outcome::NoConfig | crate::format::Outcome::Unchanged => {
+                self.msg(format!("\"{}\" {}L written", path.display(), lines));
+            }
+            crate::format::Outcome::Reformatted { text } => {
+                self.reload_current_buffer(&text);
+                self.msg(format!(
+                    "\"{}\" {}L written, formatted",
+                    path.display(),
+                    lines
+                ));
+            }
+            crate::format::Outcome::Failed(e) => {
+                self.err(format!("\"{}\" written; {e}", path.display()));
             }
         }
+        true
+    }
+
+    /// Replaces the current buffer's content with externally formatted text,
+    /// as a single undoable change; the buffer stays marked clean.
+    fn reload_current_buffer(&mut self, text: &str) {
+        self.buffer.begin_change(self.cursor);
+        let len = self.buffer.rope.len_chars();
+        self.buffer.remove(0..len);
+        self.buffer.insert(0, text);
+        if self.buffer.rope.len_chars() == 0
+            || self.buffer.rope.char(self.buffer.rope.len_chars() - 1) != '\n'
+        {
+            let at = self.buffer.rope.len_chars();
+            self.buffer.insert(at, "\n");
+        }
+        let committed = self.buffer.end_change();
+        self.note_change_committed(committed);
+        self.buffer.mark_saved();
+        self.clamp_cursor();
+        self.scroll_to_cursor();
     }
 
     pub(crate) fn save_and_quit(&mut self, only_if_modified: bool) {

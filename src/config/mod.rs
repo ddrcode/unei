@@ -22,6 +22,10 @@ pub struct Options {
     pub cursorline: bool,
     /// Ensure the file ends with a newline on save (editorconfig: insert_final_newline).
     pub final_newline: bool,
+    /// Run treefmt on the written file after every save (ticket #21).
+    pub format_on_save: bool,
+    /// Formatter budget; the treefmt process is killed on overrun.
+    pub format_timeout_ms: u64,
     /// Cells a window border moves per `Ctrl+w Alt+j/l` press (tmux uses 5).
     pub resize_step_cols: u16,
     /// Rows a window border moves per `Ctrl+w Alt+i/k` press.
@@ -48,4 +52,6 @@ pub const OPTIONS: Options = Options {
     final_newline: true,
     resize_step_cols: 5,
     resize_step_rows: 2,
+    format_on_save: true,
+    format_timeout_ms: 1500,
 };

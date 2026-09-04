@@ -15,6 +15,7 @@ The crate is a library (headless, fully testable editor core) plus a thin binary
 - `core/` — buffer (ropey rope + snapshot undo + newline invariant), grapheme/width-aware text helpers, motion resolution (`motion.rs` returns target + linewise/inclusive/exclusive kind), shared command enums.
 - `editor/` — the modal state machine: `Editor::handle_key` consumes `Key`s with no terminal coupling; `normal.rs` (operators, pending state, registers, dot-repeat), `insert.rs`, `cmdline.rs`, `buffer_list.rs` + `file_picker.rs` (overlays; the picker is the one file-opening mechanism), `windows.rs` (split tree + geometry); buffers AND windows use the same checkout model (the focused window's buffer and view state live in flat `Editor` fields, everything else is parked — see docs/decisions.md); `testing.rs` feeds key specs like `"cwfoo<Esc>"` for tests.
 - `launch.rs` — CLI working-folder rules (ticket #3): dir arg → root + picker; file arg → parent is root.
+- `format.rs` — treefmt-on-save (write → format → reload as one undo step); no treefmt.toml found → silently skipped.
 - `ui/` — Ratatui rendering only; reads editor state, never mutates semantics.
 - `term.rs` — terminal lifecycle (raw mode, Kitty keyboard protocol, panic-safe restore).
 

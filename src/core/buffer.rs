@@ -79,6 +79,12 @@ impl Buffer {
         Ok((buf, existed))
     }
 
+    /// Declares the current content identical to what is on disk (used
+    /// after reloading an externally formatted file).
+    pub(crate) fn mark_saved(&mut self) {
+        self.saved_version = self.version;
+    }
+
     pub fn is_modified(&self) -> bool {
         self.version != self.saved_version
     }
