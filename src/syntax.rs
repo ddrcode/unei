@@ -127,17 +127,25 @@ fn paint_layer(
 
     // captures sorted so parents paint before children (start asc, end desc);
     // later query patterns override earlier ones on identical ranges
-    let mut paints: Vec<(usize, usize, u16, usize)> = Vec::new();
+    // parents paint before children (start asc, end desc). Identical-range
+    // ties: bundled patterns resolve FIRST-wins (the official tree-sitter
+    // convention their queries assume — e.g. json keys, python function
+    // names), while registry `highlights_extra` patterns always override.
+    // "Paints later" = "wins", so the rank orders accordingly.
+    let mut paints: Vec<(usize, usize, u16, (u8, usize))> = Vec::new();
     let mut cursor = QueryCursor::new();
     let mut it = cursor.matches(&config.highlights, tree.root_node(), source);
-    let mut seq = 0usize;
     while let Some(m) = it.next() {
+        let rank = if m.pattern_index >= config.extra_pattern_start {
+            (1u8, m.pattern_index)
+        } else {
+            (0u8, config.extra_pattern_start - m.pattern_index)
+        };
         for cap in m.captures() {
             if let Some(theme) = config.theme_map[cap.index as usize] {
                 let r = cap.node.byte_range();
                 if r.start < r.end {
-                    paints.push((r.start, r.end, theme, seq));
-                    seq += 1;
+                    paints.push((r.start, r.end, theme, rank));
                 }
             }
         }

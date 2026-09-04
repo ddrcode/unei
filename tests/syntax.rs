@@ -49,7 +49,7 @@ fn rust_basics_are_captured() {
 
 #[test]
 fn unregistered_language_renders_plain() {
-    let mut ed = editor_with("script.sh", "echo hi\n");
+    let mut ed = editor_with("script.lua", "print(1)\n");
     assert!(!ed.ensure_syntax(1));
     assert!(!ed.syntax.has_highlights(1));
     assert!(spans(&ed, 0).is_empty());
@@ -65,10 +65,10 @@ fn pathless_buffer_renders_plain() {
 fn toml_keys_and_strings() {
     let mut ed = editor_with("Cargo.toml", "[package]\nname = \"tailored\"\n");
     ed.ensure_syntax(1);
-    // bare keys are @type in the official toml query (innermost capture
-    // over the pair-level @property wash) — same rendering as nvim
+    // registry override: pair keys are property-pale (nvim look, per the
+    // author — "toml is very yellow in nature"); [table] headers stay @type
     assert_eq!(capture_at(&ed, 0, 1), Some("type")); // [package] table name
-    assert_eq!(capture_at(&ed, 1, 0), Some("type")); // name key
+    assert_eq!(capture_at(&ed, 1, 0), Some("property")); // name key
     assert_eq!(capture_at(&ed, 1, 5), Some("operator")); // =
     assert_eq!(capture_at(&ed, 1, 7), Some("string"));
 }
@@ -77,7 +77,7 @@ fn toml_keys_and_strings() {
 fn cargo_lock_detects_as_toml() {
     let mut ed = editor_with("Cargo.lock", "version = 4\n");
     assert!(ed.ensure_syntax(1));
-    assert_eq!(capture_at(&ed, 0, 0), Some("type"));
+    assert_eq!(capture_at(&ed, 0, 0), Some("property"));
 }
 
 #[test]
@@ -144,4 +144,55 @@ fn oversized_buffers_render_plain() {
     let mut ed = editor_with("big.rs", &big);
     ed.ensure_syntax(1);
     assert!(spans(&ed, 0).is_empty());
+}
+
+#[test]
+fn batch_two_languages_capture() {
+    // one representative assertion per newly registered language (#30)
+    let cases: &[(&str, &str, usize, u32, &str)] = &[
+        ("a.yaml", "key: value\n# note\n", 0, 0, "property"),
+        ("a.json", "{\"k\": \"v\"}\n", 0, 1, "string.special.key"),
+        ("a.js", "function go() { return 1; }\n", 0, 0, "keyword"),
+        ("a.html", "<div class=\"x\">hi</div>\n", 0, 1, "tag"),
+        ("a.sh", "# comment\necho hi\n", 0, 0, "comment"),
+        (
+            "a.nix",
+            "{ pkgs }: with pkgs; [ hello ]\n",
+            0,
+            10,
+            "keyword",
+        ),
+        ("a.py", "def go():\n    pass\n", 0, 0, "keyword"),
+        ("a.css", ".x { color: red; }\n", 0, 5, "property"),
+    ];
+    for (file, src, line, col, want) in cases {
+        let mut ed = editor_with(file, src);
+        assert!(ed.ensure_syntax(1), "{file} must highlight");
+        assert_eq!(
+            capture_at(&ed, *line, *col),
+            Some(*want),
+            "{file} at {line}:{col}"
+        );
+    }
+}
+
+#[test]
+fn markdown_fence_aliases_resolve() {
+    // fences say `js` / `py` / `sh`; the registry aliases route them
+    let mut ed = editor_with(
+        "mix.md",
+        "```js\nfunction f() {}\n```\n\n```py\ndef g():\n    pass\n```\n",
+    );
+    ed.ensure_syntax(1);
+    assert_eq!(capture_at(&ed, 1, 0), Some("keyword")); // function
+    assert_eq!(capture_at(&ed, 5, 0), Some("keyword")); // def
+}
+
+#[test]
+fn nix_interpolation_resets_string_color() {
+    let mut ed = editor_with("i.nix", "{ s = \"pre ${toString 1} post\"; }\n");
+    ed.ensure_syntax(1);
+    assert_eq!(capture_at(&ed, 0, 8), Some("string")); // pre
+    // inside ${...} the @embedded reset (or inner captures) replaces string
+    assert_ne!(capture_at(&ed, 0, 14), Some("string"));
 }

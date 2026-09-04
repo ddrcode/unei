@@ -36,6 +36,10 @@ pub const CAPTURES: &[&str] = &[
     "text.literal",
     "text.uri",
     "text.reference",
+    "tag",
+    "embedded",
+    "variable",
+    "string.special.key",
 ];
 
 const fn fg(color: Color) -> (Color, Modifier) {
@@ -70,7 +74,14 @@ const STYLES: &[(Color, Modifier)] = &[
     fg(palette::GREEN),                    // text.literal
     (palette::CYAN, Modifier::UNDERLINED), // text.uri
     fg(palette::PALE),                     // text.reference
+    fg(palette::RED),                      // tag
+    fg(palette::FG),                       // embedded (interpolation reset)
+    fg(palette::FG),                       // variable
+    fg(palette::PALE),                     // string.special.key (json keys)
 ];
+
+// the two tables must stay in lockstep
+const _: () = assert!(CAPTURES.len() == STYLES.len());
 
 /// Style for a capture index from the syntax cache.
 pub fn capture_style(index: usize) -> Style {
