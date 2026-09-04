@@ -1,3 +1,4 @@
+mod buffer_list;
 mod cmdline;
 mod insert;
 mod normal;
@@ -28,6 +29,7 @@ pub enum Awaiting {
     G,
     Z,
     ZUpper,
+    Leader,
 }
 
 #[derive(Debug, Default)]
@@ -68,6 +70,36 @@ pub struct Message {
     pub error: bool,
 }
 
+/// Stable buffer number, shown in the buffer list (vim-style: numbers are
+/// assigned at creation and never reused).
+pub type BufId = usize;
+
+/// A buffer that is not currently displayed, parked with its view state.
+/// The displayed buffer lives checked out in `Editor::buffer` and its slot
+/// holds `buffer: None`.
+struct Slot {
+    id: BufId,
+    buffer: Option<Buffer>,
+    cursor: Cursor,
+    goal: Option<usize>,
+    top_line: usize,
+    left_cell: usize,
+}
+
+/// One row of the buffer list, for rendering and tests.
+pub struct BufEntry {
+    pub id: BufId,
+    pub name: String,
+    pub modified: bool,
+    pub current: bool,
+    pub alternate: bool,
+}
+
+/// State of the buffer-list overlay.
+pub struct BufferList {
+    pub selected: usize,
+}
+
 pub struct Editor {
     pub buffer: Buffer,
     pub cursor: Cursor,
@@ -82,6 +114,12 @@ pub struct Editor {
     pub left_cell: usize,
     pub should_quit: bool,
     pub view: View,
+    pub buffer_list: Option<BufferList>,
+    /// All buffers in creation order; the current one is checked out into
+    /// `buffer` and its slot holds `None`.
+    slots: Vec<Slot>,
+    current: BufId,
+    alternate: Option<BufId>,
     recording: Vec<Key>,
     last_change: Option<Vec<Key>>,
     replaying: bool,
@@ -90,8 +128,34 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(buffer: Buffer) -> Self {
+        Self::with_buffers(vec![buffer])
+    }
+
+    /// Editor with one or more buffers; the first is displayed.
+    pub fn with_buffers(buffers: Vec<Buffer>) -> Self {
+        assert!(!buffers.is_empty());
+        let mut buffers = buffers.into_iter();
+        let first = buffers.next().unwrap();
+        let mut slots = vec![Slot {
+            id: 1,
+            buffer: None,
+            cursor: Cursor::default(),
+            goal: None,
+            top_line: 0,
+            left_cell: 0,
+        }];
+        for (id, buffer) in (2..).zip(buffers) {
+            slots.push(Slot {
+                id,
+                buffer: Some(buffer),
+                cursor: Cursor::default(),
+                goal: None,
+                top_line: 0,
+                left_cell: 0,
+            });
+        }
         Self {
-            buffer,
+            buffer: first,
             cursor: Cursor::default(),
             mode: Mode::Normal,
             goal: None,
@@ -107,6 +171,10 @@ impl Editor {
                 width: 80,
                 height: 22,
             },
+            buffer_list: None,
+            slots,
+            current: 1,
+            alternate: None,
             recording: Vec::new(),
             last_change: None,
             replaying: false,
@@ -114,9 +182,146 @@ impl Editor {
         }
     }
 
+    pub fn buffer_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn current_buffer_id(&self) -> BufId {
+        self.current
+    }
+
+    fn buffer_name(buffer: &Buffer) -> String {
+        buffer
+            .path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "[No Name]".to_string())
+    }
+
+    /// The buffer list in creation order, for rendering and tests.
+    pub fn buffer_entries(&self) -> Vec<BufEntry> {
+        self.slots
+            .iter()
+            .map(|slot| {
+                let buffer = slot.buffer.as_ref().unwrap_or(&self.buffer);
+                BufEntry {
+                    id: slot.id,
+                    name: Self::buffer_name(buffer),
+                    modified: buffer.is_modified(),
+                    current: slot.id == self.current,
+                    alternate: Some(slot.id) == self.alternate,
+                }
+            })
+            .collect()
+    }
+
+    fn slot_index(&self, id: BufId) -> Option<usize> {
+        self.slots.iter().position(|s| s.id == id)
+    }
+
+    /// Checks the current buffer back into its slot and checks `id` out.
+    pub(crate) fn switch_to(&mut self, id: BufId) {
+        if id == self.current {
+            return;
+        }
+        let Some(to) = self.slot_index(id) else {
+            return;
+        };
+        let incoming = self.slots[to].buffer.take().expect("parked buffer");
+        let outgoing = std::mem::replace(&mut self.buffer, incoming);
+        let cur = self.slot_index(self.current).expect("current slot exists");
+        self.slots[cur] = Slot {
+            id: self.current,
+            buffer: Some(outgoing),
+            cursor: self.cursor,
+            goal: self.goal,
+            top_line: self.top_line,
+            left_cell: self.left_cell,
+        };
+        let slot = &self.slots[to];
+        self.cursor = slot.cursor;
+        self.goal = slot.goal;
+        self.top_line = slot.top_line;
+        self.left_cell = slot.left_cell;
+        self.alternate = Some(self.current);
+        self.current = id;
+        self.clamp_cursor();
+        self.scroll_to_cursor();
+        self.msg(Self::buffer_name(&self.buffer));
+    }
+
+    /// `Ctrl+^` — the previously displayed buffer.
+    pub(crate) fn switch_alternate(&mut self) {
+        match self.alternate {
+            Some(id) if self.slot_index(id).is_some() => self.switch_to(id),
+            _ => self.err("E23: No alternate file"),
+        }
+    }
+
+    /// Closes a buffer (from the list or `:bd`). Closing the last buffer
+    /// quits the editor; a modified buffer refuses without `force`.
+    pub(crate) fn close_buffer(&mut self, id: BufId, force: bool) {
+        let Some(idx) = self.slot_index(id) else {
+            return;
+        };
+        let modified = if id == self.current {
+            self.buffer.is_modified()
+        } else {
+            self.slots[idx]
+                .buffer
+                .as_ref()
+                .expect("parked")
+                .is_modified()
+        };
+        if modified && !force {
+            let name = if id == self.current {
+                Self::buffer_name(&self.buffer)
+            } else {
+                Self::buffer_name(self.slots[idx].buffer.as_ref().expect("parked"))
+            };
+            self.err(format!(
+                "E89: No write since last change for buffer \"{name}\" (add ! to override)"
+            ));
+            return;
+        }
+        if self.slots.len() == 1 {
+            self.should_quit = true;
+            return;
+        }
+        if id == self.current {
+            let target = self
+                .alternate
+                .filter(|a| *a != id && self.slot_index(*a).is_some())
+                .unwrap_or_else(|| {
+                    let next = (idx + 1) % self.slots.len();
+                    self.slots[next].id
+                });
+            self.switch_to(target);
+        }
+        let idx = self.slot_index(id).expect("still present");
+        self.slots.remove(idx);
+        if self.alternate == Some(id) {
+            self.alternate = None;
+        }
+    }
+
+    /// First modified buffer anywhere (for quit commands), by name.
+    fn any_modified_buffer(&self) -> Option<String> {
+        self.slots.iter().find_map(|slot| {
+            let buffer = slot.buffer.as_ref().unwrap_or(&self.buffer);
+            buffer.is_modified().then(|| Self::buffer_name(buffer))
+        })
+    }
+
     pub fn handle_key(&mut self, key: Key) {
         if self.mode != Mode::Command {
             self.message = None;
+        }
+        if self.buffer_list.is_some() {
+            buffer_list::handle_key(self, key);
+            self.clamp_cursor();
+            self.scroll_to_cursor();
+            return;
         }
         let record = !self.replaying && self.mode != Mode::Command;
         if record {
@@ -284,8 +489,16 @@ impl Editor {
     }
 
     pub(crate) fn quit(&mut self, force: bool) {
-        if !force && self.buffer.is_modified() {
+        if force {
+            self.should_quit = true;
+            return;
+        }
+        if self.buffer.is_modified() {
             self.err("E37: No write since last change (add ! to override)");
+        } else if let Some(name) = self.any_modified_buffer() {
+            self.err(format!(
+                "E162: No write since last change for buffer \"{name}\""
+            ));
         } else {
             self.should_quit = true;
         }
@@ -306,6 +519,12 @@ impl Editor {
 
     pub(crate) fn save_and_quit(&mut self, only_if_modified: bool) {
         if (!only_if_modified || self.buffer.is_modified()) && !self.save() {
+            return;
+        }
+        if let Some(name) = self.any_modified_buffer() {
+            self.err(format!(
+                "E162: No write since last change for buffer \"{name}\""
+            ));
             return;
         }
         self.should_quit = true;
@@ -343,6 +562,7 @@ impl Editor {
             Awaiting::G => s.push('g'),
             Awaiting::Z => s.push('z'),
             Awaiting::ZUpper => s.push('Z'),
+            Awaiting::Leader => s.push('␣'),
         }
         s
     }

@@ -13,6 +13,8 @@ pub const GUTTER_FG: Color = Color::Rgb(0x54, 0x6E, 0x7A);
 pub const GUTTER_CURRENT_FG: Color = Color::Rgb(0xEE, 0xFF, 0xFF);
 
 pub const CURSORLINE_BG: Color = Color::Rgb(0x2A, 0x37, 0x3E);
+/// Floating windows use the darker contrast bg (material `floating_windows`).
+pub const FLOAT_BG: Color = Color::Rgb(0x1E, 0x28, 0x2D);
 pub const STATUSLINE_BG: Color = Color::Rgb(0x1B, 0x26, 0x2B);
 pub const STATUSLINE_FG: Color = Color::Rgb(0xB0, 0xBE, 0xC5);
 

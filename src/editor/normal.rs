@@ -1,7 +1,7 @@
 use crate::config::OPTIONS;
 use crate::config::keymap::{self, Key};
 use crate::core::buffer::Cursor;
-use crate::core::commands::{InsertEntry, Op, Register, ScrollCmd, SimpleCmd, Token};
+use crate::core::commands::{InsertEntry, LeaderCmd, Op, Register, ScrollCmd, SimpleCmd, Token};
 use crate::core::motion::{self, Motion, MotionCtx, MotionKind};
 use crate::core::text::{
     self, CharClass, char_class, first_non_blank, gr_index_at_col, line_content, line_graphemes,
@@ -53,6 +53,17 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 Key::Char('Z') => ed.save_and_quit(true),
                 Key::Char('Q') => ed.quit(true),
                 _ => {}
+            }
+            clear_pending(ed);
+        }
+        Awaiting::Leader => {
+            ed.pending.awaiting = Awaiting::None;
+            match keymap::leader_token(key) {
+                Some(LeaderCmd::BufferList) => {
+                    ed.drop_recording();
+                    super::buffer_list::open(ed);
+                }
+                None => {}
             }
             clear_pending(ed);
         }
@@ -138,6 +149,18 @@ fn dispatch(ed: &mut Editor, key: Key) {
             } else {
                 ed.pending.awaiting = Awaiting::Replace;
             }
+        }
+        Token::Leader => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.awaiting = Awaiting::Leader;
+            }
+        }
+        Token::AlternateBuffer => {
+            clear_pending(ed);
+            ed.drop_recording();
+            ed.switch_alternate();
         }
         Token::PrefixG => ed.pending.awaiting = Awaiting::G,
         Token::PrefixZ => {
