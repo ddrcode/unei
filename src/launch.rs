@@ -11,7 +11,8 @@ pub struct Launch {
     pub open_picker: bool,
 }
 
-/// - no args: root = cwd, one empty buffer
+/// - no args: root = cwd and the picker opens (same as launching onto a
+///   directory — there is nothing else to show)
 /// - first arg is a dir: it becomes the root and the picker opens; other dir
 ///   args are ignored, file args still become buffers
 /// - first arg is a file: its parent becomes the root; every file arg becomes
@@ -21,7 +22,7 @@ pub fn resolve(args: &[String], cwd: PathBuf) -> Launch {
         return Launch {
             root: cwd,
             files: Vec::new(),
-            open_picker: false,
+            open_picker: true,
         };
     };
     let first_path = PathBuf::from(first);
@@ -45,7 +46,7 @@ pub fn resolve(args: &[String], cwd: PathBuf) -> Launch {
 
     Launch {
         root,
-        open_picker: first_is_dir && files.is_empty(),
+        open_picker: files.is_empty(),
         files,
     }
 }
@@ -70,10 +71,10 @@ mod tests {
     }
 
     #[test]
-    fn no_args_uses_cwd() {
+    fn no_args_uses_cwd_and_opens_picker() {
         let l = resolve(&[], PathBuf::from("/work"));
         assert_eq!(l.root, PathBuf::from("/work"));
-        assert!(l.files.is_empty() && !l.open_picker);
+        assert!(l.files.is_empty() && l.open_picker);
     }
 
     #[test]
