@@ -27,9 +27,9 @@ pub const MODE_LABEL_FG: Color = Color::Rgb(0x1B, 0x26, 0x2B);
 pub const ERROR_FG: Color = Color::Rgb(0xF0, 0x71, 0x78);
 
 /// Share of the original color kept in inactive panels (the rest blends
-/// into the background) — the Shade-nvim look; the author ran it at
-/// overlay_opacity 60, i.e. keeping ~40%, which we soften a little.
-const INACTIVE_KEEP: u16 = 50; // percent
+/// into the background) — the Shade-nvim look, softened per the author's
+/// taste (50% read as slightly too dim).
+const INACTIVE_KEEP: u16 = 60; // percent
 
 /// Dims a foreground for an inactive panel by blending it toward `BG`.
 pub fn dimmed(color: Color) -> Color {
