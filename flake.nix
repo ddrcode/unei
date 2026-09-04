@@ -29,6 +29,8 @@
                   rustfmt
                   rust-analyzer
                   cargo-mutants
+                  treefmt
+                  nixpkgs-fmt
                 ]
                 ++ lib.optionals stdenv.isDarwin [ libiconv ]
                 ++ lib.optionals stdenv.isLinux [ pkg-config ];

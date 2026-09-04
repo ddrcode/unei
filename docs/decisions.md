@@ -99,6 +99,18 @@ Scope: highlighting only — indentation patterns and folds are separate
 tickets. Files over 2MB and unregistered languages render plain (no
 fallback, per the rules).
 
+## 2026-09-04 — Formatting: treefmt is the single integration
+
+Per the rules (external formatters, on save only) and the #21 discussion:
+the editor shells out to `treefmt` after every successful write — config
+discovery walks up from the file for `treefmt.toml`/`.treefmt.toml`; no
+config means no formatting, silently, and no fallback chain. The flow is
+write → format → reload: the reload is one undoable change and leaves the
+buffer clean. The process is killed after `OPTIONS.format_timeout_ms`
+(1500ms). Formatter choice lives in each project's treefmt.toml — project
+config, not editor config, so zero-config holds. This repo dogfoods it
+(treefmt.toml: rustfmt + nixpkgs-fmt; both in the dev shell).
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),
