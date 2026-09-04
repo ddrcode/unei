@@ -65,10 +65,10 @@ fn pathless_buffer_renders_plain() {
 fn toml_keys_and_strings() {
     let mut ed = editor_with("Cargo.toml", "[package]\nname = \"tailored\"\n");
     ed.ensure_syntax(1);
-    // bare keys are @type in the official toml query (innermost capture
-    // over the pair-level @property wash) — same rendering as nvim
+    // registry override: pair keys are property-pale (nvim look, per the
+    // author — "toml is very yellow in nature"); [table] headers stay @type
     assert_eq!(capture_at(&ed, 0, 1), Some("type")); // [package] table name
-    assert_eq!(capture_at(&ed, 1, 0), Some("type")); // name key
+    assert_eq!(capture_at(&ed, 1, 0), Some("property")); // name key
     assert_eq!(capture_at(&ed, 1, 5), Some("operator")); // =
     assert_eq!(capture_at(&ed, 1, 7), Some("string"));
 }
@@ -77,7 +77,7 @@ fn toml_keys_and_strings() {
 fn cargo_lock_detects_as_toml() {
     let mut ed = editor_with("Cargo.lock", "version = 4\n");
     assert!(ed.ensure_syntax(1));
-    assert_eq!(capture_at(&ed, 0, 0), Some("type"));
+    assert_eq!(capture_at(&ed, 0, 0), Some("property"));
 }
 
 #[test]

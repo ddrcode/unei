@@ -86,7 +86,9 @@ static LANGUAGES: [LangSpec; 12] = [
         extensions: &["toml"],
         filenames: &["Cargo.lock"],
         language: || tree_sitter_toml_ng::LANGUAGE.into(),
-        highlights_extra: "",
+        // keys render property-pale (nvim look, per the author — "toml is
+        // very yellow in nature"); [table] headers stay @type
+        highlights_extra: "(pair (bare_key) @property) (pair (dotted_key (bare_key) @property))",
         highlights: tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
         injections: "",
         cell: OnceLock::new(),
