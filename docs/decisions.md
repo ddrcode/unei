@@ -34,6 +34,25 @@ Ropey ropes are persistent structures, so cloning is cheap; undo stores
 transaction, like vim. Dot-repeat replays the recorded key sequence of the
 last buffer-changing command.
 
+## 2026-09-04 — Hard Kitty dependency is allowed
+
+The author (who runs Kitty exclusively, on all machines) approved building on
+a hard Kitty dependency — including refusing to start outside Kitty — once
+the editor adopts features that need it (e.g. Kitty keyboard protocol
+unconditionally, synchronized output, styled underlines for diagnostics).
+Until such a feature lands, the current graceful behavior stays. The dev-time
+tmux harness (tests drive the binary through tmux) must keep working —
+any hard check needs an escape hatch for it (e.g. an env override).
+
+## 2026-09-04 — Buffers: checkout model with stable ids
+
+`Editor` keeps the displayed buffer checked out in its `buffer` field (with
+cursor/scroll as plain fields), so the whole editing core keeps disjoint
+field borrows. Background buffers are parked in slots with their view state;
+switching swaps them. Buffer numbers are creation-ordered and never reused
+(vim-style). Registers and f/t state are editor-global; undo, cursor and
+scroll are per-buffer.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

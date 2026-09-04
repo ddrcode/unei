@@ -12,6 +12,23 @@ pub fn editor_from(text: &str) -> Editor {
     ed
 }
 
+/// Editor with several named buffers; the first is displayed. No file IO —
+/// the names only become paths (so don't `:w` in such tests).
+pub fn editor_with_buffers(specs: &[(&str, &str)]) -> Editor {
+    assert!(!specs.is_empty());
+    let buffers = specs
+        .iter()
+        .map(|(name, content)| {
+            let mut b = Buffer::from_text(content);
+            b.path = Some(std::path::PathBuf::from(name));
+            b
+        })
+        .collect();
+    let mut ed = Editor::with_buffers(buffers);
+    ed.set_view(80, 22);
+    ed
+}
+
 /// Parses `"wdw<Esc>2k<C-r>"`-style specs. `<lt>` is a literal `<`.
 pub fn keys(spec: &str) -> Vec<Key> {
     let mut out = Vec::new();

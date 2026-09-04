@@ -1,6 +1,5 @@
 use std::io;
 use std::path::Path;
-use std::process::exit;
 
 use anyhow::Result;
 use ratatui::crossterm::cursor::SetCursorStyle;
@@ -13,21 +12,26 @@ use tailored::{term, ui};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() > 1 {
-        eprintln!("usage: tailored [FILE]   (multiple files arrive with ticket #2)");
-        exit(2);
-    }
 
-    let mut editor = match args.first() {
-        Some(arg) => {
+    let mut editor = if args.is_empty() {
+        Editor::new(Buffer::from_text(""))
+    } else {
+        let mut buffers = Vec::new();
+        let mut new_file = None;
+        for arg in &args {
             let (buffer, existed) = Buffer::from_path(Path::new(arg))?;
-            let mut ed = Editor::new(buffer);
-            if !existed {
-                ed.msg(format!("\"{arg}\" [New File]"));
+            if !existed && new_file.is_none() {
+                new_file = Some(arg.clone());
             }
-            ed
+            buffers.push(buffer);
         }
-        None => Editor::new(Buffer::from_text("")),
+        let mut ed = Editor::with_buffers(buffers);
+        match new_file {
+            // matches the displayed (first) buffer only
+            Some(arg) if arg == args[0] => ed.msg(format!("\"{arg}\" [New File]")),
+            _ => {}
+        }
+        ed
     };
 
     term::install_panic_hook();

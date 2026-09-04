@@ -93,7 +93,27 @@ pub enum Token {
     PrefixG,
     PrefixZ,
     PrefixZUpper,
+    Leader,
+    /// `Ctrl+^` — switch to the alternate (previously shown) buffer.
+    AlternateBuffer,
     CmdLine,
+}
+
+/// Second key of a `<leader>…` chord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaderCmd {
+    /// `<leader>b` — buffer list.
+    BufferList,
+}
+
+/// Keys inside the buffer-list overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListCmd {
+    Up,
+    Down,
+    Select,
+    CloseBuffer,
+    Dismiss,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

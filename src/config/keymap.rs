@@ -5,8 +5,13 @@
 //! operator-pending contexts, `h`/`H` enter insert mode in normal mode only —
 //! so `dh` still deletes left, exactly like the author's nvim.
 
-use crate::core::commands::{FindKind, InsertEntry, Op, ScrollCmd, SimpleCmd, Token};
+use crate::core::commands::{
+    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, ScrollCmd, SimpleCmd, Token,
+};
 use crate::core::motion::Motion;
+
+/// The leader key (the author's nvim uses space).
+pub const LEADER: Key = Key::Char(' ');
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -101,12 +106,37 @@ pub fn normal_token(key: Key) -> Option<Token> {
         Key::Ctrl('f') | Key::PageDown => Token::Scroll(ScrollCmd::PageDown),
         Key::Ctrl('b') | Key::PageUp => Token::Scroll(ScrollCmd::PageUp),
 
+        // buffers
+        Key::Ctrl('^') | Key::Ctrl('6') => Token::AlternateBuffer,
+
         // prefixes
+        k if k == LEADER => Token::Leader,
         Key::Char('g') => Token::PrefixG,
         Key::Char('z') => Token::PrefixZ,
         Key::Char('Z') => Token::PrefixZUpper,
         Key::Char(':') => Token::CmdLine,
 
+        _ => return None,
+    })
+}
+
+/// Second key of a `<leader>…` chord (mirrors the author's nvim mappings).
+pub fn leader_token(key: Key) -> Option<LeaderCmd> {
+    match key {
+        Key::Char('b') => Some(LeaderCmd::BufferList),
+        _ => None,
+    }
+}
+
+/// Keys inside the buffer-list overlay: IJKL navigation, Enter picks,
+/// `x` closes the selected buffer, Esc or `q` dismisses.
+pub fn list_token(key: Key) -> Option<ListCmd> {
+    Some(match key {
+        Key::Char('i') | Key::Up => ListCmd::Up,
+        Key::Char('k') | Key::Down => ListCmd::Down,
+        Key::Enter => ListCmd::Select,
+        Key::Char('x') => ListCmd::CloseBuffer,
+        Key::Esc | Key::Char('q') | Key::Ctrl('c') => ListCmd::Dismiss,
         _ => return None,
     })
 }

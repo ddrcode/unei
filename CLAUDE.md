@@ -12,7 +12,7 @@ The crate is a library (headless, fully testable editor core) plus a thin binary
 
 - `config/` — ALL configuration, compiled in: options (`OPTIONS`), the key→command tables (`keymap.rs` — the IJKL layout lives here), chrome palette. Behavior changes happen here first.
 - `core/` — buffer (ropey rope + snapshot undo + newline invariant), grapheme/width-aware text helpers, motion resolution (`motion.rs` returns target + linewise/inclusive/exclusive kind), shared command enums.
-- `editor/` — the modal state machine: `Editor::handle_key` consumes `Key`s with no terminal coupling; `normal.rs` (operators, pending state, registers, dot-repeat), `insert.rs`, `cmdline.rs`; `testing.rs` feeds key specs like `"cwfoo<Esc>"` for tests.
+- `editor/` — the modal state machine: `Editor::handle_key` consumes `Key`s with no terminal coupling; `normal.rs` (operators, pending state, registers, dot-repeat), `insert.rs`, `cmdline.rs`, `buffer_list.rs` (overlay); multi-buffer via a checkout model (current buffer lives in `Editor.buffer`, others parked in slots — see docs/decisions.md); `testing.rs` feeds key specs like `"cwfoo<Esc>"` for tests.
 - `ui/` — Ratatui rendering only; reads editor state, never mutates semantics.
 - `term.rs` — terminal lifecycle (raw mode, Kitty keyboard protocol, panic-safe restore).
 

@@ -39,6 +39,8 @@ fn execute(ed: &mut Editor, cmd: &str) {
         "q!" => ed.quit(true),
         "wq" => ed.save_and_quit(false),
         "x" => ed.save_and_quit(true),
+        "bd" | "bdelete" => ed.close_buffer(ed.current_buffer_id(), false),
+        "bd!" | "bdelete!" => ed.close_buffer(ed.current_buffer_id(), true),
         _ => ed.err(format!("E492: Not an editor command: {cmd}")),
     }
 }
