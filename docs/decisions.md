@@ -53,6 +53,22 @@ switching swaps them. Buffer numbers are creation-ordered and never reused
 (vim-style). Registers and f/t state are editor-global; undo, cursor and
 scroll are per-buffer.
 
+## 2026-09-04 — Splits: `Ctrl+w l` navigates; layout-flip is `Ctrl+w Space`
+
+Ticket #4 assigned `key+l` to "swap layout", but the rules make IJKL
+navigation universal and give `Ctrl+w+i` (panel above) as their own example
+— so `l` focuses the window to the right and layout-flip (toggling a
+container between horizontal and vertical) sits on `Ctrl+w Space`, matching
+tmux's next-layout key. `Ctrl+w x` is a plain alias of `s` per the ticket
+(it shadows vim's exchange-windows; `Ctrl+w r` covers swapping). Windows
+form a tree with same-direction splits flattened into one container (vim's
+frames); the focused window's view state is checked out into the editor
+fields exactly like the current buffer is (same pattern, two levels), and
+each window keeps its own alternate buffer, vim-style. Resize follows tmux
+semantics (push the border in the pressed direction; steps live in
+`config::OPTIONS`). Zoom is a render-level flag that any window operation
+clears.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

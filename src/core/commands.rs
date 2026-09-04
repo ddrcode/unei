@@ -94,6 +94,8 @@ pub enum Token {
     PrefixZ,
     PrefixZUpper,
     Leader,
+    /// `Ctrl+w` — window chord prefix.
+    PrefixWindow,
     /// `Ctrl+^` — switch to the alternate (previously shown) buffer.
     AlternateBuffer,
     CmdLine,
@@ -104,6 +106,8 @@ pub enum Token {
 pub enum LeaderCmd {
     /// `<leader>b` — buffer list.
     BufferList,
+    /// `<leader>w` — same as `Ctrl+w`.
+    WindowPrefix,
 }
 
 /// Keys inside the buffer-list overlay.
@@ -114,6 +118,40 @@ pub enum ListCmd {
     Select,
     CloseBuffer,
     Dismiss,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WinDir {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Second key of a window chord (`Ctrl+w …` / `<leader>w …`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WinCmd {
+    Focus(WinDir),
+    /// tmux-style: push the window border in that direction.
+    Resize(WinDir),
+    /// `=`
+    Equalize,
+    /// `r` — rotate windows within their container.
+    Rotate,
+    /// `Space` — flip the container between horizontal and vertical.
+    FlipLayout,
+    /// `z` — full-screen the focused window / restore.
+    ZoomToggle,
+    /// `s` (and `x`, per ticket #4) — horizontal split.
+    SplitH,
+    /// `v` — vertical split.
+    SplitV,
+    /// `n` — horizontal split with a fresh empty buffer.
+    SplitNew,
+    /// `q` — close the focused window (last window quits the editor).
+    CloseWindow,
+    /// `o` — close every other window.
+    OnlyWindow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -35,8 +35,8 @@ fn execute(ed: &mut Editor, cmd: &str) {
         "w" => {
             ed.save();
         }
-        "q" => ed.quit(false),
-        "q!" => ed.quit(true),
+        "q" => ed.close_window_or_quit(false),
+        "q!" => ed.close_window_or_quit(true),
         "wq" => ed.save_and_quit(false),
         "x" => ed.save_and_quit(true),
         "bd" | "bdelete" => ed.close_buffer(ed.current_buffer_id(), false),
