@@ -53,7 +53,8 @@ pub enum Event {
     Actions(Vec<Action>),
     ActionResolved(Box<Value>),
     ExpandedMacro(Option<(String, String)>),
-    InlayLine(Option<String>),
+    /// The line-scope hover: (annotated line, signature label).
+    InlayLine(Option<String>, Option<String>),
     ApplyEdit(Box<Value>),
     Progress(Option<String>),
     ServerExited(String),
@@ -68,6 +69,7 @@ enum Pending {
     ResolveAction,
     ExpandMacro,
     InlayLine { text: String },
+    SignatureFor { annotated: Option<String> },
 }
 
 pub struct Client {
@@ -82,6 +84,8 @@ pub struct Client {
     /// Latest indexing progress label, for the statusline.
     pub progress: Option<String>,
     queued: Vec<Value>,
+    /// Position of the in-flight gK request (for the signature follow-up).
+    inlay_pos: Option<(PathBuf, usize, usize)>,
 }
 
 fn uri(path: &Path) -> String {
@@ -129,6 +133,7 @@ impl Client {
             diagnostics: HashMap::new(),
             progress: Some("starting".into()),
             queued: Vec::new(),
+            inlay_pos: None,
         };
         client.request(
             Pending::Initialize,
@@ -309,7 +314,9 @@ impl Client {
     }
 
     /// The line-scope hover: inlay hints for one line, spliced by the editor.
-    pub fn inlay_line(&mut self, path: &Path, line: usize, text: String, len: usize) {
+    /// `col` (cursor) also anchors the signature-help follow-up.
+    pub fn inlay_line(&mut self, path: &Path, line: usize, col: usize, text: String, len: usize) {
+        self.inlay_pos = Some((path.to_path_buf(), line, col));
         self.request(
             Pending::InlayLine { text },
             "textDocument/inlayHint",
@@ -465,7 +472,31 @@ impl Client {
                 events.push(Event::ExpandedMacro(expansion));
             }
             Pending::InlayLine { text } => {
-                events.push(Event::InlayLine(splice_inlay_hints(&text, &result)));
+                // second half of gK: the active call signature carries the
+                // parameter TYPES the inlay hints lack
+                let annotated = splice_inlay_hints(&text, &result);
+                let pos = self.inlay_pos.take();
+                match pos {
+                    Some((path, line, col)) => {
+                        self.request(
+                            Pending::SignatureFor { annotated },
+                            "textDocument/signatureHelp",
+                            Self::doc_pos(&path, line, col),
+                        );
+                    }
+                    None => events.push(Event::InlayLine(annotated, None)),
+                }
+            }
+            Pending::SignatureFor { annotated } => {
+                let signature = result["signatures"]
+                    .as_array()
+                    .and_then(|sigs| {
+                        let active = result["activeSignature"].as_u64().unwrap_or(0) as usize;
+                        sigs.get(active).or_else(|| sigs.first())
+                    })
+                    .and_then(|s| s["label"].as_str())
+                    .map(str::to_string);
+                events.push(Event::InlayLine(annotated, signature));
             }
         }
     }
@@ -527,6 +558,11 @@ fn splice_inlay_hints(text: &str, result: &Value) -> Option<String> {
     let mut inserts: Vec<(usize, String)> = hints
         .iter()
         .filter_map(|h| {
+            // parameter-name hints (kind 2) add noise, not information —
+            // only type hints (kind 1) belong in the annotated line
+            if h["kind"].as_i64() != Some(1) {
+                return None;
+            }
             let col = h["position"]["character"].as_u64()? as usize;
             let label = match &h["label"] {
                 Value::String(s) => s.clone(),

@@ -91,10 +91,14 @@ fn analyzer_end_to_end_with_fake_server() {
     feed(&mut ed, "<Esc>");
     assert!(ed.info_float.is_none());
 
-    // the line-scope hover splices inlay hints into the line
+    // the line-scope hover splices TYPE hints (param-name hints filtered)
+    // and appends the call signature with parameter types
     feed(&mut ed, "gK");
     assert!(pump(&mut ed, |e| e.info_float.is_some()), "no inlay float");
-    assert!(ed.info_float.as_ref().unwrap()[0].contains(": Vec<i32>"));
+    let float = ed.info_float.as_ref().unwrap();
+    assert!(float[0].contains(": Vec<i32>"));
+    assert!(!float[0].contains("noisy:"), "param-name hints are noise");
+    assert!(float.last().unwrap().contains("fn vec_of(n: usize)"));
     feed(&mut ed, "<Esc>");
 
     // goto definition jumps to the served location

@@ -73,7 +73,13 @@ while True:
     elif method == "textDocument/inlayHint":
         send({"jsonrpc": "2.0", "id": mid, "result": [
             {"position": {"line": 0, "character": 5},
-             "label": ": Vec<i32>"}]})
+             "label": ": Vec<i32>", "kind": 1},
+            {"position": {"line": 0, "character": 8},
+             "label": "noisy:", "kind": 2}]})
+    elif method == "textDocument/signatureHelp":
+        send({"jsonrpc": "2.0", "id": mid, "result": {
+            "signatures": [{"label": "fn vec_of(n: usize) -> Vec<i32>"}],
+            "activeSignature": 0}})
     elif method == "rust-analyzer/expandMacro":
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "name": "demo", "expansion": "fn expanded() {}\n"}})

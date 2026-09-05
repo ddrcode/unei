@@ -211,10 +211,11 @@ impl Editor {
         let Some(file) = self.current_rust_file() else {
             return;
         };
-        let text = line_content(&self.buffer.rope, self.cursor.line);
+        let (line, col) = self.cursor_lsp_pos();
+        let text = line_content(&self.buffer.rope, line);
         let len = text.len();
         if let Some(client) = &mut self.lsp {
-            client.inlay_line(&file, self.cursor.line, text, len);
+            client.inlay_line(&file, line, col, text, len);
         }
     }
 
@@ -237,8 +238,23 @@ impl Editor {
             Event::Progress(_) => {}
             Event::Hover(Some(text)) => self.show_info_float(text),
             Event::Hover(None) => self.msg("hover: no information"),
-            Event::InlayLine(Some(line)) => self.show_info_float(line),
-            Event::InlayLine(None) => self.msg("no type annotations on this line"),
+            Event::InlayLine(annotated, signature) => {
+                let mut lines = Vec::new();
+                if let Some(a) = annotated {
+                    lines.push(a);
+                }
+                if let Some(sig) = signature {
+                    if !lines.is_empty() {
+                        lines.push(String::new());
+                    }
+                    lines.push(format!("→ {sig}"));
+                }
+                if lines.is_empty() {
+                    self.msg("no type annotations on this line");
+                } else {
+                    self.info_float = Some(lines);
+                }
+            }
             Event::Definition(Some(loc)) => self.jump_to(loc),
             Event::Definition(None) => self.msg("definition not found"),
             Event::Actions(actions) => {

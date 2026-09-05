@@ -478,6 +478,7 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         );
         // end-of-line diagnostic ghost text (<leader>dh toggles)
         if ed.ghost_text
+            && ed.mode != Mode::Insert
             && let Some((sev, msg)) = diag.and_then(|d| d.ghost.get(&line_idx))
             && used + 4 < text_w
         {
