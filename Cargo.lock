@@ -689,6 +689,7 @@ dependencies = [
  "ignore",
  "nucleo-matcher",
  "ratatui",
+ "regex",
  "ropey",
  "serde_json",
  "streaming-iterator",

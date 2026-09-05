@@ -124,6 +124,13 @@ pub fn normal_token(key: Key) -> Option<Token> {
         Key::Ctrl('o') => Token::Simple(SimpleCmd::JumpBack),
         Key::Ctrl('i') | Key::Tab => Token::Simple(SimpleCmd::JumpForward),
 
+        // search
+        Key::Char('/') => Token::SearchPrompt(true),
+        Key::Char('?') => Token::SearchPrompt(false),
+        Key::Char('n') => Token::Simple(SimpleCmd::NextMatch),
+        Key::Char('N') => Token::Simple(SimpleCmd::PrevMatch),
+        Key::Char('*') => Token::Simple(SimpleCmd::SearchWord),
+
         // file picker
         Key::Ctrl('p') => Token::FilePicker,
 

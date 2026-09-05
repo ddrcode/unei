@@ -155,6 +155,7 @@ fn dispatch(ed: &mut Editor, key: Key) {
         clear_pending(ed);
         ed.drop_recording();
         ed.leave_visual();
+        ed.search.highlight = false; // vim-modern: Esc calms hlsearch
         return;
     }
     if key == Key::Ctrl('c') {
@@ -247,6 +248,21 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 }
                 ed.scroll_to_cursor();
                 clear_pending(ed);
+                return;
+            }
+            Token::CmdLine => {
+                // remember the selection for :s scope, then open the prompt
+                let (l1, l2) = (
+                    ed.visual_anchor.line.min(ed.cursor.line),
+                    ed.visual_anchor.line.max(ed.cursor.line),
+                );
+                ed.cmd_selection = Some((l1, l2));
+                ed.leave_visual();
+                clear_pending(ed);
+                ed.drop_recording();
+                ed.cmdline.clear();
+                ed.prompt = super::Prompt::Command;
+                ed.mode = Mode::Command;
                 return;
             }
             // motions, counts, find, scroll fall through to normal handling
@@ -352,6 +368,16 @@ fn dispatch(ed: &mut Editor, key: Key) {
             clear_pending(ed);
             ed.drop_recording();
             ed.cmdline.clear();
+            ed.cmd_selection = None;
+            ed.prompt = super::Prompt::Command;
+            ed.mode = Mode::Command;
+        }
+        Token::SearchPrompt(forward) => {
+            clear_pending(ed);
+            ed.drop_recording();
+            ed.cmdline.clear();
+            ed.prompt = super::Prompt::Search { forward };
+            ed.search_origin = Some((ed.cursor, ed.top_line));
             ed.mode = Mode::Command;
         }
     }
@@ -722,6 +748,9 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
         SimpleCmd::Repeat => ed.repeat_last_change(count_given),
         SimpleCmd::JumpBack => ed.jump_back(),
         SimpleCmd::JumpForward => ed.jump_forward(),
+        SimpleCmd::NextMatch => ed.search_step(true),
+        SimpleCmd::PrevMatch => ed.search_step(false),
+        SimpleCmd::SearchWord => ed.search_word_under_cursor(),
         SimpleCmd::DeleteToEol => apply_operator(ed, Op::Delete, Motion::LineEnd, Some(count)),
         SimpleCmd::ChangeToEol => apply_operator(ed, Op::Change, Motion::LineEnd, Some(count)),
         SimpleCmd::YankToEol => apply_operator(ed, Op::Yank, Motion::LineEnd, Some(count)),

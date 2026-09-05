@@ -140,6 +140,20 @@ paste NEVER writes the replaced text to the register — select elsewhere and
 paste the same content repeatedly. Deferred: visual `J`/`r`/`>`, dot-repeat
 of visual operators, `p` count.
 
+## 2026-09-05 — Search: Rust regex dialect, two scopes only
+
+Search (ticket #8 phase 1) speaks exactly one pattern dialect: the Rust
+`regex` crate — a deliberate break from vim's regex, per the single-way
+rule. Smartcase (their nvim setting) is the only case behavior. `:s`
+deviates from vim by design: no line ranges exist — bare `:s/…/…/[g]` is
+FILE-scoped (`:%s` is an accepted spelling of the same thing), and invoked
+from a visual selection it is selection-scoped. Vim's per-line first-match
+vs `g` semantics are kept. Esc in normal mode calms hlsearch (the modern
+mapping); `n`/`N` re-light it. Match caches are keyed by (buffer, version)
+like every other derived view. Deferred to phase 2 (per the #8 comments):
+multi-file fuzzy search and the popup replace form; also search-as-motion
+(`d/…`).
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

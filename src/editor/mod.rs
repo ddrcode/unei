@@ -115,6 +115,13 @@ pub struct BufferList {
     pub selected: usize,
 }
 
+/// What the command line is currently for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+    Command,
+    Search { forward: bool },
+}
+
 /// The yanked region, briefly highlighted (nvim's on_yank flash).
 #[derive(Clone, Copy)]
 pub enum FlashRegion {
@@ -176,6 +183,16 @@ pub struct Editor {
     block_change: Option<BlockChange>,
     /// Active yank flash: start time + region.
     pub yank_flash: Option<(std::time::Instant, FlashRegion)>,
+    /// Buffer search state (pattern, matches, hlsearch).
+    pub search: crate::search::Search,
+    /// What the command line is prompting for.
+    pub prompt: Prompt,
+    /// Position to restore when an incremental search is cancelled.
+    pub(crate) search_origin: Option<(Cursor, usize)>,
+    /// Search state to restore on cancel (pattern, direction, highlight).
+    pub(crate) search_saved: Option<(String, crate::search::Direction, bool)>,
+    /// Line range captured when `:` was pressed in visual mode (for `:s`).
+    pub(crate) cmd_selection: Option<(usize, usize)>,
     /// Working folder: picker listings and relative opens resolve against it.
     root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
@@ -260,6 +277,11 @@ impl Editor {
             last_visual: None,
             block_change: None,
             yank_flash: None,
+            search: crate::search::Search::default(),
+            prompt: Prompt::Command,
+            search_origin: None,
+            search_saved: None,
+            cmd_selection: None,
             root: std::path::PathBuf::from("."),
             slots,
             current: 1,
@@ -1285,6 +1307,150 @@ impl Editor {
         }
     }
 
+    /// Render prefetch: keep the match cache fresh for the current buffer.
+    pub fn search_ensure_current(&mut self) {
+        if self.search.is_active() {
+            self.search
+                .ensure(&self.buffer.rope, self.current, self.buffer.version());
+        }
+    }
+
+    /// `n` / `N` — repeat the search in (or against) its direction.
+    pub(crate) fn search_step(&mut self, same_direction: bool) {
+        if !self.search.is_active() {
+            self.err("E35: No previous search");
+            return;
+        }
+        self.search
+            .ensure(&self.buffer.rope, self.current, self.buffer.version());
+        self.search.highlight = true;
+        let forward =
+            (self.search.direction == crate::search::Direction::Forward) == same_direction;
+        let found = if forward {
+            self.search
+                .next_after(self.cursor.line, self.cursor.col as u32)
+        } else {
+            self.search
+                .prev_before(self.cursor.line, self.cursor.col as u32)
+        };
+        match found {
+            Some(((line, col, _), wrapped)) => {
+                self.cursor = Cursor::new(line, col as usize);
+                self.goal = None;
+                if wrapped {
+                    self.msg(if forward {
+                        "search hit BOTTOM, continuing at TOP"
+                    } else {
+                        "search hit TOP, continuing at BOTTOM"
+                    });
+                }
+                self.clamp_cursor();
+                self.scroll_to_cursor();
+            }
+            None => self.err(format!("E486: Pattern not found: {}", self.search.pattern)),
+        }
+    }
+
+    /// `*` — whole-word search for the word under the cursor.
+    pub(crate) fn search_word_under_cursor(&mut self) {
+        use crate::core::text::{CharClass, char_class};
+        let content = line_content(&self.buffer.rope, self.cursor.line);
+        let chars: Vec<char> = content.chars().collect();
+        let mut start = self.cursor.col.min(chars.len().saturating_sub(1));
+        // sit on a non-word char: scan forward to the next word on the line
+        while start < chars.len() && char_class(chars[start], false) != CharClass::Word {
+            start += 1;
+        }
+        if start >= chars.len() {
+            self.err("E348: No word under cursor");
+            return;
+        }
+        let mut s = start;
+        while s > 0 && char_class(chars[s - 1], false) == CharClass::Word {
+            s -= 1;
+        }
+        let mut e = start;
+        while e < chars.len() && char_class(chars[e], false) == CharClass::Word {
+            e += 1;
+        }
+        let word: String = chars[s..e].iter().collect();
+        let pattern = format!(r"\b{}\b", regex::escape(&word));
+        self.record_jump();
+        self.search
+            .set_pattern(&pattern, crate::search::Direction::Forward);
+        self.search
+            .ensure(&self.buffer.rope, self.current, self.buffer.version());
+        // jump to the next occurrence after the current word
+        if let Some(((line, col, _), _)) = self
+            .search
+            .next_after(self.cursor.line, e.saturating_sub(1) as u32)
+        {
+            self.cursor = Cursor::new(line, col as usize);
+            self.goal = None;
+            self.clamp_cursor();
+            self.scroll_to_cursor();
+        }
+        self.msg(format!("/{pattern}"));
+    }
+
+    /// `:s/pat/rep/[g]` — file scope by default, selection scope when the
+    /// prompt was opened from visual mode. Never line ranges (per #8).
+    pub(crate) fn substitute(&mut self, spec: &str) {
+        let Some((pattern, replacement, global)) = parse_substitute(spec) else {
+            self.err("E486: Malformed :s — expected :s/pattern/replacement/[g]");
+            return;
+        };
+        let Some(re) = crate::search::compile(&pattern) else {
+            self.err(format!("E383: Invalid pattern: {pattern}"));
+            return;
+        };
+        let (l1, l2) = self
+            .cmd_selection
+            .take()
+            .unwrap_or((0, text_lines(&self.buffer.rope) - 1));
+        let mut replaced = 0usize;
+        let mut lines_hit = 0usize;
+        self.buffer.begin_change(self.cursor);
+        for line in l1..=l2.min(text_lines(&self.buffer.rope) - 1) {
+            let content = line_content(&self.buffer.rope, line);
+            let new = if global {
+                let n = re.find_iter(&content).count();
+                if n == 0 {
+                    continue;
+                }
+                replaced += n;
+                re.replace_all(&content, replacement.as_str()).into_owned()
+            } else {
+                if re.find(&content).is_none() {
+                    continue;
+                }
+                replaced += 1;
+                re.replace(&content, replacement.as_str()).into_owned()
+            };
+            lines_hit += 1;
+            let base = self.buffer.rope.line_to_char(line);
+            let len = line_len(&self.buffer.rope, line);
+            self.buffer.remove(base..base + len);
+            self.buffer.insert(base, &new);
+        }
+        let committed = self.buffer.end_change();
+        self.note_change_committed(committed);
+        if replaced == 0 {
+            self.err(format!("E486: Pattern not found: {pattern}"));
+        } else {
+            // hlsearch follows the substitution pattern, vim-style
+            self.search
+                .set_pattern(&pattern, crate::search::Direction::Forward);
+            self.msg(format!(
+                "{replaced} substitution{} on {lines_hit} line{}",
+                if replaced == 1 { "" } else { "s" },
+                if lines_hit == 1 { "" } else { "s" }
+            ));
+        }
+        self.clamp_cursor();
+        self.scroll_to_cursor();
+    }
+
     /// Compact pending-state hint for the message line (vim's 'showcmd').
     pub fn pending_display(&self) -> String {
         let mut s = String::new();
@@ -1334,4 +1500,39 @@ fn analyzer_menu_key(ed: &mut Editor, key: Key) {
         Key::Esc | Key::Char('q') | Key::Ctrl('c') => ed.actions_menu = None,
         _ => {}
     }
+}
+
+/// Parses `s/pat/rep/[g]` (or `%s/…`), honoring backslash-escaped slashes.
+fn parse_substitute(spec: &str) -> Option<(String, String, bool)> {
+    let rest = spec
+        .strip_prefix("%s")
+        .or_else(|| spec.strip_prefix('s'))?
+        .strip_prefix('/')?;
+    let mut parts: Vec<String> = vec![String::new()];
+    let mut escaped = false;
+    for c in rest.chars() {
+        if escaped {
+            if c != '/' {
+                parts.last_mut().unwrap().push('\\');
+            }
+            parts.last_mut().unwrap().push(c);
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '/' {
+            parts.push(String::new());
+        } else {
+            parts.last_mut().unwrap().push(c);
+        }
+    }
+    if escaped {
+        parts.last_mut().unwrap().push('\\');
+    }
+    let pattern = parts.first().cloned().unwrap_or_default();
+    if pattern.is_empty() {
+        return None;
+    }
+    let replacement = parts.get(1).cloned().unwrap_or_default();
+    let flags = parts.get(2).cloned().unwrap_or_default();
+    Some((pattern, replacement, flags.contains('g')))
 }

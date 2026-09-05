@@ -57,6 +57,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
     for b in visible_bufs {
         ed.ensure_syntax(b);
     }
+    ed.search_ensure_current();
 
     for (id, rect) in &rects {
         if rect.height < 2 || rect.width < 3 {
@@ -474,6 +475,17 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
             .and_then(|d| d.spans.get(&line_idx))
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
+        let search_spans: Vec<(u32, u32)> =
+            if ed.search.highlight && view.buf_id == ed.current_buffer_id() {
+                ed.search.matches_on_line(line_idx).collect()
+            } else {
+                Vec::new()
+            };
+        let search_current = if view.focused && line_idx == view.cursor_line {
+            ed.search.match_at(line_idx, view.cursor_col as u32)
+        } else {
+            None
+        };
         let used = styled_visible(
             &line_content(view.rope, line_idx),
             view.left_cell,
@@ -483,6 +495,8 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
                 diags: diag_spans,
                 selection,
                 sel_bg,
+                search: &search_spans,
+                search_current,
                 line_bg,
                 focused: view.focused,
             },
@@ -555,6 +569,9 @@ struct LineInks<'a> {
     diags: &'a [(u32, u32, crate::lsp::Severity)],
     selection: SelSpan,
     sel_bg: ratatui::style::Color,
+    /// hlsearch spans on this line, with the current match singled out.
+    search: &'a [(u32, u32)],
+    search_current: Option<(u32, u32)>,
     line_bg: ratatui::style::Color,
     focused: bool,
 }
@@ -658,6 +675,8 @@ fn styled_visible(
         diags,
         selection,
         sel_bg,
+        search,
+        search_current,
         line_bg,
         focused,
     } = *inks;
@@ -726,8 +745,13 @@ fn styled_visible(
             SelSpan::Chars(s, e) => (this_off as u32) >= s && (this_off as u32) < e,
             SelSpan::Cells(l, r) => (start as u32) >= l && (start as u32) <= r,
         };
+        let off32 = this_off as u32;
         let style = if selected {
             style_at(this_off).bg(sel_bg)
+        } else if search_current.is_some_and(|(s, e)| off32 >= s && off32 < e) {
+            style_at(this_off).bg(palette::SEARCH_CURRENT_BG)
+        } else if search.iter().any(|(s, e)| off32 >= *s && off32 < *e) {
+            style_at(this_off).bg(palette::SEARCH_BG)
         } else {
             style_at(this_off)
         };
@@ -847,7 +871,12 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
 fn draw_message_line(f: &mut Frame, ed: &Editor, area: Rect) {
     let bg = Style::default().bg(palette::BG);
     let line = if ed.mode == Mode::Command {
-        Line::styled(format!(":{}", ed.cmdline), bg.fg(palette::FG))
+        let prefix = match ed.prompt {
+            crate::editor::Prompt::Command => ':',
+            crate::editor::Prompt::Search { forward: true } => '/',
+            crate::editor::Prompt::Search { forward: false } => '?',
+        };
+        Line::styled(format!("{prefix}{}", ed.cmdline), bg.fg(palette::FG))
     } else if let Some(msg) = &ed.message {
         let style = if msg.error {
             bg.fg(palette::ERROR_FG).add_modifier(Modifier::BOLD)
