@@ -147,7 +147,7 @@ fn editing_keys_are_inert_in_preview() {
     let mut ed = md_editor("# X\n\nbody\n");
     let before = text(&ed);
     feed(&mut ed, "gp");
-    feed(&mut ed, "ddxu.h y"); // destruction attempt
+    feed(&mut ed, "ddxu. y"); // destruction attempt (`h` legitimately edits)
     assert_eq!(text(&ed), before);
     assert!(ed.focused_is_preview());
 }
@@ -192,4 +192,65 @@ fn task_lists_render_checks() {
     let all = lines.join("\n");
     assert!(all.contains("✓ done thing"), "{all}");
     assert!(all.contains("○ todo thing"));
+}
+
+#[test]
+fn tables_render_as_aligned_grids() {
+    let mut ed = md_editor("| Name | Count |\n|:-----|------:|\n| ab | 1 |\n| c | 12 |\n");
+    let lines = preview_text(&mut ed);
+    let all = lines.join("\n");
+    assert!(all.contains("Name"), "{all}");
+    assert!(
+        all.contains("\u{2500}\u{253c}\u{2500}"),
+        "header rule: {all}"
+    );
+    assert!(!all.contains('|'), "raw pipes stripped: {all}");
+    let row1 = lines.iter().find(|l| l.contains("ab")).unwrap();
+    let row2 = lines.iter().find(|l| l.contains(" c ")).unwrap();
+    assert!(row1.contains("\u{2502}     1"), "right-aligned 1: {row1:?}");
+    assert!(
+        row2.contains("\u{2502}    12"),
+        "right-aligned 12: {row2:?}"
+    );
+    // every table row maps to its own source line: follow lands mid-table
+    let buf = ed.current_buffer_id();
+    let doc = ed.preview_doc_for(buf, 60);
+    let rule = doc
+        .lines
+        .iter()
+        .position(|l| l.iter().any(|(t, _)| t.contains('\u{253c}')))
+        .unwrap();
+    assert_eq!(doc.source_line_for_view(rule), 1);
+    assert_eq!(doc.source_line_for_view(rule + 1), 2);
+    assert_eq!(doc.source_line_for_view(rule + 2), 3);
+}
+
+#[test]
+fn h_jumps_to_source_and_enters_insert() {
+    let mut ed = md_editor(DOC);
+    feed(&mut ed, "gp");
+    feed(&mut ed, "G"); // last rendered line: the quote (source line 13)
+    feed(&mut ed, "h");
+    assert!(!ed.focused_is_preview(), "h leaves the projection");
+    feed(&mut ed, "X<Esc>");
+    let quote_line = text(&ed).lines().nth(13).unwrap_or("").to_string();
+    assert!(
+        quote_line.starts_with("X>"),
+        "insert began on the mapped source line: {quote_line:?}"
+    );
+}
+
+#[test]
+fn colon_q_closes_the_preview_panel() {
+    let mut ed = md_editor(DOC);
+    feed(&mut ed, "<C-w>v");
+    assert_eq!(ed.window_count(), 2);
+    feed(&mut ed, "gp");
+    assert!(ed.focused_is_preview());
+    feed(&mut ed, ":q<Enter>");
+    assert_eq!(ed.window_count(), 1, ":q closes the preview panel");
+    assert!(!ed.focused_is_preview());
+    // the surviving window edits normally
+    feed(&mut ed, "aZ<Esc>");
+    assert!(text(&ed).contains('Z'));
 }

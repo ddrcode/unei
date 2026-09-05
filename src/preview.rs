@@ -462,11 +462,7 @@ fn render_block(node: Node, src: &str, r: &mut Renderer, depth: usize) {
             }
         }
         "pipe_table" => {
-            for (i, row) in node_text(node, src).trim_end().split('\n').enumerate() {
-                let style = if i == 1 { dim() } else { body() };
-                r.emit(line + i, vec![(row.to_string(), style)]);
-            }
-            r.blank(line);
+            render_table(node, src, r);
         }
         "html_block" | "minus_metadata" | "plus_metadata" => {
             for (i, raw) in node_text(node, src).trim_end().split('\n').enumerate() {
@@ -489,6 +485,159 @@ fn render_block(node: Node, src: &str, r: &mut Renderer, depth: usize) {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Align {
+    Left,
+    Center,
+    Right,
+}
+
+/// Lays a pipe table out as an aligned grid: cells measured in display
+/// cells, columns honor `:---:`-style alignment, a ─┼─ rule under the
+/// header, over-wide columns shrink and clip with an ellipsis. Every row
+/// maps to its own source line, so follow lands mid-table.
+fn render_table(node: Node, src: &str, r: &mut Renderer) {
+    struct Row {
+        line: usize,
+        cells: Vec<Vec<Frag>>,
+        header: bool,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut aligns: Vec<Align> = Vec::new();
+    let mut c = node.walk();
+    for child in node.children(&mut c) {
+        match child.kind() {
+            "pipe_table_header" | "pipe_table_row" => {
+                let header = child.kind() == "pipe_table_header";
+                let base = if header {
+                    body().add_modifier(Modifier::BOLD)
+                } else {
+                    body()
+                };
+                let mut cells = Vec::new();
+                let mut cc = child.walk();
+                for cell in child.children(&mut cc) {
+                    if cell.kind() == "pipe_table_cell" {
+                        cells.push(inline_frags(node_text(cell, src).trim(), base));
+                    }
+                }
+                rows.push(Row {
+                    line: child.start_position().row,
+                    cells,
+                    header,
+                });
+            }
+            "pipe_table_delimiter_row" => {
+                let mut cc = child.walk();
+                for cell in child.children(&mut cc) {
+                    if cell.kind() != "pipe_table_delimiter_cell" {
+                        continue;
+                    }
+                    let (mut left, mut right) = (false, false);
+                    let mut ac = cell.walk();
+                    for a in cell.children(&mut ac) {
+                        match a.kind() {
+                            "pipe_table_align_left" => left = true,
+                            "pipe_table_align_right" => right = true,
+                            _ => {}
+                        }
+                    }
+                    aligns.push(match (left, right) {
+                        (true, true) => Align::Center,
+                        (false, true) => Align::Right,
+                        _ => Align::Left,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    let ncols = rows.iter().map(|row| row.cells.len()).max().unwrap_or(0);
+    if ncols == 0 {
+        return;
+    }
+    aligns.resize(ncols, Align::Left);
+
+    let frag_w = |f: &[Frag]| f.iter().map(|(t, _)| t.width()).sum::<usize>();
+    let mut widths = vec![1usize; ncols];
+    for row in &rows {
+        for (i, cell) in row.cells.iter().enumerate() {
+            widths[i] = widths[i].max(frag_w(cell));
+        }
+    }
+    // shrink the widest column until the grid fits the content width
+    let chrome = 3 * (ncols - 1) + 1;
+    while widths.iter().sum::<usize>() + chrome > r.width {
+        let widest = (0..ncols).max_by_key(|&i| widths[i]).unwrap_or(0);
+        if widths[widest] <= 4 {
+            break;
+        }
+        widths[widest] -= 1;
+    }
+
+    let sep = dim();
+    for row in &rows {
+        let mut frags: Vec<Frag> = vec![(" ".into(), body())];
+        for (i, width) in widths.iter().enumerate() {
+            if i > 0 {
+                frags.push((" │ ".into(), sep));
+            }
+            let cell = clip_frags(row.cells.get(i).cloned().unwrap_or_default(), *width);
+            let pad = width.saturating_sub(frag_w(&cell));
+            let (lp, rp) = match aligns[i] {
+                Align::Left => (0, pad),
+                Align::Right => (pad, 0),
+                Align::Center => (pad / 2, pad - pad / 2),
+            };
+            if lp > 0 {
+                frags.push((" ".repeat(lp), body()));
+            }
+            frags.extend(cell);
+            if rp > 0 && i + 1 < ncols {
+                frags.push((" ".repeat(rp), body()));
+            }
+        }
+        r.emit(row.line, frags);
+        if row.header {
+            // the rule maps to the delimiter row right below the header
+            let mut rule: Vec<Frag> = vec![("─".into(), sep)];
+            for (i, w) in widths.iter().enumerate() {
+                if i > 0 {
+                    rule.push(("─┼─".into(), sep));
+                }
+                rule.push(("─".repeat(*w), sep));
+            }
+            r.emit(row.line + 1, rule);
+        }
+    }
+    r.blank(node.start_position().row);
+}
+
+/// Clips styled fragments to a display width, ending with an ellipsis.
+fn clip_frags(frags: Vec<Frag>, max: usize) -> Vec<Frag> {
+    let total: usize = frags.iter().map(|(t, _)| t.width()).sum();
+    if total <= max {
+        return frags;
+    }
+    let mut out: Vec<Frag> = Vec::new();
+    let mut used = 0usize;
+    for (text, style) in frags {
+        for g in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(g).unwrap_or(0);
+            if used + w > max.saturating_sub(1) {
+                out.push(("…".to_string(), dim()));
+                return out;
+            }
+            match out.last_mut() {
+                Some((prev, s)) if *s == style => prev.push(g),
+                _ => out.push((g.to_string(), style)),
+            }
+            used += w;
+        }
+    }
+    out
 }
 
 fn heading_level(node: Node, _src: &str) -> usize {

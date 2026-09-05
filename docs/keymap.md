@@ -64,11 +64,15 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `gp` | toggle the window between source and rendered preview |
 | in preview: `i`/`k`, `Ctrl+D/U/F/B`, `g`/`G` | navigate the projection |
 | in preview: `Enter` | jump to the source at the mapped line |
+| in preview: `h` | jump to the source **and start editing** (insert mode) |
 | in preview: `Esc` | back to source view |
+| in preview: `:q` | close the panel (the command line works from a preview) |
 
 A preview window **follows** the window editing the same buffer — scroll or
-type in the source and the projection tracks you live. `Ctrl+W v` then `gp`
-is the side-by-side writing setup.
+type in the source and the projection tracks you live, its reading line
+highlighted where your cursor is. `Ctrl+W v` then `gp` is the side-by-side
+writing setup. GFM tables render as aligned grids (`:---:` alignment
+honored).
 
 ### Search
 
