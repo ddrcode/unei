@@ -2,13 +2,14 @@ use crate::config::OPTIONS;
 use crate::config::keymap::{self, Key};
 use crate::core::buffer::Cursor;
 use crate::core::commands::{
-    InsertEntry, LeaderCmd, Op, Register, ScrollCmd, SimpleCmd, Token, WinCmd,
+    InsertEntry, LeaderCmd, Op, Register, ScrollCmd, SimpleCmd, Token, VisualKind, WinCmd,
 };
 use crate::core::motion::{self, Motion, MotionCtx, MotionKind};
 use crate::core::text::{
     self, CharClass, char_class, first_non_blank, gr_index_at_col, line_content, line_graphemes,
     line_indent, line_len, max_normal_col, text_lines,
 };
+use crate::core::text::{cell_at_col, col_at_cell};
 use crate::editor::windows::SplitDir;
 
 use super::{Awaiting, Editor, Mode};
@@ -45,6 +46,11 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 Key::Char('K') => {
                     ed.drop_recording();
                     ed.analyzer_inlay_line();
+                    clear_pending(ed);
+                }
+                Key::Char('v') => {
+                    ed.drop_recording();
+                    ed.reselect_visual();
                     clear_pending(ed);
                 }
                 _ => clear_pending(ed),
@@ -148,12 +154,17 @@ fn dispatch(ed: &mut Editor, key: Key) {
     if key == Key::Esc {
         clear_pending(ed);
         ed.drop_recording();
+        ed.leave_visual();
         return;
     }
     if key == Key::Ctrl('c') {
         clear_pending(ed);
         ed.drop_recording();
-        ed.err("Type :q! and press <Enter> to abandon all changes and exit");
+        if matches!(ed.mode, Mode::Visual(_)) {
+            ed.leave_visual();
+        } else {
+            ed.err("Type :q! and press <Enter> to abandon all changes and exit");
+        }
         return;
     }
 
@@ -178,10 +189,75 @@ fn dispatch(ed: &mut Editor, key: Key) {
         return;
     }
 
-    let Some(token) = keymap::normal_token(key) else {
+    let visual = matches!(ed.mode, Mode::Visual(_));
+    let token = if visual {
+        keymap::visual_extra(key).or_else(|| keymap::normal_token(key))
+    } else {
+        keymap::normal_token(key)
+    };
+    let Some(token) = token else {
         clear_pending(ed);
         return;
     };
+
+    if visual {
+        match token {
+            Token::Op(op) => {
+                ed.drop_recording();
+                visual_operate(ed, op, true);
+                clear_pending(ed);
+                return;
+            }
+            Token::Simple(SimpleCmd::DeleteRight) => {
+                ed.drop_recording();
+                visual_operate(ed, Op::Delete, true);
+                clear_pending(ed);
+                return;
+            }
+            Token::Simple(SimpleCmd::ToggleCase) => {
+                ed.drop_recording();
+                visual_toggle_case(ed);
+                clear_pending(ed);
+                return;
+            }
+            Token::Simple(SimpleCmd::PasteAfter | SimpleCmd::PasteBefore) => {
+                ed.drop_recording();
+                visual_paste(ed);
+                clear_pending(ed);
+                return;
+            }
+            Token::Visual(kind) => {
+                ed.enter_visual(kind);
+                clear_pending(ed);
+                return;
+            }
+            Token::Insert(InsertEntry::OpenBelow) => {
+                // `o` swaps the selection ends in visual mode
+                std::mem::swap(&mut ed.visual_anchor, &mut ed.cursor);
+                ed.scroll_to_cursor();
+                clear_pending(ed);
+                return;
+            }
+            Token::Insert(InsertEntry::OpenAbove) => {
+                // `O` swaps corners horizontally in a block, ends otherwise
+                if matches!(ed.mode, Mode::Visual(VisualKind::Block)) {
+                    std::mem::swap(&mut ed.visual_anchor.col, &mut ed.cursor.col);
+                } else {
+                    std::mem::swap(&mut ed.visual_anchor, &mut ed.cursor);
+                }
+                ed.scroll_to_cursor();
+                clear_pending(ed);
+                return;
+            }
+            // motions, counts, find, scroll fall through to normal handling
+            Token::Motion(_) | Token::FindStart(_) | Token::Scroll(_) | Token::PrefixG => {}
+            // everything else is inert in visual mode
+            _ => {
+                clear_pending(ed);
+                return;
+            }
+        }
+    }
 
     match token {
         Token::Motion(m) => process_motion(ed, m),
@@ -266,6 +342,11 @@ fn dispatch(ed: &mut Editor, key: Key) {
             } else {
                 ed.pending.awaiting = Awaiting::ZUpper;
             }
+        }
+        Token::Visual(kind) => {
+            clear_pending(ed);
+            ed.drop_recording();
+            ed.enter_visual(kind);
         }
         Token::CmdLine => {
             clear_pending(ed);
@@ -442,10 +523,7 @@ fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>)
 
 fn charwise_op(ed: &mut Editor, op: Op, start: usize, end: usize) {
     let text = ed.buffer.rope.slice(start..end).to_string();
-    ed.register = Some(Register {
-        text,
-        linewise: false,
-    });
+    ed.register = Some(Register::Char(text));
     ed.goal = None;
     match op {
         Op::Yank => {
@@ -503,10 +581,7 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    ed.register = Some(Register {
-        text,
-        linewise: true,
-    });
+    ed.register = Some(Register::Line(text));
     ed.goal = None;
 
     match op {
@@ -665,10 +740,7 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
             };
             let text = ed.buffer.rope.slice(start..end).to_string();
             if !text.is_empty() {
-                ed.register = Some(Register {
-                    text,
-                    linewise: false,
-                });
+                ed.register = Some(Register::Char(text));
             }
             change_range(ed, start, end);
         }
@@ -705,10 +777,7 @@ fn delete_graphemes(ed: &mut Editor, count: usize, forward: bool) {
         return;
     }
     let text = ed.buffer.rope.slice(start..end).to_string();
-    ed.register = Some(Register {
-        text,
-        linewise: false,
-    });
+    ed.register = Some(Register::Char(text));
     ed.buffer.begin_change(motion_cursor_of_abs(ed, start));
     ed.buffer.remove(start..end);
     ed.cursor = motion_cursor_of_abs(ed, start);
@@ -823,43 +892,398 @@ fn paste(ed: &mut Editor, after: bool, count: usize) {
     };
     ed.goal = None;
     ed.buffer.begin_change(ed.cursor);
-    if reg.linewise {
-        let text = reg.text.repeat(count);
-        let rope = &ed.buffer.rope;
-        let last = text_lines(rope) - 1;
-        let line = if after {
-            ed.cursor.line + 1
-        } else {
-            ed.cursor.line
-        };
-        let at = if line > last {
-            rope.len_chars()
-        } else {
-            rope.line_to_char(line)
-        };
-        ed.buffer.insert(at, &text);
-        let line = line.min(text_lines(&ed.buffer.rope) - 1);
-        ed.cursor = Cursor::new(line, first_non_blank(&ed.buffer.rope, line));
-    } else {
-        let text = reg.text.repeat(count);
-        let rope = &ed.buffer.rope;
-        let base = rope.line_to_char(ed.cursor.line);
-        let grs = line_graphemes(&line_content(rope, ed.cursor.line), OPTIONS.tabstop);
-        let col = if after {
-            match gr_index_at_col(&grs, ed.cursor.col) {
-                Some(i) => grs[i].char_off + grs[i].chars,
-                None => line_len(rope, ed.cursor.line),
-            }
-        } else {
-            ed.cursor.col
-        };
-        let at = base + col;
-        ed.buffer.insert(at, &text);
-        let end = at + text.chars().count();
-        ed.cursor = motion_cursor_of_abs(ed, end.saturating_sub(1));
+    match reg {
+        Register::Line(text) => {
+            let text = text.repeat(count);
+            let rope = &ed.buffer.rope;
+            let last = text_lines(rope) - 1;
+            let line = if after {
+                ed.cursor.line + 1
+            } else {
+                ed.cursor.line
+            };
+            let at = if line > last {
+                rope.len_chars()
+            } else {
+                rope.line_to_char(line)
+            };
+            ed.buffer.insert(at, &text);
+            let line = line.min(text_lines(&ed.buffer.rope) - 1);
+            ed.cursor = Cursor::new(line, first_non_blank(&ed.buffer.rope, line));
+        }
+        Register::Char(text) => {
+            let text = text.repeat(count);
+            let rope = &ed.buffer.rope;
+            let base = rope.line_to_char(ed.cursor.line);
+            let grs = line_graphemes(&line_content(rope, ed.cursor.line), OPTIONS.tabstop);
+            let col = if after {
+                match gr_index_at_col(&grs, ed.cursor.col) {
+                    Some(i) => grs[i].char_off + grs[i].chars,
+                    None => line_len(rope, ed.cursor.line),
+                }
+            } else {
+                ed.cursor.col
+            };
+            let at = base + col;
+            ed.buffer.insert(at, &text);
+            let end = at + text.chars().count();
+            ed.cursor = motion_cursor_of_abs(ed, end.saturating_sub(1));
+        }
+        Register::Block(segments) => {
+            block_paste(ed, &segments, after);
+        }
     }
     let committed = ed.buffer.end_change();
     ed.note_change_committed(committed);
+}
+
+/// Blockwise put: each segment lands on a successive line at the cursor's
+/// display column (short lines are space-padded, missing lines created).
+fn block_paste(ed: &mut Editor, segments: &[String], after: bool) {
+    let cur_grs = line_graphemes(
+        &line_content(&ed.buffer.rope, ed.cursor.line),
+        OPTIONS.tabstop,
+    );
+    let cell = if after {
+        cell_at_col(&cur_grs, ed.cursor.col)
+            + cur_grs
+                .iter()
+                .find(|g| g.char_off == ed.cursor.col)
+                .map(|g| g.width)
+                .unwrap_or(0)
+    } else {
+        cell_at_col(&cur_grs, ed.cursor.col)
+    };
+    for (i, segment) in segments.iter().enumerate() {
+        if segment.is_empty() {
+            continue;
+        }
+        let line = ed.cursor.line + i;
+        while line >= text_lines(&ed.buffer.rope) {
+            let at = ed.buffer.rope.len_chars();
+            ed.buffer.insert(at, "\n");
+        }
+        let content = line_content(&ed.buffer.rope, line);
+        let grs = line_graphemes(&content, OPTIONS.tabstop);
+        let width: usize = grs.iter().map(|g| g.width).sum();
+        if width < cell {
+            // pad to the block column
+            let at = ed.buffer.rope.line_to_char(line) + line_len(&ed.buffer.rope, line);
+            ed.buffer.insert(at, &" ".repeat(cell - width));
+        }
+        let content = line_content(&ed.buffer.rope, line);
+        let grs = line_graphemes(&content, OPTIONS.tabstop);
+        let col = char_col_for_cell(&grs, cell, &content);
+        let at = ed.buffer.rope.line_to_char(line) + col;
+        ed.buffer.insert(at, segment);
+    }
+}
+
+/// Char column whose grapheme starts at or after `cell` (line end when past).
+fn char_col_for_cell(grs: &[crate::core::text::Gr], cell: usize, content: &str) -> usize {
+    for g in grs {
+        if g.cell >= cell {
+            return g.char_off;
+        }
+    }
+    content.chars().count()
+}
+
+// ----------------------------------------------------------------------
+// Visual-mode operators
+// ----------------------------------------------------------------------
+
+/// The block rectangle of the current selection: lines and cell columns.
+fn visual_block_rect(ed: &Editor) -> (usize, usize, usize, usize) {
+    let (a, c) = (ed.visual_anchor, ed.cursor);
+    let (l1, l2) = (a.line.min(c.line), a.line.max(c.line));
+    let cell_of = |cur: Cursor| {
+        let grs = line_graphemes(&line_content(&ed.buffer.rope, cur.line), OPTIONS.tabstop);
+        cell_at_col(&grs, cur.col)
+    };
+    let (ca, cc) = (cell_of(a), cell_of(c));
+    (l1, l2, ca.min(cc), ca.max(cc))
+}
+
+/// Per-line char range of the block on `line`; None when the line is shorter
+/// than the block's left edge.
+fn block_segment(ed: &Editor, line: usize, left: usize, right: usize) -> Option<(usize, usize)> {
+    let content = line_content(&ed.buffer.rope, line);
+    let grs = line_graphemes(&content, OPTIONS.tabstop);
+    let width: usize = grs.iter().map(|g| g.width).sum();
+    if width <= left {
+        return None;
+    }
+    let start = col_at_cell(&grs, left);
+    // right edge inclusive: the whole grapheme covering `right`
+    let end = grs
+        .iter()
+        .find(|g| g.cell <= right && right < g.cell + g.width)
+        .map(|g| g.char_off + g.chars)
+        .unwrap_or_else(|| content.chars().count());
+    (end > start).then_some((start, end))
+}
+
+fn visual_operate(ed: &mut Editor, op: Op, set_register: bool) {
+    let Mode::Visual(kind) = ed.mode else { return };
+    ed.leave_visual();
+    let saved = if set_register {
+        None
+    } else {
+        Some(ed.register.clone())
+    };
+    match kind {
+        VisualKind::Char => {
+            let (a, c) = (ed.visual_anchor, ed.cursor);
+            let (first, last) = if abs_of(ed, a) <= abs_of(ed, c) {
+                (a, c)
+            } else {
+                (c, a)
+            };
+            let start = abs_of(ed, first);
+            let end = inclusive_end(ed, last);
+            if start >= end {
+                if op == Op::Change {
+                    change_range(ed, start, start);
+                }
+            } else {
+                charwise_op(ed, op, start, end);
+            }
+        }
+        VisualKind::Line => {
+            let (l1, l2) = (
+                ed.visual_anchor.line.min(ed.cursor.line),
+                ed.visual_anchor.line.max(ed.cursor.line),
+            );
+            linewise_op(ed, op, l1, l2);
+        }
+        VisualKind::Block => visual_block_operate(ed, op),
+    }
+    if let Some(saved) = saved {
+        ed.register = saved;
+    }
+}
+
+fn visual_block_operate(ed: &mut Editor, op: Op) {
+    let (l1, l2, left, right) = visual_block_rect(ed);
+    let mut segments = Vec::new();
+    for line in l1..=l2 {
+        let text = block_segment(ed, line, left, right)
+            .map(|(s, e)| {
+                let content = line_content(&ed.buffer.rope, line);
+                content.chars().skip(s).take(e - s).collect::<String>()
+            })
+            .unwrap_or_default();
+        segments.push(text);
+    }
+    ed.register = Some(Register::Block(segments));
+    ed.goal = None;
+
+    let top_left_col = block_segment(ed, l1, left, right)
+        .map(|(s, _)| s)
+        .unwrap_or(0);
+    match op {
+        Op::Yank => {
+            ed.cursor = Cursor::new(l1, top_left_col);
+        }
+        Op::Delete | Op::Change => {
+            ed.buffer.begin_change(Cursor::new(l1, top_left_col));
+            for line in l1..=l2 {
+                if let Some((s, e)) = block_segment(ed, line, left, right) {
+                    let base = ed.buffer.rope.line_to_char(line);
+                    ed.buffer.remove(base + s..base + e);
+                }
+            }
+            ed.cursor = Cursor::new(l1, top_left_col);
+            if op == Op::Delete {
+                let committed = ed.buffer.end_change();
+                ed.note_change_committed(committed);
+            } else {
+                // insert on the top line; Esc replicates to the block lines
+                ed.set_block_change(crate::editor::BlockChange {
+                    top_line: l1,
+                    lines: (l1 + 1..=l2).collect(),
+                    col: top_left_col,
+                });
+                ed.goal = None;
+                ed.mode = Mode::Insert;
+            }
+        }
+    }
+    ed.clamp_cursor();
+}
+
+fn visual_toggle_case(ed: &mut Editor) {
+    let Mode::Visual(kind) = ed.mode else { return };
+    ed.leave_visual();
+    ed.buffer.begin_change(ed.cursor);
+    match kind {
+        VisualKind::Char => {
+            let (a, c) = (ed.visual_anchor, ed.cursor);
+            let (first, last) = if abs_of(ed, a) <= abs_of(ed, c) {
+                (a, c)
+            } else {
+                (c, a)
+            };
+            let start = abs_of(ed, first);
+            let end = inclusive_end(ed, last);
+            toggle_case_range(ed, start, end);
+            ed.cursor = first;
+        }
+        VisualKind::Line => {
+            let (l1, l2) = (
+                ed.visual_anchor.line.min(ed.cursor.line),
+                ed.visual_anchor.line.max(ed.cursor.line),
+            );
+            let start = ed.buffer.rope.line_to_char(l1);
+            let end = ed.buffer.rope.line_to_char(l2) + line_len(&ed.buffer.rope, l2);
+            toggle_case_range(ed, start, end);
+            ed.cursor = Cursor::new(l1, 0);
+        }
+        VisualKind::Block => {
+            let (l1, l2, left, right) = visual_block_rect(ed);
+            for line in l1..=l2 {
+                if let Some((s, e)) = block_segment(ed, line, left, right) {
+                    let base = ed.buffer.rope.line_to_char(line);
+                    toggle_case_range(ed, base + s, base + e);
+                }
+            }
+            ed.cursor = Cursor::new(l1, 0);
+        }
+    }
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.clamp_cursor();
+}
+
+fn toggle_case_range(ed: &mut Editor, start: usize, end: usize) {
+    if start >= end {
+        return;
+    }
+    let toggled: String = ed
+        .buffer
+        .rope
+        .slice(start..end)
+        .chars()
+        .map(|c| {
+            let mapped: Vec<char> = if c.is_lowercase() {
+                c.to_uppercase().collect()
+            } else if c.is_uppercase() {
+                c.to_lowercase().collect()
+            } else {
+                return c;
+            };
+            match mapped[..] {
+                [single] => single,
+                _ if c == 'ß' => 'ẞ',
+                _ => c,
+            }
+        })
+        .collect();
+    ed.buffer.remove(start..end);
+    ed.buffer.insert(start, &toggled);
+}
+
+/// Visual paste: replaces the selection with the register WITHOUT the
+/// replaced text touching the register — the author's explicit preference
+/// (paste the same content in several places).
+fn visual_paste(ed: &mut Editor) {
+    let Some(reg) = ed.register.clone() else {
+        ed.leave_visual();
+        return;
+    };
+    let Mode::Visual(kind) = ed.mode else { return };
+    ed.leave_visual();
+    ed.goal = None;
+    ed.buffer.begin_change(ed.cursor);
+    match kind {
+        VisualKind::Char => {
+            let (a, c) = (ed.visual_anchor, ed.cursor);
+            let (first, last) = if abs_of(ed, a) <= abs_of(ed, c) {
+                (a, c)
+            } else {
+                (c, a)
+            };
+            let start = abs_of(ed, first);
+            let end = inclusive_end(ed, last);
+            if end > start {
+                ed.buffer.remove(start..end);
+            }
+            match reg {
+                Register::Char(text) => {
+                    ed.buffer.insert(start, &text);
+                    let end = start + text.chars().count();
+                    ed.cursor = motion_cursor_of_abs(ed, end.saturating_sub(1));
+                }
+                Register::Line(text) => {
+                    // whole lines land on their own line at the gap
+                    ed.buffer.insert(start, &format!("\n{text}"));
+                    ed.cursor = motion_cursor_of_abs(ed, start + 1);
+                }
+                Register::Block(segments) => {
+                    ed.cursor = motion_cursor_of_abs(ed, start);
+                    block_paste(ed, &segments, false);
+                }
+            }
+        }
+        VisualKind::Line => {
+            let (l1, l2) = (
+                ed.visual_anchor.line.min(ed.cursor.line),
+                ed.visual_anchor.line.max(ed.cursor.line),
+            );
+            let rope = &ed.buffer.rope;
+            let start = rope.line_to_char(l1);
+            let end = if l2 + 1 >= rope.len_lines() {
+                rope.len_chars()
+            } else {
+                rope.line_to_char(l2 + 1)
+            };
+            ed.buffer.remove(start..end);
+            let text = match reg {
+                Register::Line(text) => text,
+                Register::Char(text) => format!("{text}\n"),
+                Register::Block(segments) => segments.iter().fold(String::new(), |mut acc, s| {
+                    acc.push_str(s);
+                    acc.push('\n');
+                    acc
+                }),
+            };
+            ed.buffer.insert(start, &text);
+            if ed.buffer.rope.len_chars() == 0 {
+                ed.buffer.insert(0, "\n");
+            }
+            let line = l1.min(text_lines(&ed.buffer.rope) - 1);
+            ed.cursor = Cursor::new(line, first_non_blank(&ed.buffer.rope, line));
+        }
+        VisualKind::Block => {
+            let (l1, l2, left, right) = visual_block_rect(ed);
+            let top_left = block_segment(ed, l1, left, right)
+                .map(|(s, _)| s)
+                .unwrap_or(0);
+            for line in l1..=l2 {
+                if let Some((s, e)) = block_segment(ed, line, left, right) {
+                    let base = ed.buffer.rope.line_to_char(line);
+                    ed.buffer.remove(base + s..base + e);
+                }
+            }
+            ed.cursor = Cursor::new(l1, top_left);
+            match reg {
+                Register::Block(segments) => block_paste(ed, &segments, false),
+                Register::Char(text) => {
+                    let at = abs_of(ed, ed.cursor);
+                    ed.buffer.insert(at, &text);
+                }
+                Register::Line(text) => {
+                    let at = ed.buffer.rope.line_to_char(l1);
+                    ed.buffer.insert(at, &text);
+                }
+            }
+        }
+    }
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.clamp_cursor();
+    ed.scroll_to_cursor();
 }
 
 fn scroll(ed: &mut Editor, cmd: ScrollCmd) {

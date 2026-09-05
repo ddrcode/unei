@@ -459,6 +459,11 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         } else {
             &[]
         };
+        let selection = if view.focused {
+            selection_on_line(ed, line_idx)
+        } else {
+            SelSpan::None
+        };
         let diag = ed.diag_view(view.buf_id);
         let diag_spans: &[(u32, u32, crate::lsp::Severity)] = diag
             .and_then(|d| d.spans.get(&line_idx))
@@ -471,6 +476,7 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
             &LineInks {
                 syntax: syntax_spans,
                 diags: diag_spans,
+                selection,
                 line_bg,
                 focused: view.focused,
             },
@@ -526,11 +532,64 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
 /// Renders the horizontally-scrolled window of a line as styled spans:
 /// tree-sitter capture colors over the line background, tabs expanded,
 /// padded to full width (so the cursorline highlight spans the window).
+/// The selection's footprint on one line.
+#[derive(Clone, Copy)]
+enum SelSpan {
+    None,
+    /// Char columns start..end (exclusive).
+    Chars(u32, u32),
+    /// The whole line, padding included.
+    Line,
+    /// Display cells left..=right (blockwise).
+    Cells(u32, u32),
+}
+
 struct LineInks<'a> {
     syntax: &'a [crate::syntax::LineSpan],
     diags: &'a [(u32, u32, crate::lsp::Severity)],
+    selection: SelSpan,
     line_bg: ratatui::style::Color,
     focused: bool,
+}
+
+/// Selection footprint of the current visual mode on `line` (focused only).
+fn selection_on_line(ed: &Editor, line: usize) -> SelSpan {
+    use crate::core::commands::VisualKind;
+    let Mode::Visual(kind) = ed.mode else {
+        return SelSpan::None;
+    };
+    let (a, c) = (ed.visual_anchor, ed.cursor);
+    let (l1, l2) = (a.line.min(c.line), a.line.max(c.line));
+    if line < l1 || line > l2 {
+        return SelSpan::None;
+    }
+    match kind {
+        VisualKind::Line => SelSpan::Line,
+        VisualKind::Block => {
+            let cell_of = |cur: crate::core::buffer::Cursor| {
+                let grs = line_graphemes(&line_content(&ed.buffer.rope, cur.line), OPTIONS.tabstop);
+                cell_at_col(&grs, cur.col)
+            };
+            let (ca, cc) = (cell_of(a), cell_of(c));
+            SelSpan::Cells(ca.min(cc) as u32, ca.max(cc) as u32)
+        }
+        VisualKind::Char => {
+            let (first, last) = if (a.line, a.col) <= (c.line, c.col) {
+                (a, c)
+            } else {
+                (c, a)
+            };
+            if l1 == l2 {
+                SelSpan::Chars(first.col as u32, last.col as u32 + 1)
+            } else if line == first.line {
+                SelSpan::Chars(first.col as u32, u32::MAX)
+            } else if line == last.line {
+                SelSpan::Chars(0, last.col as u32 + 1)
+            } else {
+                SelSpan::Line
+            }
+        }
+    }
 }
 
 fn styled_visible(
@@ -543,6 +602,7 @@ fn styled_visible(
     let LineInks {
         syntax,
         diags,
+        selection,
         line_bg,
         focused,
     } = *inks;
@@ -605,7 +665,17 @@ fn styled_visible(
         } else {
             g.to_string()
         };
-        let style = style_at(this_off);
+        let selected = match selection {
+            SelSpan::None => false,
+            SelSpan::Line => true,
+            SelSpan::Chars(s, e) => (this_off as u32) >= s && (this_off as u32) < e,
+            SelSpan::Cells(l, r) => (start as u32) >= l && (start as u32) <= r,
+        };
+        let style = if selected {
+            style_at(this_off).bg(palette::SELECTION_BG)
+        } else {
+            style_at(this_off)
+        };
         if style != run_style && !run.is_empty() {
             out.push(Span::styled(std::mem::take(&mut run), run_style));
         }
@@ -617,7 +687,12 @@ fn styled_visible(
         out.push(Span::styled(run, run_style));
     }
     if used < width {
-        out.push(Span::styled(" ".repeat(width - used), default_style));
+        let pad_style = if matches!(selection, SelSpan::Line) {
+            default_style.bg(palette::SELECTION_BG)
+        } else {
+            default_style
+        };
+        out.push(Span::styled(" ".repeat(width - used), pad_style));
     }
     used
 }
@@ -631,11 +706,15 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
     let mut used = 0usize;
 
     if view.focused {
+        use crate::core::commands::VisualKind;
         let (label, color) = match ed.mode {
             Mode::Normal if ed.pending.is_idle() => (" NORMAL ", palette::MODE_NORMAL),
             Mode::Normal => (" NORMAL ", palette::MODE_PENDING),
             Mode::Insert => (" INSERT ", palette::MODE_INSERT),
             Mode::Command => (" COMMAND ", palette::MODE_COMMAND),
+            Mode::Visual(VisualKind::Char) => (" VISUAL ", palette::MODE_COMMAND),
+            Mode::Visual(VisualKind::Line) => (" V-LINE ", palette::MODE_COMMAND),
+            Mode::Visual(VisualKind::Block) => (" V-BLOCK ", palette::MODE_COMMAND),
         };
         spans.push(Span::styled(
             label,

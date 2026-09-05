@@ -100,6 +100,8 @@ pub enum Token {
     Leader,
     /// `Ctrl+w` — window chord prefix.
     PrefixWindow,
+    /// `v` / `V` / `Ctrl+v` — enter visual mode.
+    Visual(VisualKind),
     /// `Ctrl+^` — switch to the alternate (previously shown) buffer.
     AlternateBuffer,
     /// `Ctrl+p` — file picker.
@@ -107,6 +109,13 @@ pub enum Token {
     /// `K` — hover: type/docs of the item under the cursor (rust-analyzer).
     Hover,
     CmdLine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualKind {
+    Char,
+    Line,
+    Block,
 }
 
 /// Second key of a `<leader>…` chord.
@@ -192,8 +201,11 @@ pub enum WinCmd {
     OnlyWindow,
 }
 
+/// What the unnamed register holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Register {
-    pub text: String,
-    pub linewise: bool,
+pub enum Register {
+    Char(String),
+    Line(String),
+    /// One segment per selected line (blockwise yank/delete).
+    Block(Vec<String>),
 }

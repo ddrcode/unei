@@ -24,6 +24,7 @@ pub enum Mode {
     Normal,
     Insert,
     Command,
+    Visual(crate::core::commands::VisualKind),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,6 +115,16 @@ pub struct BufferList {
     pub selected: usize,
 }
 
+/// See `Editor::block_change`.
+pub(crate) struct BlockChange {
+    /// Line the insert session runs on.
+    pub top_line: usize,
+    /// The other lines of the block, receiving the replica.
+    pub lines: Vec<usize>,
+    /// Char column where the inserted text starts on every line.
+    pub col: usize,
+}
+
 pub struct Editor {
     pub buffer: Buffer,
     pub cursor: Cursor,
@@ -145,6 +156,13 @@ pub struct Editor {
     /// means "at the live end".
     jumplist: Vec<(BufId, Cursor)>,
     jump_index: usize,
+    /// The fixed end of the visual selection (cursor is the moving end).
+    pub visual_anchor: Cursor,
+    /// Last selection, for `gv` (kind, anchor, cursor).
+    last_visual: Option<(crate::core::commands::VisualKind, Cursor, Cursor)>,
+    /// Pending blockwise change: after `c` on a block, the insert session's
+    /// text replicates to these lines at the given char column on Esc.
+    block_change: Option<BlockChange>,
     /// Working folder: picker listings and relative opens resolve against it.
     root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
@@ -225,6 +243,9 @@ impl Editor {
             diag_views: std::collections::HashMap::new(),
             jumplist: Vec::new(),
             jump_index: 0,
+            visual_anchor: Cursor::default(),
+            last_visual: None,
+            block_change: None,
             root: std::path::PathBuf::from("."),
             slots,
             current: 1,
@@ -897,7 +918,7 @@ impl Editor {
 
         let version_before = self.buffer.version();
         match self.mode {
-            Mode::Normal => normal::handle_key(self, key),
+            Mode::Normal | Mode::Visual(_) => normal::handle_key(self, key),
             Mode::Insert => insert::handle_key(self, key),
             Mode::Command => cmdline::handle_key(self, key),
         }
@@ -1161,6 +1182,72 @@ impl Editor {
                     client.resolve_action(action.raw);
                 }
             }
+        }
+    }
+
+    pub(crate) fn enter_visual(&mut self, kind: crate::core::commands::VisualKind) {
+        match self.mode {
+            Mode::Visual(k) if k == kind => self.leave_visual(),
+            Mode::Visual(_) => self.mode = Mode::Visual(kind),
+            _ => {
+                self.visual_anchor = self.cursor;
+                self.mode = Mode::Visual(kind);
+            }
+        }
+    }
+
+    pub(crate) fn leave_visual(&mut self) {
+        if let Mode::Visual(kind) = self.mode {
+            self.last_visual = Some((kind, self.visual_anchor, self.cursor));
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// `gv` — reselect the last visual selection.
+    pub(crate) fn reselect_visual(&mut self) {
+        if let Some((kind, anchor, cursor)) = self.last_visual {
+            self.visual_anchor = anchor;
+            self.cursor = cursor;
+            self.mode = Mode::Visual(kind);
+            self.clamp_cursor();
+            self.scroll_to_cursor();
+        }
+    }
+
+    pub(crate) fn set_block_change(&mut self, change: BlockChange) {
+        self.block_change = Some(change);
+    }
+
+    /// On leaving a block-change insert session: replicate the text typed on
+    /// the top line to every other line of the block, at the block column.
+    pub(crate) fn finish_block_change(&mut self) {
+        let Some(change) = self.block_change.take() else {
+            return;
+        };
+        // the replica is what now sits between the block column and the
+        // cursor on the top line; a multi-line insert bails, like vim
+        if self.cursor.line != change.top_line || self.cursor.col < change.col {
+            return;
+        }
+        let content = line_content(&self.buffer.rope, change.top_line);
+        let typed: String = content
+            .chars()
+            .skip(change.col)
+            .take(self.cursor.col - change.col)
+            .collect();
+        if typed.is_empty() {
+            return;
+        }
+        for line in change.lines {
+            if line >= text_lines(&self.buffer.rope) {
+                continue;
+            }
+            let len = line_len(&self.buffer.rope, line);
+            if len < change.col {
+                continue; // line never reached the block column
+            }
+            let at = self.buffer.rope.line_to_char(line) + change.col;
+            self.buffer.insert(at, &typed);
         }
     }
 
