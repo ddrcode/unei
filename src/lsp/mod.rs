@@ -556,10 +556,8 @@ fn splice_inlay_hints(text: &str, result: &Value) -> Option<String> {
     let mut last = 0usize;
     for (col, label) in inserts {
         let col = col.min(text.len());
-        match text.get(last..col) {
-            Some(chunk) => out.push_str(chunk),
-            None => return None, // not a char boundary: bail to plain hover
-        }
+        // a non-boundary column bails out to no annotation at all
+        out.push_str(text.get(last..col)?);
         out.push_str(&label);
         last = col;
     }

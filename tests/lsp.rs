@@ -41,7 +41,7 @@ fn project() -> PathBuf {
     dir
 }
 
-fn editor_on(path: &PathBuf) -> Editor {
+fn editor_on(path: &std::path::Path) -> Editor {
     let (buffer, _) = Buffer::from_path(path).unwrap();
     let mut ed = Editor::new(buffer);
     ed.set_view(80, 22);

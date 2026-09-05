@@ -468,10 +468,12 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
             &line_content(view.rope, line_idx),
             view.left_cell,
             text_w,
-            syntax_spans,
-            diag_spans,
-            line_bg,
-            view.focused,
+            &LineInks {
+                syntax: syntax_spans,
+                diags: diag_spans,
+                line_bg,
+                focused: view.focused,
+            },
             &mut spans,
         );
         // end-of-line diagnostic ghost text (<leader>dh toggles)
@@ -523,16 +525,26 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
 /// Renders the horizontally-scrolled window of a line as styled spans:
 /// tree-sitter capture colors over the line background, tabs expanded,
 /// padded to full width (so the cursorline highlight spans the window).
+struct LineInks<'a> {
+    syntax: &'a [crate::syntax::LineSpan],
+    diags: &'a [(u32, u32, crate::lsp::Severity)],
+    line_bg: ratatui::style::Color,
+    focused: bool,
+}
+
 fn styled_visible(
     content: &str,
     left: usize,
     width: usize,
-    syntax: &[crate::syntax::LineSpan],
-    diags: &[(u32, u32, crate::lsp::Severity)],
-    line_bg: ratatui::style::Color,
-    focused: bool,
+    inks: &LineInks,
     out: &mut Vec<Span<'static>>,
 ) -> usize {
+    let LineInks {
+        syntax,
+        diags,
+        line_bg,
+        focused,
+    } = *inks;
     // inactive panels render with all inks blended toward the background
     let ink = |c: ratatui::style::Color| if focused { c } else { palette::dimmed(c) };
     let default_style = Style::default().bg(line_bg).fg(ink(palette::FG));
