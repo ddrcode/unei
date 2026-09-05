@@ -196,3 +196,40 @@ fn nix_interpolation_resets_string_color() {
     // inside ${...} the @embedded reset (or inner captures) replaces string
     assert_ne!(capture_at(&ed, 0, 14), Some("string"));
 }
+
+// --- 6502 / ACME assembly (ticket #18) ---------------------------------
+
+const ASM: &str =
+    "; asm: 65c02 acme\nloop    LDA #$10   ; load\n        STA $2000,X\n        !byte 1, 2\n";
+
+#[test]
+fn asm6502_highlights_when_modeline_present() {
+    let mut ed = editor_with("game.s", ASM);
+    assert!(ed.ensure_syntax(1), "modeline should select the 6502 grammar");
+    assert_eq!(capture_at(&ed, 0, 2), Some("comment")); // ; asm: … modeline
+    assert_eq!(capture_at(&ed, 1, 0), Some("label")); // loop
+    assert_eq!(capture_at(&ed, 1, 8), Some("keyword")); // LDA
+    assert_eq!(capture_at(&ed, 1, 12), Some("operator")); // #
+    assert_eq!(capture_at(&ed, 1, 14), Some("number")); // $10
+    assert_eq!(capture_at(&ed, 1, 20), Some("comment")); // ; load
+    assert_eq!(capture_at(&ed, 2, 8), Some("keyword")); // STA
+    assert_eq!(capture_at(&ed, 2, 12), Some("number")); // $2000
+    assert_eq!(capture_at(&ed, 2, 18), Some("variable.builtin")); // X register
+    assert_eq!(capture_at(&ed, 3, 8), Some("attribute")); // !byte pseudo-op
+}
+
+#[test]
+fn asm_without_modeline_stays_plain() {
+    // the same code, no modeline — dialect unknown, so no coloring
+    let mut ed = editor_with("game.s", "loop    LDA #$10\n        STA $2000\n");
+    assert!(!ed.ensure_syntax(1), "no modeline, no asm grammar");
+    assert!(spans(&ed, 0).is_empty());
+}
+
+#[test]
+fn non_6502_asm_stays_plain() {
+    // a RISC-V/gas file must NOT be colored by the 6502 grammar
+    let mut ed = editor_with("boot.s", "# asm: rv32e gas\nstart:  li a0, 1\n");
+    assert!(!ed.ensure_syntax(1), "rv32e is not 6502 — plain until it has a grammar");
+    assert!(spans(&ed, 1).is_empty());
+}

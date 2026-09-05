@@ -12,6 +12,15 @@ use tree_sitter::{Language, Query};
 
 use super::theme;
 
+// The bespoke 6502/ACME grammar (#18), vendored under grammars/asm6502 and
+// compiled by build.rs. Selected via the asm modeline, not by extension —
+// `.s` is dialect-ambiguous — so it carries no extensions in the registry.
+unsafe extern "C" {
+    fn tree_sitter_asm6502() -> *const ();
+}
+pub const ASM6502_LANGUAGE: tree_sitter_language::LanguageFn =
+    unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_asm6502) };
+
 struct LangSpec {
     /// Registry name; also the key injections resolve (markdown fences name
     /// languages like `rust`, and the block grammar injects `markdown_inline`).
@@ -46,7 +55,18 @@ pub struct LangConfig {
     pub extra_pattern_start: usize,
 }
 
-static LANGUAGES: [LangSpec; 12] = [
+static LANGUAGES: [LangSpec; 13] = [
+    LangSpec {
+        name: "asm6502",
+        aliases: &["6502", "acme"],
+        extensions: &[],
+        filenames: &[],
+        language: || ASM6502_LANGUAGE.into(),
+        highlights_extra: "",
+        highlights: include_str!("../../grammars/asm6502/queries/highlights.scm"),
+        injections: "",
+        cell: OnceLock::new(),
+    },
     LangSpec {
         name: "rust",
         aliases: &["rs"],

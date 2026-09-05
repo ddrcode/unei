@@ -45,7 +45,7 @@ impl Syntax {
     /// Refreshes the cache for a buffer if its content changed. Returns
     /// whether highlights exist for it.
     pub fn ensure(&mut self, id: BufId, buffer: &Buffer) -> bool {
-        let Some(lang) = languages::detect(buffer.path.as_deref()) else {
+        let Some(lang) = detect_lang(buffer) else {
             self.cache.remove(&id);
             return false;
         };
@@ -80,6 +80,26 @@ impl Syntax {
     pub fn invalidate(&mut self, id: BufId) {
         self.cache.remove(&id);
     }
+}
+
+/// The grammar for a buffer. Most files resolve by extension/name, but
+/// `.s`/`.asm` are dialect-ambiguous — a 6502 file and a RISC-V file share
+/// the extension — so their grammar comes from the asm modeline (#18), the
+/// same declaration the machine lens reads (#45). No modeline (or a
+/// non-6502 one) means no asm grammar yet: plain, never mis-colored.
+fn detect_lang(buffer: &Buffer) -> Option<&'static str> {
+    let path = buffer.path.as_deref()?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    if matches!(ext.as_deref(), Some("s") | Some("asm")) {
+        return match crate::lens::modeline(buffer.rope.lines().map(|l| l.to_string()).take(5)) {
+            Some(crate::lens::Family::Cmos65c02 | crate::lens::Family::Nmos6502) => Some("asm6502"),
+            _ => None,
+        };
+    }
+    languages::detect(Some(path))
 }
 
 /// Highlights a standalone snippet (fenced code in previews) into per-line
