@@ -1,3 +1,4 @@
+pub mod analyzer;
 mod buffer_list;
 mod cmdline;
 pub mod file_picker;
@@ -37,6 +38,12 @@ pub enum Awaiting {
     Leader,
     /// `Ctrl+w` / `<leader>w` pressed, second key pending.
     Window,
+    /// `<leader>c…` — code chord.
+    LeaderC,
+    /// `<leader>r…` — rust chord.
+    LeaderR,
+    /// `<leader>d…` — diagnostics chord.
+    LeaderD,
 }
 
 #[derive(Debug, Default)]
@@ -124,6 +131,16 @@ pub struct Editor {
     pub buffer_list: Option<BufferList>,
     pub file_picker: Option<file_picker::FilePicker>,
     pub syntax: crate::syntax::Syntax,
+    /// rust-analyzer session (ticket #6), started lazily.
+    pub(crate) lsp: Option<crate::lsp::Client>,
+    lsp_broken: bool,
+    lsp_dirty_since: Option<std::time::Instant>,
+    /// Hover / annotated-line float (any key dismisses).
+    pub info_float: Option<Vec<String>>,
+    pub actions_menu: Option<analyzer::ActionsMenu>,
+    /// End-of-line diagnostic ghost text toggle (<leader>dh).
+    pub ghost_text: bool,
+    diag_views: std::collections::HashMap<std::path::PathBuf, analyzer::DiagView>,
     /// Working folder: picker listings and relative opens resolve against it.
     root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
@@ -195,6 +212,13 @@ impl Editor {
             buffer_list: None,
             file_picker: None,
             syntax: crate::syntax::Syntax::default(),
+            lsp: None,
+            lsp_broken: false,
+            lsp_dirty_since: None,
+            info_float: None,
+            actions_menu: None,
+            ghost_text: true,
+            diag_views: std::collections::HashMap::new(),
             root: std::path::PathBuf::from("."),
             slots,
             current: 1,
@@ -326,6 +350,14 @@ impl Editor {
         if self.slots.len() == 1 {
             self.should_quit = true;
             return;
+        }
+        let closing_path = if id == self.current {
+            self.buffer.path.clone()
+        } else {
+            self.slots[idx].buffer.as_ref().and_then(|b| b.path.clone())
+        };
+        if let Some(p) = closing_path {
+            self.lsp_did_close(&p);
         }
         if id == self.current {
             let target = self
@@ -463,6 +495,16 @@ impl Editor {
                 .unwrap_or(self.current)
         };
         self.buffer_ref(buf_id)
+    }
+
+    pub(crate) fn buffer_mut_by_id(&mut self, buf_id: BufId) -> Option<&mut Buffer> {
+        if buf_id == self.current {
+            return Some(&mut self.buffer);
+        }
+        self.slots
+            .iter_mut()
+            .find(|s| s.id == buf_id)
+            .and_then(|s| s.buffer.as_mut())
     }
 
     pub fn buffer_ref(&self, buf_id: BufId) -> &Buffer {
@@ -742,6 +784,17 @@ impl Editor {
         if self.mode != Mode::Command {
             self.message = None;
         }
+        // the info float closes on any key; Esc stops there, others act
+        if self.info_float.is_some() {
+            self.info_float = None;
+            if matches!(key, Key::Esc | Key::Char('q') | Key::Char('K')) {
+                return;
+            }
+        }
+        if self.actions_menu.is_some() {
+            analyzer_menu_key(self, key);
+            return;
+        }
         if self.file_picker.is_some() {
             file_picker::handle_key(self, key);
             self.clamp_cursor();
@@ -762,10 +815,14 @@ impl Editor {
             self.recording.push(key);
         }
 
+        let version_before = self.buffer.version();
         match self.mode {
             Mode::Normal => normal::handle_key(self, key),
             Mode::Insert => insert::handle_key(self, key),
             Mode::Command => cmdline::handle_key(self, key),
+        }
+        if self.buffer.version() != version_before {
+            self.lsp_note_edit();
         }
 
         // A completed command that changed the buffer becomes the dot-repeat.
@@ -943,6 +1000,7 @@ impl Editor {
                 return false;
             }
         };
+        self.lsp_did_save(&path);
         match crate::format::format_file(&path) {
             crate::format::Outcome::NoConfig | crate::format::Outcome::Unchanged => {
                 self.msg(format!("\"{}\" {}L written", path.display(), lines));
@@ -1006,6 +1064,25 @@ impl Editor {
         self.goal = None;
     }
 
+    /// Applies a chosen code action (or asks the server to resolve it).
+    fn run_selected_action(&mut self) {
+        let Some(menu) = self.actions_menu.take() else {
+            return;
+        };
+        let Some(action) = menu.actions.into_iter().nth(menu.selected) else {
+            return;
+        };
+        let edit = action.raw.get("edit").cloned();
+        match edit {
+            Some(e) if e.is_object() => self.apply_workspace_edit(&e),
+            _ => {
+                if let Some(client) = &mut self.lsp {
+                    client.resolve_action(action.raw);
+                }
+            }
+        }
+    }
+
     /// Compact pending-state hint for the message line (vim's 'showcmd').
     pub fn pending_display(&self) -> String {
         let mut s = String::new();
@@ -1033,7 +1110,26 @@ impl Editor {
             Awaiting::ZUpper => s.push('Z'),
             Awaiting::Leader => s.push('␣'),
             Awaiting::Window => s.push_str("^W"),
+            Awaiting::LeaderC => s.push_str("␣c"),
+            Awaiting::LeaderR => s.push_str("␣r"),
+            Awaiting::LeaderD => s.push_str("␣d"),
         }
         s
+    }
+}
+
+/// Keys inside the code-actions menu: i/k navigate, Enter applies, Esc quits.
+fn analyzer_menu_key(ed: &mut Editor, key: Key) {
+    let Some(menu) = &mut ed.actions_menu else {
+        return;
+    };
+    match key {
+        Key::Char('i') | Key::Up => menu.selected = menu.selected.saturating_sub(1),
+        Key::Char('k') | Key::Down => {
+            menu.selected = (menu.selected + 1).min(menu.actions.len().saturating_sub(1));
+        }
+        Key::Enter => ed.run_selected_action(),
+        Key::Esc | Key::Char('q') | Key::Ctrl('c') => ed.actions_menu = None,
+        _ => {}
     }
 }

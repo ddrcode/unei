@@ -106,6 +106,14 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
 
     draw_message_line(f, ed, Rect::new(0, area.height - 1, area.width, 1));
 
+    if let Some(lines) = &ed.info_float {
+        draw_info_float(f, lines, windows_area);
+        return;
+    }
+    if let Some(menu) = &ed.actions_menu {
+        draw_actions_menu(f, menu, windows_area);
+        return;
+    }
     if ed.file_picker.is_some() {
         draw_file_picker(f, ed, windows_area);
         return; // the picker positions its own query cursor
@@ -138,6 +146,94 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
             }
         }
     }
+}
+
+/// Hover / annotated-line float: centered, content-sized, scrollless MVP.
+fn draw_info_float(f: &mut Frame, lines: &[String], area: Rect) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear};
+    let float = Style::default().bg(palette::FLOAT_BG).fg(palette::FG);
+    let max_w = (area.width.saturating_sub(8)).clamp(20, 90) as usize;
+    let max_h = (area.height.saturating_sub(4)).clamp(4, 18) as usize;
+    let content: Vec<&str> = lines.iter().map(String::as_str).take(max_h).collect();
+    let w = content
+        .iter()
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(10)
+        .clamp(10, max_w) as u16
+        + 2;
+    let h = content.len() as u16 + 2;
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = (area.height.saturating_sub(h)) / 4;
+    let rect = Rect::new(x, y, w, h.min(area.height));
+    let rows: Vec<Line> = content
+        .iter()
+        .map(|l| {
+            let mut t: String = l.chars().take(max_w).collect();
+            let pad = (w as usize).saturating_sub(2 + t.width());
+            t.push_str(&" ".repeat(pad));
+            Line::styled(t, float)
+        })
+        .collect();
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(rows).style(float).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT)),
+        ),
+        rect,
+    );
+}
+
+/// Code-actions menu: pick with i/k, Enter applies.
+fn draw_actions_menu(f: &mut Frame, menu: &crate::editor::analyzer::ActionsMenu, area: Rect) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear};
+    let float = Style::default().bg(palette::FLOAT_BG).fg(palette::FG);
+    let w = menu
+        .actions
+        .iter()
+        .map(|a| a.title.width())
+        .max()
+        .unwrap_or(10)
+        .clamp(16, (area.width as usize).saturating_sub(6)) as u16
+        + 4;
+    let h = (menu.actions.len() as u16 + 2).min(area.height);
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = (area.height.saturating_sub(h)) / 3;
+    let rect = Rect::new(x, y, w, h);
+    let rows: Vec<Line> = menu
+        .actions
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let style = if i == menu.selected {
+                Style::default()
+                    .bg(palette::MODE_NORMAL)
+                    .fg(palette::MODE_LABEL_FG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                float
+            };
+            let mut t = format!(" {} ", a.title);
+            let pad = (w as usize).saturating_sub(2 + t.width());
+            t.push_str(&" ".repeat(pad));
+            Line::styled(t, style)
+        })
+        .collect();
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(rows).style(float).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
+                .title(" code actions ")
+                .title_style(Style::default().bg(palette::FLOAT_BG).fg(palette::FG)),
+        ),
+        rect,
+    );
 }
 
 fn buffer_display_name(path: Option<&std::path::Path>) -> String {
@@ -363,15 +459,61 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         } else {
             &[]
         };
-        styled_visible(
+        let diag = ed.diag_view(view.buf_id);
+        let diag_spans: &[(u32, u32, crate::lsp::Severity)] = diag
+            .and_then(|d| d.spans.get(&line_idx))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let used = styled_visible(
             &line_content(view.rope, line_idx),
             view.left_cell,
             text_w,
             syntax_spans,
+            diag_spans,
             line_bg,
             view.focused,
             &mut spans,
         );
+        // end-of-line diagnostic ghost text (<leader>dh toggles)
+        if ed.ghost_text
+            && let Some((sev, msg)) = diag.and_then(|d| d.ghost.get(&line_idx))
+            && used + 4 < text_w
+        {
+            let room = text_w - used - 3;
+            let mut text: String = format!("● {msg}");
+            if text.width() > room {
+                text = text
+                    .chars()
+                    .take(room.saturating_sub(1))
+                    .collect::<String>()
+                    + "…";
+            }
+            let color = match sev {
+                crate::lsp::Severity::Error => palette::RED,
+                _ => palette::YELLOW,
+            };
+            let color = if view.focused {
+                color
+            } else {
+                palette::dimmed(color)
+            };
+            let ghost_w = text.width();
+            // replace part of the padding with the ghost
+            if let Some(last) = spans.last_mut() {
+                let pad = last.content.len();
+                let keep = 2.min(pad);
+                *last = Span::styled(" ".repeat(keep), Style::default().bg(line_bg));
+                spans.push(Span::styled(
+                    text,
+                    Style::default()
+                        .bg(line_bg)
+                        .fg(color)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+                let rest = (text_w - used).saturating_sub(keep + ghost_w);
+                spans.push(Span::styled(" ".repeat(rest), Style::default().bg(line_bg)));
+            }
+        }
         rows.push(Line::from(spans).style(Style::default().bg(line_bg)));
     }
 
@@ -386,25 +528,39 @@ fn styled_visible(
     left: usize,
     width: usize,
     syntax: &[crate::syntax::LineSpan],
+    diags: &[(u32, u32, crate::lsp::Severity)],
     line_bg: ratatui::style::Color,
     focused: bool,
     out: &mut Vec<Span<'static>>,
-) {
+) -> usize {
     // inactive panels render with all inks blended toward the background
     let ink = |c: ratatui::style::Color| if focused { c } else { palette::dimmed(c) };
     let default_style = Style::default().bg(line_bg).fg(ink(palette::FG));
     let style_at = |char_off: usize| -> Style {
         let off = char_off as u32;
+        let mut style = default_style;
         for (start, end, capture) in syntax {
             if *start <= off && off < *end {
-                let style = crate::config::theme::capture_style(*capture as usize);
-                return style.fg(ink(style.fg.unwrap_or(palette::FG))).bg(line_bg);
+                let cap = crate::config::theme::capture_style(*capture as usize);
+                style = cap.fg(ink(cap.fg.unwrap_or(palette::FG))).bg(line_bg);
+                break;
             }
             if *start > off {
                 break;
             }
         }
-        default_style
+        // diagnostic underline overlay: smuggled modifier bits the Kitty
+        // backend turns into straight-red / curly-yellow underlines
+        for (start, end, sev) in diags {
+            if *start <= off && off < *end {
+                style = match sev {
+                    crate::lsp::Severity::Error => style.add_modifier(Modifier::RAPID_BLINK),
+                    _ => style.add_modifier(Modifier::SLOW_BLINK),
+                };
+                break;
+            }
+        }
+        style
     };
 
     let mut run = String::new();
@@ -450,6 +606,7 @@ fn styled_visible(
     if used < width {
         out.push(Span::styled(" ".repeat(width - used), default_style));
     }
+    used
 }
 
 /// Per-window statusline: the focused window carries the mode badge (and a
@@ -490,7 +647,20 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
     };
     let pct = (view.cursor_line + 1) * 100 / lines_total.max(1);
     let right = if view.focused {
-        format!(" {}:{}  {pct}% ", view.cursor_line + 1, view.cursor_col + 1)
+        let mut ra = String::new();
+        if let Some(p) = ed.lsp_progress() {
+            ra = format!(" ra:{p} ");
+        } else if let Some(d) = ed.diag_view(view.buf_id) {
+            let (e, w) = d.counts;
+            if e + w > 0 {
+                ra = format!(" ✘{e} ▲{w} ");
+            }
+        }
+        format!(
+            "{ra} {}:{}  {pct}% ",
+            view.cursor_line + 1,
+            view.cursor_col + 1
+        )
     } else {
         String::new()
     };

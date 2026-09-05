@@ -37,6 +37,16 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
             ed.pending.awaiting = Awaiting::None;
             match key {
                 Key::Char('g') => process_motion(ed, Motion::GotoFirst),
+                Key::Char('d') => {
+                    ed.drop_recording();
+                    ed.analyzer_definition();
+                    clear_pending(ed);
+                }
+                Key::Char('K') => {
+                    ed.drop_recording();
+                    ed.analyzer_inlay_line();
+                    clear_pending(ed);
+                }
                 _ => clear_pending(ed),
             }
         }
@@ -75,8 +85,35 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 Some(LeaderCmd::WindowPrefix) => {
                     ed.pending.awaiting = Awaiting::Window;
                 }
+                Some(LeaderCmd::CodePrefix) => ed.pending.awaiting = Awaiting::LeaderC,
+                Some(LeaderCmd::RustPrefix) => ed.pending.awaiting = Awaiting::LeaderR,
+                Some(LeaderCmd::DiagPrefix) => ed.pending.awaiting = Awaiting::LeaderD,
                 None => clear_pending(ed),
             }
+        }
+        Awaiting::LeaderC => {
+            ed.pending.awaiting = Awaiting::None;
+            if key == Key::Char('a') {
+                ed.drop_recording();
+                ed.analyzer_code_actions();
+            }
+            clear_pending(ed);
+        }
+        Awaiting::LeaderR => {
+            ed.pending.awaiting = Awaiting::None;
+            if key == Key::Char('m') {
+                ed.drop_recording();
+                ed.analyzer_expand_macro();
+            }
+            clear_pending(ed);
+        }
+        Awaiting::LeaderD => {
+            ed.pending.awaiting = Awaiting::None;
+            if key == Key::Char('h') {
+                ed.drop_recording();
+                ed.toggle_ghost_text();
+            }
+            clear_pending(ed);
         }
         Awaiting::Window => {
             ed.pending.awaiting = Awaiting::None;
@@ -208,6 +245,11 @@ fn dispatch(ed: &mut Editor, key: Key) {
             clear_pending(ed);
             ed.drop_recording();
             super::file_picker::open(ed);
+        }
+        Token::Hover => {
+            clear_pending(ed);
+            ed.drop_recording();
+            ed.analyzer_hover();
         }
         Token::PrefixG => ed.pending.awaiting = Awaiting::G,
         Token::PrefixZ => {

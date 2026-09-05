@@ -690,6 +690,7 @@ dependencies = [
  "nucleo-matcher",
  "ratatui",
  "ropey",
+ "serde_json",
  "streaming-iterator",
  "tree-sitter",
  "tree-sitter-bash",

@@ -112,6 +112,9 @@ pub fn normal_token(key: Key) -> Option<Token> {
         // buffers
         Key::Ctrl('^') | Key::Ctrl('6') => Token::AlternateBuffer,
 
+        // rust-analyzer
+        Key::Char('K') => Token::Hover,
+
         // file picker
         Key::Ctrl('p') => Token::FilePicker,
 
@@ -135,6 +138,9 @@ pub fn leader_token(key: Key) -> Option<LeaderCmd> {
         Key::Char('b') => Some(LeaderCmd::BufferList),
         Key::Char('p') => Some(LeaderCmd::FilePicker),
         Key::Char('w') => Some(LeaderCmd::WindowPrefix),
+        Key::Char('c') => Some(LeaderCmd::CodePrefix),
+        Key::Char('r') => Some(LeaderCmd::RustPrefix),
+        Key::Char('d') => Some(LeaderCmd::DiagPrefix),
         _ => None,
     }
 }

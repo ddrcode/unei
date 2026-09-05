@@ -1,29 +1,42 @@
 //! Terminal lifecycle: raw mode, alternate screen, Kitty keyboard protocol,
-//! and a panic-safe restore path.
+//! a panic-safe restore path — and the Kitty-flavored ratatui backend that
+//! renders real undercurl for warning diagnostics.
+//!
+//! ratatui's `Modifier` cannot express undercurl, so two otherwise-unused
+//! bits are repurposed (see `ui`): RAPID_BLINK = straight red underline
+//! (errors), SLOW_BLINK = curly yellow underline (warnings).
 
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{Backend, ClearType, WindowSize};
+use ratatui::buffer::Cell;
 use ratatui::crossterm::cursor::SetCursorStyle;
+use ratatui::crossterm::cursor::{Hide, MoveTo, Show};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
+use ratatui::crossterm::style::{
+    Attribute, Color as CtColor, Colors, Print, ResetColor, SetAttribute, SetColors,
+};
+use ratatui::crossterm::terminal::{Clear as CtClear, ClearType as CtClearType};
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
 use ratatui::crossterm::{execute, queue};
+use ratatui::layout::{Position, Size};
+use ratatui::style::{Color, Modifier};
 
 use crate::config::keymap::Key;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static ENHANCED: AtomicBool = AtomicBool::new(false);
 
-pub fn init() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+pub fn init() -> Result<Terminal<KittyBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -40,7 +53,143 @@ pub fn init() -> Result<Terminal<CrosstermBackend<Stdout>>> {
         ENHANCED.store(true, Ordering::SeqCst);
     }
     ACTIVE.store(true, Ordering::SeqCst);
-    Ok(Terminal::new(CrosstermBackend::new(io::stdout()))?)
+    Ok(Terminal::new(KittyBackend::new(io::stdout()))?)
+}
+
+/// The custom backend: crossterm rendering plus Kitty underline extensions.
+pub struct KittyBackend<W: Write> {
+    writer: W,
+}
+
+impl<W: Write> KittyBackend<W> {
+    pub fn new(writer: W) -> Self {
+        Self { writer }
+    }
+}
+
+fn ct_color(c: Color) -> CtColor {
+    match c {
+        Color::Reset => CtColor::Reset,
+        Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
+        Color::Black => CtColor::Black,
+        Color::White => CtColor::White,
+        _ => CtColor::Reset, // the palette is all-RGB; nothing else is used
+    }
+}
+
+/// Error underline (straight, red) — material error color.
+const UNDERLINE_ERROR: &str = "\x1b[4:1m\x1b[58:2::240:113:120m";
+/// Warning underline (curly, yellow) — the Kitty flex from the rules.
+const UNDERLINE_WARN: &str = "\x1b[4:3m\x1b[58:2::255:203:107m";
+const UNDERLINE_OFF: &str = "\x1b[4:0m\x1b[59m";
+
+impl<W: Write> Backend for KittyBackend<W> {
+    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        use ratatui::crossterm::queue;
+        let mut last: Option<(u16, u16)> = None;
+        let mut style = (Color::Reset, Color::Reset, Modifier::empty());
+        for (x, y, cell) in content {
+            if last != Some((x.wrapping_sub(1), y)) {
+                queue!(self.writer, MoveTo(x, y))?;
+            }
+            last = Some((x, y));
+            let want = (cell.fg, cell.bg, cell.modifier);
+            if want != style {
+                queue!(self.writer, SetAttribute(Attribute::Reset), ResetColor)?;
+                queue!(
+                    self.writer,
+                    SetColors(Colors::new(ct_color(cell.fg), ct_color(cell.bg)))
+                )?;
+                let m = cell.modifier;
+                if m.contains(Modifier::BOLD) {
+                    queue!(self.writer, SetAttribute(Attribute::Bold))?;
+                }
+                if m.contains(Modifier::DIM) {
+                    queue!(self.writer, SetAttribute(Attribute::Dim))?;
+                }
+                if m.contains(Modifier::ITALIC) {
+                    queue!(self.writer, SetAttribute(Attribute::Italic))?;
+                }
+                if m.contains(Modifier::UNDERLINED) {
+                    queue!(self.writer, SetAttribute(Attribute::Underlined))?;
+                }
+                if m.contains(Modifier::REVERSED) {
+                    queue!(self.writer, SetAttribute(Attribute::Reverse))?;
+                }
+                if m.contains(Modifier::CROSSED_OUT) {
+                    queue!(self.writer, SetAttribute(Attribute::CrossedOut))?;
+                }
+                // smuggled diagnostics underlines (Kitty SGR extensions)
+                if m.contains(Modifier::RAPID_BLINK) {
+                    queue!(self.writer, Print(UNDERLINE_ERROR))?;
+                } else if m.contains(Modifier::SLOW_BLINK) {
+                    queue!(self.writer, Print(UNDERLINE_WARN))?;
+                } else if style
+                    .2
+                    .intersects(Modifier::RAPID_BLINK | Modifier::SLOW_BLINK)
+                {
+                    queue!(self.writer, Print(UNDERLINE_OFF))?;
+                }
+                style = want;
+            }
+            queue!(self.writer, Print(cell.symbol()))?;
+        }
+        queue!(self.writer, SetAttribute(Attribute::Reset), ResetColor)?;
+        Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> io::Result<()> {
+        ratatui::crossterm::execute!(self.writer, Hide)
+    }
+
+    fn show_cursor(&mut self) -> io::Result<()> {
+        ratatui::crossterm::execute!(self.writer, Show)
+    }
+
+    fn get_cursor_position(&mut self) -> io::Result<Position> {
+        let (x, y) = ratatui::crossterm::cursor::position()?;
+        Ok(Position::new(x, y))
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
+        let p = position.into();
+        ratatui::crossterm::execute!(self.writer, MoveTo(p.x, p.y))
+    }
+
+    fn clear(&mut self) -> io::Result<()> {
+        ratatui::crossterm::execute!(self.writer, CtClear(CtClearType::All))
+    }
+
+    fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
+        let ct = match clear_type {
+            ClearType::All => CtClearType::All,
+            ClearType::AfterCursor => CtClearType::FromCursorDown,
+            ClearType::BeforeCursor => CtClearType::FromCursorUp,
+            ClearType::CurrentLine => CtClearType::CurrentLine,
+            ClearType::UntilNewLine => CtClearType::UntilNewLine,
+        };
+        ratatui::crossterm::execute!(self.writer, CtClear(ct))
+    }
+
+    fn size(&self) -> io::Result<Size> {
+        let (w, h) = ratatui::crossterm::terminal::size()?;
+        Ok(Size::new(w, h))
+    }
+
+    fn window_size(&mut self) -> io::Result<WindowSize> {
+        let (w, h) = ratatui::crossterm::terminal::size()?;
+        Ok(WindowSize {
+            columns_rows: Size::new(w, h),
+            pixels: Size::new(0, 0),
+        })
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
 }
 
 /// Idempotent; also called from the panic hook.
