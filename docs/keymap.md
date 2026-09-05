@@ -179,6 +179,9 @@ Motions extend the selection; `h` is a left motion here.
 | Keys | Action |
 |---|---|
 | `Esc`, `Ctrl+C`, `Ctrl+[` | back to normal |
+| `Ctrl+N` / `Ctrl+P` | completion: open at the cursor, then cycle next / previous (rust-analyzer, Rust only) |
+| with the popup open: `Enter` / `Tab` | accept the selected candidate |
+| with the popup open: `Ctrl+E` | dismiss (keep typing); `Esc` dismisses and leaves insert |
 | `Enter` | new line, copying the current indent |
 | `Tab` | spaces to the next 4-column stop |
 | `Backspace` / `Del` | delete back / forward (joins lines at edges) |

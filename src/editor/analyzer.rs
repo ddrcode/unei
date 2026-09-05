@@ -32,6 +32,66 @@ pub struct ActionsMenu {
     pub selected: usize,
 }
 
+/// The active completion popup (ticket #22). Holds the full candidate list
+/// from the server and a filtered `shown` view (indices into `all`) that
+/// narrows as the user keeps typing, without a new server round-trip.
+pub struct CompletionMenu {
+    all: Vec<lsp::CompletionItem>,
+    shown: Vec<usize>,
+    pub selected: usize,
+    anchor_line: usize,
+    /// Char column where the completed identifier begins (popup anchor and
+    /// the left edge of the text that accept replaces).
+    pub anchor_col: usize,
+}
+
+impl CompletionMenu {
+    pub fn len(&self) -> usize {
+        self.shown.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.shown.is_empty()
+    }
+    fn item(&self, i: usize) -> Option<&lsp::CompletionItem> {
+        self.all.get(*self.shown.get(i)?)
+    }
+    pub fn selected_item(&self) -> Option<&lsp::CompletionItem> {
+        self.item(self.selected)
+    }
+    /// Visible (label, detail) pairs, for rendering.
+    pub fn rows(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.shown.iter().filter_map(move |&i| {
+            let it = self.all.get(i)?;
+            Some((it.label.as_str(), it.detail.as_deref()))
+        })
+    }
+}
+
+/// Candidates whose filter text matches `prefix`, ranked: prefix-hits
+/// before substring-hits, then by the server's sortText. Indices into `all`.
+fn rank_completions(all: &[lsp::CompletionItem], prefix: &str) -> Vec<usize> {
+    let p = prefix.to_ascii_lowercase();
+    let mut scored: Vec<(u8, &str, usize)> = all
+        .iter()
+        .enumerate()
+        .filter_map(|(i, it)| {
+            let key = it.filter_text.to_ascii_lowercase();
+            let score = if p.is_empty() {
+                1
+            } else if key.starts_with(&p) {
+                0
+            } else if key.contains(&p) {
+                1
+            } else {
+                return None;
+            };
+            Some((score, it.sort_text.as_str(), i))
+        })
+        .collect();
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    scored.into_iter().take(200).map(|(_, _, i)| i).collect()
+}
+
 fn byte_to_char_col(line: &str, byte_col: usize) -> usize {
     let b = byte_col.min(line.len());
     line.get(..b)
@@ -232,8 +292,142 @@ impl Editor {
     // events
     // ------------------------------------------------------------------
 
+    // ---- completion (ticket #22, iteration one) ----------------------
+
+    /// Trigger completion at the cursor (Ctrl+N/Ctrl+P in insert mode).
+    /// Rust only for now — a request whose response opens the popup a tick
+    /// later, through the same `lsp_tick` pump as hover.
+    pub(crate) fn request_completion(&mut self) {
+        let Some(file) = self.current_rust_file() else {
+            self.msg("completion: Rust only for now");
+            return;
+        };
+        let line = line_content(&self.buffer.rope, self.cursor.line);
+        let chars: Vec<char> = line.chars().collect();
+        let mut start = self.cursor.col.min(chars.len());
+        while start > 0
+            && crate::core::text::char_class(chars[start - 1], false)
+                == crate::core::text::CharClass::Word
+        {
+            start -= 1;
+        }
+        self.completion_req = Some((self.cursor.line, start));
+        let (l, c) = self.cursor_lsp_pos();
+        if let Some(client) = &mut self.lsp {
+            client.completion(&file, l, c);
+        }
+    }
+
+    /// A completion response arrived: open the popup unless the cursor has
+    /// since left the line the request was made on.
+    fn on_completion(&mut self, items: Vec<lsp::CompletionItem>) {
+        let Some((line, anchor_col)) = self.completion_req.take() else {
+            return;
+        };
+        if line != self.cursor.line || self.cursor.col < anchor_col {
+            return;
+        }
+        self.build_completion(items, line, anchor_col);
+    }
+
+    /// Rank `items` against the current prefix and open the popup (or report
+    /// none). Shared by the live path and the test hook.
+    pub(crate) fn build_completion(
+        &mut self,
+        items: Vec<lsp::CompletionItem>,
+        anchor_line: usize,
+        anchor_col: usize,
+    ) {
+        let prefix = self.completion_prefix(anchor_line, anchor_col);
+        let shown = rank_completions(&items, &prefix);
+        if shown.is_empty() {
+            self.completion = None;
+            self.msg("no completions");
+            return;
+        }
+        self.completion = Some(CompletionMenu {
+            all: items,
+            shown,
+            selected: 0,
+            anchor_line,
+            anchor_col,
+        });
+    }
+
+    fn completion_prefix(&self, line: usize, anchor_col: usize) -> String {
+        line_content(&self.buffer.rope, line)
+            .chars()
+            .skip(anchor_col)
+            .take(self.cursor.col.saturating_sub(anchor_col))
+            .collect()
+    }
+
+    pub(crate) fn completion_next(&mut self) {
+        if let Some(m) = &mut self.completion
+            && !m.shown.is_empty()
+        {
+            m.selected = (m.selected + 1) % m.shown.len();
+        }
+    }
+
+    pub(crate) fn completion_prev(&mut self) {
+        if let Some(m) = &mut self.completion
+            && !m.shown.is_empty()
+        {
+            m.selected = (m.selected + m.shown.len() - 1) % m.shown.len();
+        }
+    }
+
+    /// Re-narrow after the user typed or deleted while the popup is open.
+    pub(crate) fn completion_refilter(&mut self) {
+        let Some(mut m) = self.completion.take() else {
+            return;
+        };
+        if self.cursor.line != m.anchor_line || self.cursor.col < m.anchor_col {
+            return; // moved off the identifier — popup closes
+        }
+        let prefix = self.completion_prefix(m.anchor_line, m.anchor_col);
+        m.shown = rank_completions(&m.all, &prefix);
+        if m.shown.is_empty() {
+            return; // nothing matches — closes
+        }
+        m.selected = 0;
+        self.completion = Some(m);
+    }
+
+    /// Accept the selected candidate: replace the typed prefix with its
+    /// insert text (one undo step, folded into the open insert session).
+    pub(crate) fn completion_accept(&mut self) {
+        let Some(m) = self.completion.take() else {
+            return;
+        };
+        if self.cursor.line != m.anchor_line || self.cursor.col < m.anchor_col {
+            return;
+        }
+        let Some(text) = m.selected_item().map(|it| it.insert_text.clone()) else {
+            return;
+        };
+        let base = self.buffer.rope.line_to_char(m.anchor_line);
+        let start = base + m.anchor_col;
+        let end = base + self.cursor.col;
+        self.buffer.begin_change(self.cursor);
+        self.buffer.remove(start..end);
+        self.buffer.insert(start, &text);
+        self.buffer.end_change();
+        self.cursor.col = m.anchor_col + text.chars().count();
+        self.clamp_cursor();
+        self.scroll_to_cursor();
+    }
+
+    /// Open a popup from synthetic items without a live server (tests and
+    /// programmatic drivers).
+    pub fn inject_completion(&mut self, items: Vec<lsp::CompletionItem>, anchor_col: usize) {
+        self.build_completion(items, self.cursor.line, anchor_col);
+    }
+
     fn handle_lsp_event(&mut self, event: Event) {
         match event {
+            Event::Completion(items) => self.on_completion(items),
             Event::DiagnosticsUpdated(path) => self.rebuild_diag_view(&path),
             Event::Progress(_) => {}
             Event::Hover(Some(text)) => self.show_info_float(text),

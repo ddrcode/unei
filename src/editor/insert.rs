@@ -9,8 +9,32 @@ use crate::core::text::{
 use super::{Editor, Mode};
 
 pub fn handle_key(ed: &mut Editor, key: Key) {
+    // while the completion popup is open it claims the navigation/accept
+    // keys; typing and backspace keep editing and re-narrow it (#22)
+    if ed.completion.is_some() {
+        match key {
+            Key::Ctrl('n') => return ed.completion_next(),
+            Key::Ctrl('p') => return ed.completion_prev(),
+            Key::Enter | Key::Tab => return ed.completion_accept(),
+            Key::Ctrl('e') => return ed.completion = None,
+            Key::Esc | Key::Ctrl('c') | Key::Ctrl('[') => {
+                ed.completion = None;
+                return leave_insert(ed);
+            }
+            Key::Char(c) => {
+                insert_text(ed, &c.to_string());
+                return ed.completion_refilter();
+            }
+            Key::Backspace => {
+                backspace(ed);
+                return ed.completion_refilter();
+            }
+            _ => ed.completion = None, // anything else dismisses, then acts
+        }
+    }
     match key {
         Key::Esc | Key::Ctrl('c') | Key::Ctrl('[') => leave_insert(ed),
+        Key::Ctrl('n') | Key::Ctrl('p') => ed.request_completion(),
         Key::Char(c) => insert_text(ed, &c.to_string()),
         Key::Enter => {
             let indent = line_indent(&ed.buffer.rope, ed.cursor.line);
