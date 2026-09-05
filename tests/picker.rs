@@ -47,10 +47,11 @@ fn listing_respects_gitignore_and_hidden() {
 }
 
 #[test]
-fn leader_p_also_opens() {
+fn leader_p_no_longer_opens_the_picker() {
+    // reassigned to cut-paste per #10; Ctrl+P is the picker's home
     let (mut ed, _dir) = editor_in("leaderp");
     feed(&mut ed, " p");
-    assert!(ed.file_picker.is_some());
+    assert!(ed.file_picker.is_none());
 }
 
 #[test]

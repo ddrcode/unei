@@ -80,6 +80,10 @@ fn run(
                         needs_redraw = true;
                     }
                 }
+                Event::Paste(text) => {
+                    editor.paste_external(&text);
+                    needs_redraw = true;
+                }
                 Event::Resize(..) => needs_redraw = true,
                 _ => {}
             }
@@ -91,6 +95,7 @@ fn run(
                             editor.handle_key(key);
                         }
                     }
+                    Event::Paste(text) => editor.paste_external(&text),
                     Event::Resize(..) => {}
                     _ => {}
                 }

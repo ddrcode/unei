@@ -154,6 +154,19 @@ like every other derived view. Deferred to phase 2 (per the #8 comments):
 multi-file fuzzy search and the popup replace form; also search-as-motion
 (`d/…`).
 
+## 2026-09-05 — Registers: yank/cut split, clipboard mirrors yanks
+
+The unnamed register is replaced by two (ticket #10, option 2 as decided):
+yanks write the YANK register (read by `p`/`P` and visual paste), deletes
+and changes write the CUT register (read by `<leader>p`/`<leader>P` —
+which the file picker vacated; it lives on Ctrl+P alone). Consequence
+embraced deliberately: the `dd`+`p` line-move becomes `dd`+`<leader>p`,
+in exchange for `p` always meaning "paste what I copied". No register
+history — per the author, "if I need it one day, I will ask". Yanks (only)
+mirror to the system clipboard via OSC 52 write; paste from the system
+arrives through Kitty's bracketed paste (literal in insert, charwise put
+in normal, selection-replace in visual), never as interpreted keys.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

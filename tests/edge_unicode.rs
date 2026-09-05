@@ -105,7 +105,8 @@ golf!(dollar_lands_on_wide, "ab日\n", "$x", "ab\n");
 golf!(dw_cjk_stops_before_latin, "日本語abc\n", "dw", "abc\n");
 golf!(replace_ascii_with_wide_count, "ab\n", "2r語", "語語\n");
 golf!(append_after_wide_eol, "日本\n", "A!<Esc>", "日本!\n");
-golf!(paste_after_wide_char, "日本\n", "xp", "本日\n");
+// cut text returns via <leader>p (the #10 register split)
+golf!(paste_after_wide_char, "日本\n", "x p", "本日\n");
 golf!(x_tab_before_wide, "\t日\n", "x", "日\n");
 
 // operations at the very last char of the buffer
@@ -128,13 +129,13 @@ golf!(join_count_clamps, "a\nb\n", "10J", "a b\n");
 golf!(
     paste_multiline_charwise_mid_line,
     "ab\ncd\nXY\n",
-    "ldekp",
+    "ldek p",
     "a\nXb\ncdY\n"
 );
 golf!(
     paste_multiline_charwise_before,
     "ab\ncd\nXY\n",
-    "ldekP",
+    "ldek P",
     "a\nb\ncdXY\n"
 );
 // vim's exclusive-motion adjustment: y} ending in column 0 backs up to the

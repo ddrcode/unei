@@ -149,7 +149,12 @@ pub struct Editor {
     pub mode: Mode,
     pub goal: Option<usize>,
     pub pending: Pending,
-    pub register: Option<Register>,
+    /// The yank register: written by y, read by p/P (and visual paste).
+    pub yank_reg: Option<Register>,
+    /// The cut register: written by deletes/changes, read by <leader>p/P.
+    pub cut_reg: Option<Register>,
+    /// Last text mirrored to the system clipboard (OSC 52) — test hook.
+    pub last_clipboard: Option<String>,
     pub last_find: Option<(FindKind, char)>,
     pub cmdline: String,
     pub message: Option<Message>,
@@ -250,7 +255,9 @@ impl Editor {
             mode: Mode::Normal,
             goal: None,
             pending: Pending::default(),
-            register: None,
+            yank_reg: None,
+            cut_reg: None,
+            last_clipboard: None,
             last_find: None,
             cmdline: String::new(),
             message: None,
@@ -1250,6 +1257,23 @@ impl Editor {
         }
     }
 
+    /// Mirrors yanked text to the system clipboard via OSC 52 (kitty's
+    /// clipboard_control allows writes). Yanks only — deletes never touch
+    /// the system clipboard.
+    pub(crate) fn mirror_yank_to_clipboard(&mut self, text: &str) {
+        const MAX: usize = 5 * 1024 * 1024;
+        if text.is_empty() || text.len() > MAX {
+            return;
+        }
+        self.last_clipboard = Some(text.to_string());
+        use std::io::{IsTerminal, Write};
+        let mut out = std::io::stdout();
+        if out.is_terminal() {
+            let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
+            let _ = out.flush();
+        }
+    }
+
     pub(crate) fn start_yank_flash(&mut self, region: FlashRegion) {
         if crate::config::OPTIONS.yank_flash_ms > 0 {
             self.yank_flash = Some((std::time::Instant::now(), region));
@@ -1451,6 +1475,53 @@ impl Editor {
         self.scroll_to_cursor();
     }
 
+    /// Terminal paste (Cmd+V via bracketed paste): literal text in insert
+    /// mode, a charwise put in normal mode, replaces the selection in
+    /// visual mode. Never interpreted as keys.
+    pub fn paste_external(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        match self.mode {
+            Mode::Insert => insert::insert_text(self, &normalized),
+            Mode::Visual(_) => {
+                normal::visual_paste_with(self, Register::Char(normalized));
+                self.lsp_note_edit();
+            }
+            Mode::Normal => {
+                self.buffer.begin_change(self.cursor);
+                let at = self.buffer.rope.line_to_char(self.cursor.line) + self.cursor.col;
+                self.buffer.insert(at, &normalized);
+                let end = at + normalized.chars().count();
+                self.cursor = {
+                    let rope = &self.buffer.rope;
+                    let last = text_lines(rope) - 1;
+                    let line = rope
+                        .char_to_line(
+                            end.saturating_sub(1)
+                                .min(rope.len_chars().saturating_sub(1)),
+                        )
+                        .min(last);
+                    let col = end
+                        .saturating_sub(1)
+                        .saturating_sub(rope.line_to_char(line));
+                    Cursor::new(line, col)
+                };
+                let committed = self.buffer.end_change();
+                self.note_change_committed(committed);
+                self.clamp_cursor();
+                self.scroll_to_cursor();
+                self.lsp_note_edit();
+            }
+            Mode::Command => {
+                // paste into the prompt (single-line: newlines become spaces)
+                let flat = normalized.replace('\n', " ");
+                self.cmdline.push_str(flat.trim_end());
+            }
+        }
+    }
+
     /// Compact pending-state hint for the message line (vim's 'showcmd').
     pub fn pending_display(&self) -> String {
         let mut s = String::new();
@@ -1535,4 +1606,31 @@ fn parse_substitute(spec: &str) -> Option<(String, String, bool)> {
     let replacement = parts.get(1).cloned().unwrap_or_default();
     let flags = parts.get(2).cloned().unwrap_or_default();
     Some((pattern, replacement, flags.contains('g')))
+}
+
+/// Minimal standard base64 (no padding shortcuts), for OSC 52 payloads.
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }

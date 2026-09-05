@@ -42,7 +42,8 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `s` `S` | substitute char / line |
 | `~` | toggle case |
 | `J` | join lines |
-| `p` `P` | paste after / before (char, line, or block register) |
+| `p` `P` | paste the **yank** register after / before (char, line, or block) |
+| `Space p` / `Space P` | paste the **cut** register after / before (the `dd`+`p` line-move lives here) |
 | `u` / `Ctrl+R` | undo / redo (insert session = one unit) |
 | `.` | repeat last change (`3.` replaces the count) |
 
@@ -70,7 +71,7 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 
 | Keys | Action |
 |---|---|
-| `Ctrl+P`, `Space p` | fuzzy file picker |
+| `Ctrl+P` | fuzzy file picker |
 | `Space b` | buffer list |
 | `Ctrl+^` / `Ctrl+6` | alternate buffer |
 | `Ctrl+O` / `Ctrl+I` (`Tab`) | jumplist back / forward (crosses buffers) |
@@ -140,6 +141,15 @@ Motions extend the selection; `h` is a left motion here.
 | `Ctrl+W` | delete word back |
 | `Ctrl+U` | delete to indent |
 | arrows, Home/End | movement without leaving insert |
+
+## Registers & system clipboard
+
+Yanks (`y`) and cuts (`d`/`c`/`x`/`s`) live in **separate registers** — a
+delete never overwrites what you copied (#10). `p` pastes the yank,
+`Space p` pastes the cut. Every yank also mirrors to the **system
+clipboard** (OSC 52); deletes never do. Terminal paste (Cmd+V, bracketed)
+inserts literally in insert mode, puts charwise in normal mode, and
+replaces the selection in visual mode — never interpreted as keystrokes.
 
 ## Command line
 

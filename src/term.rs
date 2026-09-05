@@ -15,6 +15,7 @@ use ratatui::backend::{Backend, ClearType, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::crossterm::cursor::SetCursorStyle;
 use ratatui::crossterm::cursor::{Hide, MoveTo, Show};
+use ratatui::crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -39,7 +40,7 @@ static ENHANCED: AtomicBool = AtomicBool::new(false);
 pub fn init() -> Result<Terminal<KittyBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     // Kitty is the one supported terminal; the flag makes a lone Esc
     // unambiguous, so it arrives with zero disambiguation delay. The support
     // query can fail through wrappers, so a TERM naming kitty is trusted
@@ -203,6 +204,7 @@ pub fn restore() {
     }
     let _ = execute!(
         stdout,
+        DisableBracketedPaste,
         SetCursorStyle::DefaultUserShape,
         LeaveAlternateScreen,
         ratatui::crossterm::cursor::Show,

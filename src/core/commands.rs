@@ -130,8 +130,10 @@ pub enum VisualKind {
 pub enum LeaderCmd {
     /// `<leader>b` — buffer list.
     BufferList,
-    /// `<leader>p` — file picker.
-    FilePicker,
+    /// `<leader>p` / `<leader>P` — paste the CUT register after / before
+    /// (the file picker moved to Ctrl+P alone, per #10).
+    PasteCutAfter,
+    PasteCutBefore,
     /// `<leader>w` — same as `Ctrl+w`.
     WindowPrefix,
     /// `<leader>c…` — code chord (`ca` = code actions).

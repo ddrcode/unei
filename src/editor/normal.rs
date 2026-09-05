@@ -83,9 +83,14 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     super::buffer_list::open(ed);
                     clear_pending(ed);
                 }
-                Some(LeaderCmd::FilePicker) => {
+                Some(LeaderCmd::PasteCutAfter) => {
                     ed.drop_recording();
-                    super::file_picker::open(ed);
+                    paste_cut(ed, true);
+                    clear_pending(ed);
+                }
+                Some(LeaderCmd::PasteCutBefore) => {
+                    ed.drop_recording();
+                    paste_cut(ed, false);
                     clear_pending(ed);
                 }
                 Some(LeaderCmd::WindowPrefix) => {
@@ -205,13 +210,13 @@ fn dispatch(ed: &mut Editor, key: Key) {
         match token {
             Token::Op(op) => {
                 ed.drop_recording();
-                visual_operate(ed, op, true);
+                visual_operate(ed, op);
                 clear_pending(ed);
                 return;
             }
             Token::Simple(SimpleCmd::DeleteRight) => {
                 ed.drop_recording();
-                visual_operate(ed, Op::Delete, true);
+                visual_operate(ed, Op::Delete);
                 clear_pending(ed);
                 return;
             }
@@ -549,7 +554,12 @@ fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>)
 
 fn charwise_op(ed: &mut Editor, op: Op, start: usize, end: usize) {
     let text = ed.buffer.rope.slice(start..end).to_string();
-    ed.register = Some(Register::Char(text));
+    if op == Op::Yank {
+        ed.mirror_yank_to_clipboard(&text);
+        ed.yank_reg = Some(Register::Char(text));
+    } else {
+        ed.cut_reg = Some(Register::Char(text));
+    }
     ed.goal = None;
     match op {
         Op::Yank => {
@@ -608,7 +618,12 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    ed.register = Some(Register::Line(text));
+    if op == Op::Yank {
+        ed.mirror_yank_to_clipboard(&text);
+        ed.yank_reg = Some(Register::Line(text));
+    } else {
+        ed.cut_reg = Some(Register::Line(text));
+    }
     ed.goal = None;
 
     match op {
@@ -771,7 +786,7 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
             };
             let text = ed.buffer.rope.slice(start..end).to_string();
             if !text.is_empty() {
-                ed.register = Some(Register::Char(text));
+                ed.cut_reg = Some(Register::Char(text));
             }
             change_range(ed, start, end);
         }
@@ -808,7 +823,7 @@ fn delete_graphemes(ed: &mut Editor, count: usize, forward: bool) {
         return;
     }
     let text = ed.buffer.rope.slice(start..end).to_string();
-    ed.register = Some(Register::Char(text));
+    ed.cut_reg = Some(Register::Char(text));
     ed.buffer.begin_change(motion_cursor_of_abs(ed, start));
     ed.buffer.remove(start..end);
     ed.cursor = motion_cursor_of_abs(ed, start);
@@ -918,9 +933,22 @@ fn join_lines(ed: &mut Editor, count: usize) {
 }
 
 fn paste(ed: &mut Editor, after: bool, count: usize) {
-    let Some(reg) = ed.register.clone() else {
+    let Some(reg) = ed.yank_reg.clone() else {
         return;
     };
+    paste_register(ed, reg, after, count);
+}
+
+/// `<leader>p` / `<leader>P` — put the CUT register (dd+p idiom lives here).
+pub(crate) fn paste_cut(ed: &mut Editor, after: bool) {
+    let Some(reg) = ed.cut_reg.clone() else {
+        ed.msg("cut register is empty");
+        return;
+    };
+    paste_register(ed, reg, after, 1);
+}
+
+fn paste_register(ed: &mut Editor, reg: Register, after: bool, count: usize) {
     ed.goal = None;
     ed.buffer.begin_change(ed.cursor);
     match reg {
@@ -1055,14 +1083,9 @@ fn block_segment(ed: &Editor, line: usize, left: usize, right: usize) -> Option<
     (end > start).then_some((start, end))
 }
 
-fn visual_operate(ed: &mut Editor, op: Op, set_register: bool) {
+fn visual_operate(ed: &mut Editor, op: Op) {
     let Mode::Visual(kind) = ed.mode else { return };
     ed.leave_visual();
-    let saved = if set_register {
-        None
-    } else {
-        Some(ed.register.clone())
-    };
     match kind {
         VisualKind::Char => {
             let (a, c) = (ed.visual_anchor, ed.cursor);
@@ -1090,9 +1113,6 @@ fn visual_operate(ed: &mut Editor, op: Op, set_register: bool) {
         }
         VisualKind::Block => visual_block_operate(ed, op),
     }
-    if let Some(saved) = saved {
-        ed.register = saved;
-    }
 }
 
 fn visual_block_operate(ed: &mut Editor, op: Op) {
@@ -1107,7 +1127,12 @@ fn visual_block_operate(ed: &mut Editor, op: Op) {
             .unwrap_or_default();
         segments.push(text);
     }
-    ed.register = Some(Register::Block(segments));
+    if op == Op::Yank {
+        ed.mirror_yank_to_clipboard(&segments.join("\n"));
+        ed.yank_reg = Some(Register::Block(segments));
+    } else {
+        ed.cut_reg = Some(Register::Block(segments));
+    }
     ed.goal = None;
 
     let top_left_col = block_segment(ed, l1, left, right)
@@ -1220,10 +1245,16 @@ fn toggle_case_range(ed: &mut Editor, start: usize, end: usize) {
 /// replaced text touching the register — the author's explicit preference
 /// (paste the same content in several places).
 fn visual_paste(ed: &mut Editor) {
-    let Some(reg) = ed.register.clone() else {
+    let Some(reg) = ed.yank_reg.clone() else {
         ed.leave_visual();
         return;
     };
+    visual_paste_with(ed, reg);
+}
+
+/// Replaces the selection with `reg` — never touching any register (the
+/// replaced text is simply gone; the author's multi-paste workflow).
+pub(crate) fn visual_paste_with(ed: &mut Editor, reg: Register) {
     let Mode::Visual(kind) = ed.mode else { return };
     ed.leave_visual();
     ed.goal = None;
