@@ -44,8 +44,15 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `J` | join lines |
 | `p` `P` | paste the **yank** register after / before (char, line, or block) |
 | `Space p` / `Space P` | paste the **cut** register after / before (the `dd`+`p` line-move lives here) |
+| `gcc` | toggle line comment on the current line (`3gcc` for three lines) |
 | `u` / `Ctrl+R` | undo / redo (insert session = one unit) |
 | `.` | repeat last change (`3.` replaces the count) |
+
+`gcc`/`gc` toggle: they comment when any target line is bare, uncomment when
+all are commented. The token follows the language (`//` for Rust/JS, `#`
+for YAML/TOML/Python/Nix/Bash); in assembly it comes from the file's
+`asm:` modeline leader (`; asm: …` → `;`, `# asm: …` → `#`), so an
+undeclared dialect is left alone.
 
 ### Mode changes
 
@@ -160,6 +167,7 @@ Motions extend the selection; `h` is a left motion here.
 | `d` / `x` | delete selection |
 | `c` / `s` | change selection (block: type once, Esc replicates to every line) |
 | `y` | yank (with flash) |
+| `gc` | toggle line comments on the selected lines |
 | `~` | toggle case |
 | `p` | replace selection with register — **never clobbers the register** |
 | `o` / `O` | swap ends / swap block corners |

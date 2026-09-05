@@ -34,21 +34,44 @@ pub enum Family {
 /// (callers pass at most the first five). The comment leader is opaque:
 /// a short run of punctuation, whatever the file's toolchain accepts.
 pub fn modeline(lines: impl Iterator<Item = String>) -> Option<Family> {
+    let (_, isa) = scan_modeline(lines)?;
+    Some(match isa.to_ascii_lowercase().as_str() {
+        "65c02" => Family::Cmos65c02,
+        "6502" => Family::Nmos6502,
+        other => Family::Other(other.to_string()),
+    })
+}
+
+/// The line-comment token for an assembly file, taken from its modeline's
+/// own leader — the author wrote `; asm: …` / `# asm: …` with the comment
+/// character their assembler uses, so that character IS the comment token
+/// (#53). `/`-led (`//`, `/* */` under cpp) normalizes to `//`.
+pub fn asm_line_comment(lines: impl Iterator<Item = String>) -> Option<String> {
+    let (leader, _) = scan_modeline(lines)?;
+    Some(if leader.starts_with('/') {
+        "//".to_string()
+    } else {
+        leader.chars().next().unwrap().to_string()
+    })
+}
+
+/// Finds `<leader> asm: <isa> …` in the given lines (callers pass at most
+/// the first five) and returns the (leader, isa). The leader is a short
+/// run of punctuation, opaque to the parser — see #18.
+fn scan_modeline(lines: impl Iterator<Item = String>) -> Option<(String, String)> {
     for line in lines {
         let s = line.trim();
-        let mut chars = s.char_indices().peekable();
-        let mut punct = 0usize;
+        let mut leader = String::new();
         let mut rest = 0usize;
-        while let Some((i, ch)) = chars.peek().copied() {
-            if ch.is_ascii_punctuation() && punct < 3 {
-                punct += 1;
+        for (i, ch) in s.char_indices() {
+            if ch.is_ascii_punctuation() && leader.chars().count() < 3 {
+                leader.push(ch);
                 rest = i + ch.len_utf8();
-                chars.next();
             } else {
                 break;
             }
         }
-        if punct == 0 {
+        if leader.is_empty() {
             continue;
         }
         let body = s[rest..].trim_start();
@@ -60,11 +83,7 @@ pub fn modeline(lines: impl Iterator<Item = String>) -> Option<Family> {
         if isa.is_empty() {
             continue;
         }
-        return Some(match isa.to_ascii_lowercase().as_str() {
-            "65c02" => Family::Cmos65c02,
-            "6502" => Family::Nmos6502,
-            other => Family::Other(other.to_string()),
-        });
+        return Some((leader, isa.to_string()));
     }
     None
 }
