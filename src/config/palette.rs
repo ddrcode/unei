@@ -11,6 +11,9 @@ pub const COMMENT: Color = Color::Rgb(0x54, 0x6E, 0x7A);
 pub const SELECTION_BG: Color = Color::Rgb(0x3C, 0x50, 0x5E);
 /// Yank-flash background (warm, IncSearch-like).
 pub const YANK_FLASH_BG: Color = Color::Rgb(0x55, 0x4A, 0x28);
+/// hlsearch match background; the current match burns brighter.
+pub const SEARCH_BG: Color = Color::Rgb(0x4A, 0x41, 0x1A);
+pub const SEARCH_CURRENT_BG: Color = Color::Rgb(0x7A, 0x63, 0x1C);
 
 /// Custom gutter background (the user's `LineNr { bg = "#233939" }`).
 pub const GUTTER_BG: Color = Color::Rgb(0x23, 0x39, 0x39);

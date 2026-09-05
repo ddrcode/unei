@@ -27,6 +27,7 @@ tree-sitter-nix = "0.3.0"
 tree-sitter-python = "0.25.0"
 tree-sitter-css = "0.25.0"
 serde_json = "1.0.151"
+regex = "1.13.1"
 
 [[bin]]
 name = "tailored"

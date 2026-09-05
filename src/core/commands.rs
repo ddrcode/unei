@@ -72,6 +72,11 @@ pub enum SimpleCmd {
     JumpBack,
     /// `Ctrl+i` / `Tab` — jumplist forward.
     JumpForward,
+    /// `n` / `N` — next / previous search match.
+    NextMatch,
+    PrevMatch,
+    /// `*` — search the word under the cursor.
+    SearchWord,
     /// `D`
     DeleteToEol,
     /// `C`
@@ -109,6 +114,8 @@ pub enum Token {
     /// `K` — hover: type/docs of the item under the cursor (rust-analyzer).
     Hover,
     CmdLine,
+    /// `/` and `?` — incremental search prompts.
+    SearchPrompt(bool /* forward */),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

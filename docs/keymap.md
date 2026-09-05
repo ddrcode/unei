@@ -56,6 +56,16 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `v` `V` `Ctrl+V` | visual char / line / block |
 | `:` | command line |
 
+### Search
+
+| Keys | Action |
+|---|---|
+| `/` `?` | incremental search forward / backward (Rust regex, smartcase) |
+| `n` / `N` | next / previous match (wraps, follows direction) |
+| `*` | whole-word search for the word under the cursor |
+| `Esc` | calm match highlighting (`:noh` too) |
+| `:s/pat/rep/[g]` | substitute — file scope, or selection scope from visual mode |
+
 ### Files, buffers, jumps
 
 | Keys | Action |
