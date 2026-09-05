@@ -606,16 +606,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splices_hints_into_line() {
+    fn splices_type_hints_only() {
         let line = "let x = vec![1];";
         let result = serde_json::json!([
-            { "position": { "line": 0, "character": 5 }, "label": ": Vec<i32>" },
             { "position": { "line": 0, "character": 5 },
-              "label": [ ], "paddingLeft": false }
+              "label": ": Vec<i32>", "kind": 1 },
+            { "position": { "line": 0, "character": 13 },
+              "label": "n:", "kind": 2, "paddingRight": true }
         ]);
         assert_eq!(
             splice_inlay_hints(line, &result).as_deref(),
-            Some("let x: Vec<i32> = vec![1];")
+            Some("let x: Vec<i32> = vec![1];"),
+            "type hints splice; parameter-name hints are filtered"
         );
     }
 
