@@ -4,6 +4,7 @@ pub mod editor;
 pub mod format;
 pub mod launch;
 pub mod lsp;
+pub mod preview;
 pub mod search;
 pub mod syntax;
 pub mod term;

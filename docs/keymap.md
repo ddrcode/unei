@@ -57,6 +57,19 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `v` `V` `Ctrl+V` | visual char / line / block |
 | `:` | command line |
 
+### Preview (markdown)
+
+| Keys | Action |
+|---|---|
+| `gp` | toggle the window between source and rendered preview |
+| in preview: `i`/`k`, `Ctrl+D/U/F/B`, `g`/`G` | navigate the projection |
+| in preview: `Enter` | jump to the source at the mapped line |
+| in preview: `Esc` | back to source view |
+
+A preview window **follows** the window editing the same buffer — scroll or
+type in the source and the projection tracks you live. `Ctrl+W v` then `gp`
+is the side-by-side writing setup.
+
 ### Search
 
 | Keys | Action |

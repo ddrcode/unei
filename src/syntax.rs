@@ -82,6 +82,20 @@ impl Syntax {
     }
 }
 
+/// Highlights a standalone snippet (fenced code in previews) into per-line
+/// spans, resolving the language through the registry incl. aliases.
+pub fn highlight_text(text: &str, lang: &str) -> Vec<Vec<LineSpan>> {
+    let line_count = text.split('\n').count();
+    let mut lines: Vec<Vec<LineSpan>> = vec![Vec::new(); line_count];
+    let Some(config) = languages::config_for(lang) else {
+        return lines;
+    };
+    let mut canvas = vec![UNSTYLED; text.len()];
+    paint_layer(text.as_bytes(), config, None, 0, &mut canvas);
+    fold_canvas(text, &canvas, &mut lines);
+    lines
+}
+
 /// Highlights a whole buffer into per-line spans. Any failure (or an
 /// oversized buffer) yields no spans — plain rendering, never an error.
 fn highlight(rope: &Rope, lang: &str) -> Vec<Vec<LineSpan>> {

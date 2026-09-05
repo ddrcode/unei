@@ -190,6 +190,12 @@ pub struct Editor {
     pub yank_flash: Option<(std::time::Instant, FlashRegion)>,
     /// Buffer search state (pattern, matches, hlsearch).
     pub search: crate::search::Search,
+    /// Windows currently projecting their buffer as a preview (#39).
+    preview_windows: std::collections::HashSet<WinId>,
+    /// Per preview window: (cursor line, top line) in RENDERED space.
+    preview_nav: std::collections::HashMap<WinId, (usize, usize)>,
+    /// Rendered documents, cached per buffer (version+width checked).
+    preview_docs: std::collections::HashMap<BufId, crate::preview::PreviewDoc>,
     /// What the command line is prompting for.
     pub prompt: Prompt,
     /// Position to restore when an incremental search is cancelled.
@@ -285,6 +291,9 @@ impl Editor {
             block_change: None,
             yank_flash: None,
             search: crate::search::Search::default(),
+            preview_windows: std::collections::HashSet::new(),
+            preview_nav: std::collections::HashMap::new(),
+            preview_docs: std::collections::HashMap::new(),
             prompt: Prompt::Command,
             search_origin: None,
             search_saved: None,
@@ -855,6 +864,8 @@ impl Editor {
         };
         self.focus_window(target);
         self.win_root.close(closing);
+        self.preview_windows.remove(&closing);
+        self.preview_nav.remove(&closing);
         self.refresh_focused_view();
     }
 
@@ -937,6 +948,14 @@ impl Editor {
         }
         if self.actions_menu.is_some() {
             analyzer_menu_key(self, key);
+            return;
+        }
+        if self.focused_is_preview()
+            && self.mode == Mode::Normal
+            && self.pending.awaiting == Awaiting::None
+        {
+            self.preview_key(key);
+            self.clamp_cursor();
             return;
         }
         if self.file_picker.is_some() {
@@ -1473,6 +1492,158 @@ impl Editor {
         }
         self.clamp_cursor();
         self.scroll_to_cursor();
+    }
+
+    // ------------------------------------------------------------------
+    // Preview (#39): per-window projection + PREVIEW keyboard on focus
+    // ------------------------------------------------------------------
+
+    pub fn is_preview_window(&self, id: WinId) -> bool {
+        self.preview_windows.contains(&id)
+    }
+
+    pub fn focused_is_preview(&self) -> bool {
+        self.is_preview_window(self.focused_win)
+    }
+
+    /// `gp` — toggles the focused window between source and preview.
+    pub(crate) fn toggle_preview(&mut self) {
+        let id = self.focused_win;
+        if self.preview_windows.remove(&id) {
+            // back to source: land on the line the preview was reading
+            if let Some((view_line, _)) = self.preview_nav.remove(&id)
+                && let Some(doc) = self.preview_docs.get(&self.current)
+            {
+                let source = doc.source_line_for_view(view_line);
+                self.cursor = Cursor::new(source, 0);
+                self.goal = None;
+                self.clamp_cursor();
+                self.refresh_focused_view();
+            }
+            return;
+        }
+        if crate::config::languages::detect(self.buffer.path.as_deref()) != Some("markdown") {
+            self.msg("no preview for this file type (markdown only, for now)");
+            return;
+        }
+        self.preview_windows.insert(id);
+        // start the projection at the current source position
+        let width = self.view.width.saturating_sub(2);
+        let source_line = self.cursor.line;
+        let height = self.view.height;
+        let view_line = self
+            .preview_doc_for(self.current, width)
+            .view_line_for_source(source_line);
+        let top = view_line.saturating_sub(height / 3);
+        self.preview_nav.insert(id, (view_line, top));
+    }
+
+    /// The cached rendered document for a buffer, rebuilt when stale.
+    pub fn preview_doc_for(&mut self, buf: BufId, width: usize) -> &crate::preview::PreviewDoc {
+        let version = self.buffer_ref(buf).version();
+        let fresh = self
+            .preview_docs
+            .get(&buf)
+            .is_some_and(|d| d.is_fresh(version, width.clamp(20, 100)));
+        if !fresh {
+            let doc = crate::preview::render(&self.buffer_ref(buf).rope, version, width);
+            self.preview_docs.insert(buf, doc);
+        }
+        self.preview_docs.get(&buf).expect("just inserted")
+    }
+
+    pub fn preview_nav_state(&self, id: WinId) -> (usize, usize) {
+        self.preview_nav.get(&id).copied().unwrap_or((0, 0))
+    }
+
+    /// Follow: previews of the focused source buffer track its cursor.
+    /// Called by the renderer each frame.
+    pub fn sync_preview_follow(&mut self) {
+        if self.focused_is_preview() {
+            return;
+        }
+        let src_line = self.cursor.line;
+        let buf = self.current;
+        let height = self.view.height.max(3);
+        let width = self.view.width.saturating_sub(2);
+        let ids: Vec<WinId> = self
+            .preview_windows
+            .iter()
+            .copied()
+            .filter(|id| *id != self.focused_win)
+            .collect();
+        for id in ids {
+            // only previews of the buffer being edited follow
+            let shows = self
+                .parked_window(id)
+                .map(|s| s.buf_id == buf)
+                .unwrap_or(false);
+            if !shows {
+                continue;
+            }
+            let doc = self.preview_doc_for(buf, width);
+            let view_line = doc.view_line_for_source(src_line);
+            let total = doc.line_count();
+            let top = view_line
+                .saturating_sub(height / 3)
+                .min(total.saturating_sub(1));
+            self.preview_nav.insert(id, (view_line, top));
+        }
+    }
+
+    /// Keyboard when a preview window has focus: navigation over the
+    /// rendered document; Enter/gd jumps to source; gp/Esc projects back.
+    pub(crate) fn preview_key(&mut self, key: Key) {
+        use crate::config::keymap::Key as K;
+        let id = self.focused_win;
+        let width = self.view.width.saturating_sub(2);
+        let height = self.view.height.max(2);
+        let total = self.preview_doc_for(self.current, width).line_count();
+        let (mut line, mut top) = self.preview_nav_state(id);
+        let last = total.saturating_sub(1);
+        match key {
+            K::Char('k') | K::Down => line = (line + 1).min(last),
+            K::Char('i') | K::Up => line = line.saturating_sub(1),
+            K::Ctrl('d') => line = (line + height / 2).min(last),
+            K::Ctrl('u') => line = line.saturating_sub(height / 2),
+            K::Ctrl('f') | K::PageDown => line = (line + height).min(last),
+            K::Ctrl('b') | K::PageUp => line = line.saturating_sub(height),
+            K::Char('g') => line = 0, // gg-lite: single g goes to top
+            K::Char('G') => line = last,
+            K::Enter => {
+                // jump to source at the mapped line
+                let source = self
+                    .preview_doc_for(self.current, width)
+                    .source_line_for_view(line);
+                self.preview_windows.remove(&id);
+                self.preview_nav.remove(&id);
+                self.cursor = Cursor::new(source, 0);
+                self.goal = None;
+                self.clamp_cursor();
+                self.refresh_focused_view();
+                return;
+            }
+            K::Char('p') | K::Esc => {
+                self.toggle_preview();
+                return;
+            }
+            K::Ctrl('w') => {
+                // window chord still works from a preview
+                self.pending.awaiting = Awaiting::Window;
+                return;
+            }
+            _ => return,
+        }
+        // scrolloff-ish: keep the reading line comfortably framed
+        let margin = (height / 4).min(5);
+        if line < top + margin {
+            top = line.saturating_sub(margin);
+        }
+        if line + margin >= top + height {
+            top = (line + margin + 1).saturating_sub(height);
+        }
+        top = top.min(last);
+        self.preview_nav.insert(id, (line, top));
     }
 
     /// Terminal paste (Cmd+V via bracketed paste): literal text in insert

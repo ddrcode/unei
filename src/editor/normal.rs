@@ -53,6 +53,11 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     ed.reselect_visual();
                     clear_pending(ed);
                 }
+                Key::Char('p') => {
+                    ed.drop_recording();
+                    ed.toggle_preview();
+                    clear_pending(ed);
+                }
                 _ => clear_pending(ed),
             }
         }
