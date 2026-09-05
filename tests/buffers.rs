@@ -219,3 +219,19 @@ fn buffer_list_keys_do_not_edit_text() {
     assert_eq!(text(&ed), "bbb\n");
     assert_eq!(ed.buffer_count(), 2);
 }
+
+#[test]
+fn qa_quits_everything_with_the_modified_guard() {
+    let mut ed = editor_with_buffers(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    feed(&mut ed, "<C-w>v<C-w>s"); // several windows
+    feed(&mut ed, "x"); // modify
+    feed(&mut ed, ":qa<CR>");
+    assert!(!ed.should_quit, "qa refuses with unsaved changes");
+    assert!(ed.message.as_ref().unwrap().error);
+    feed(&mut ed, ":qa!<CR>");
+    assert!(ed.should_quit, "qa! forces");
+
+    let mut ed = editor_with_buffers(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    feed(&mut ed, "<C-w>v:qa<CR>"); // clean: quits despite multiple windows
+    assert!(ed.should_quit);
+}
