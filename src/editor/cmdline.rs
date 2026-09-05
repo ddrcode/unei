@@ -154,6 +154,8 @@ fn execute(ed: &mut Editor, cmd: &str) {
         }
         "q" => ed.close_window_or_quit(false),
         "q!" => ed.close_window_or_quit(true),
+        "qa" | "quita" | "qall" => ed.quit(false),
+        "qa!" | "quita!" | "qall!" => ed.quit(true),
         "wq" => ed.save_and_quit(false),
         "x" => ed.save_and_quit(true),
         "bd" | "bdelete" => ed.close_buffer(ed.current_buffer_id(), false),
