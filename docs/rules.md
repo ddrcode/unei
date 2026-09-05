@@ -1,4 +1,4 @@
-# tailorED - rules
+# unei - rules
 
 This document described the project idea and rules that meant to be followed during the development. The rules shall not be modified by agents without dedicated, rules-only PR.
 
@@ -6,7 +6,7 @@ This document described the project idea and rules that meant to be followed dur
 
 It's personal editor without ambition of being widely used. I may make it public, but it's going to remain highly opinionated and personal.
 The main reason for creating it is my tiredness of dealing with expiring/changing plugins and constant need for maitaining the configuration.
-After years of using neovim I have my own way of using the editor and I am happy to completely hardcode it in zero-config solution. Hence tailorED.
+After years of using neovim I have my own way of using the editor and I am happy to completely hardcode it in zero-config solution. Hence unei.
 If there is some inspiration here - think about lightweight, fast, minimalistic editors like Zed or Helix, but purely modern-terminal centric (Kitty) with (Neo)Vim philosophy.
 
 ## Programming language
@@ -18,7 +18,7 @@ Rust. With Ratatui as renderer, unless there is a better alternative.
 Unlike vim-family, this project is a monolith. It assumes (and never will) no plugins and even no external configuration. Everything is embedded in the source code and any changes require recompilation.
 Some minimalistic configurability should exist (i.e. key mapping), but it should be embedded in Rust files. `config` module should be used for that. In many cases configuration can be skipped entirely.
 
-## nvim features that are NOT expected to be present in tailorED
+## nvim features that are NOT expected to be present in unei
 
 - terminal buffer and any form of terminal integration (i.e. execution of system commands)
 - scripting language
@@ -34,8 +34,8 @@ Some minimalistic configurability should exist (i.e. key mapping), but it should
 
 ## Single way of doing things
 
-tailorED approach should always be - don't duplicate ways of doing things. i.e. nvim has multiple ways of text coloring - built-in  (regexp-based?), TreeSitter, language server - based.
-tailored should rely on a single method with no fallback. That applies to other features like formatting, etc.
+unei approach should always be - don't duplicate ways of doing things. i.e. nvim has multiple ways of text coloring - built-in  (regexp-based?), TreeSitter, language server - based.
+unei should rely on a single method with no fallback. That applies to other features like formatting, etc.
 
 ## Formatting
 
