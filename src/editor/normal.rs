@@ -527,6 +527,7 @@ fn charwise_op(ed: &mut Editor, op: Op, start: usize, end: usize) {
     ed.goal = None;
     match op {
         Op::Yank => {
+            ed.start_yank_flash(crate::editor::FlashRegion::Char(start, end));
             let cur = motion_cursor_of_abs(ed, start);
             if abs_of(ed, ed.cursor) > start {
                 ed.cursor = cur;
@@ -586,6 +587,7 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
 
     match op {
         Op::Yank => {
+            ed.start_yank_flash(crate::editor::FlashRegion::Line(l1, l2));
             if l1 < ed.cursor.line {
                 ed.cursor = Cursor::new(l1, ed.cursor.col);
             }
@@ -1084,6 +1086,7 @@ fn visual_block_operate(ed: &mut Editor, op: Op) {
         .unwrap_or(0);
     match op {
         Op::Yank => {
+            ed.start_yank_flash(crate::editor::FlashRegion::Block(l1, l2, left, right));
             ed.cursor = Cursor::new(l1, top_left_col);
         }
         Op::Delete | Op::Change => {

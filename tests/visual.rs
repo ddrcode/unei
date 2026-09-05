@@ -146,3 +146,31 @@ golf!(
     "<C-v>kcX<Esc>u",
     "aa\nbb\n"
 );
+
+// yank flash (nvim's on_yank): set on every yank shape, expires on its own
+#[test]
+fn yank_flash_lifecycle() {
+    use tailored::editor::FlashRegion;
+    let mut ed = editor_from("one two\nthree\n");
+    feed(&mut ed, "yy");
+    assert!(matches!(ed.yank_flash, Some((_, FlashRegion::Line(0, 0)))));
+    feed(&mut ed, "vey");
+    assert!(matches!(ed.yank_flash, Some((_, FlashRegion::Char(0, 3)))));
+    feed(&mut ed, "<C-v>ky");
+    assert!(matches!(
+        ed.yank_flash,
+        Some((_, FlashRegion::Block(0, 1, 0, 0)))
+    ));
+    assert!(ed.yank_flash_active());
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(ed.yank_flash_active(), "one last redraw on expiry");
+    assert!(ed.yank_flash.is_none(), "flash cleared after timeout");
+    assert!(!ed.yank_flash_active());
+}
+
+#[test]
+fn deletes_do_not_flash() {
+    let mut ed = editor_from("abc\n");
+    feed(&mut ed, "dd");
+    assert!(ed.yank_flash.is_none());
+}

@@ -22,6 +22,9 @@ pub struct Options {
     pub cursorline: bool,
     /// Ensure the file ends with a newline on save (editorconfig: insert_final_newline).
     pub final_newline: bool,
+    /// Yanked-region highlight duration, ms (the author's nvim on_yank
+    /// timeout); 0 disables the flash.
+    pub yank_flash_ms: u64,
     /// Run treefmt on the written file after every save (ticket #21).
     pub format_on_save: bool,
     /// Formatter budget; the treefmt process is killed on overrun.
@@ -54,4 +57,5 @@ pub const OPTIONS: Options = Options {
     resize_step_rows: 2,
     format_on_save: true,
     format_timeout_ms: 1500,
+    yank_flash_ms: 250,
 };

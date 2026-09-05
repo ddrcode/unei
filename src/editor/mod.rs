@@ -115,6 +115,17 @@ pub struct BufferList {
     pub selected: usize,
 }
 
+/// The yanked region, briefly highlighted (nvim's on_yank flash).
+#[derive(Clone, Copy)]
+pub enum FlashRegion {
+    /// Absolute char range.
+    Char(usize, usize),
+    /// Inclusive line range.
+    Line(usize, usize),
+    /// Lines l1..=l2, display cells left..=right.
+    Block(usize, usize, usize, usize),
+}
+
 /// See `Editor::block_change`.
 pub(crate) struct BlockChange {
     /// Line the insert session runs on.
@@ -163,6 +174,8 @@ pub struct Editor {
     /// Pending blockwise change: after `c` on a block, the insert session's
     /// text replicates to these lines at the given char column on Esc.
     block_change: Option<BlockChange>,
+    /// Active yank flash: start time + region.
+    pub yank_flash: Option<(std::time::Instant, FlashRegion)>,
     /// Working folder: picker listings and relative opens resolve against it.
     root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
@@ -246,6 +259,7 @@ impl Editor {
             visual_anchor: Cursor::default(),
             last_visual: None,
             block_change: None,
+            yank_flash: None,
             root: std::path::PathBuf::from("."),
             slots,
             current: 1,
@@ -1211,6 +1225,26 @@ impl Editor {
             self.mode = Mode::Visual(kind);
             self.clamp_cursor();
             self.scroll_to_cursor();
+        }
+    }
+
+    pub(crate) fn start_yank_flash(&mut self, region: FlashRegion) {
+        if crate::config::OPTIONS.yank_flash_ms > 0 {
+            self.yank_flash = Some((std::time::Instant::now(), region));
+        }
+    }
+
+    /// Main-loop pump: true while the flash needs redraws (and once more
+    /// when it expires).
+    pub fn yank_flash_active(&mut self) -> bool {
+        match self.yank_flash {
+            Some((t0, _)) => {
+                if t0.elapsed().as_millis() as u64 > crate::config::OPTIONS.yank_flash_ms {
+                    self.yank_flash = None;
+                }
+                true
+            }
+            None => false,
         }
     }
 

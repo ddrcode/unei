@@ -459,10 +459,15 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         } else {
             &[]
         };
-        let selection = if view.focused {
-            selection_on_line(ed, line_idx)
+        let (selection, sel_bg) = if view.focused {
+            let sel = selection_on_line(ed, line_idx);
+            if matches!(sel, SelSpan::None) {
+                (flash_on_line(ed, line_idx), palette::YANK_FLASH_BG)
+            } else {
+                (sel, palette::SELECTION_BG)
+            }
         } else {
-            SelSpan::None
+            (SelSpan::None, palette::SELECTION_BG)
         };
         let diag = ed.diag_view(view.buf_id);
         let diag_spans: &[(u32, u32, crate::lsp::Severity)] = diag
@@ -477,6 +482,7 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
                 syntax: syntax_spans,
                 diags: diag_spans,
                 selection,
+                sel_bg,
                 line_bg,
                 focused: view.focused,
             },
@@ -548,8 +554,56 @@ struct LineInks<'a> {
     syntax: &'a [crate::syntax::LineSpan],
     diags: &'a [(u32, u32, crate::lsp::Severity)],
     selection: SelSpan,
+    sel_bg: ratatui::style::Color,
     line_bg: ratatui::style::Color,
     focused: bool,
+}
+
+/// The yank flash's footprint on `line` (same shapes as a selection).
+fn flash_on_line(ed: &Editor, line: usize) -> SelSpan {
+    use crate::editor::FlashRegion;
+    let Some((_, region)) = ed.yank_flash else {
+        return SelSpan::None;
+    };
+    match region {
+        FlashRegion::Line(l1, l2) => {
+            if line >= l1 && line <= l2 {
+                SelSpan::Line
+            } else {
+                SelSpan::None
+            }
+        }
+        FlashRegion::Block(l1, l2, left, right) => {
+            if line >= l1 && line <= l2 {
+                SelSpan::Cells(left as u32, right as u32)
+            } else {
+                SelSpan::None
+            }
+        }
+        FlashRegion::Char(start, end) => {
+            let rope = &ed.buffer.rope;
+            let end = end.min(rope.len_chars());
+            let start = start.min(end);
+            if end == 0 {
+                return SelSpan::None;
+            }
+            let (sl, el) = (
+                rope.char_to_line(start),
+                rope.char_to_line(end.saturating_sub(1)),
+            );
+            if line < sl || line > el {
+                return SelSpan::None;
+            }
+            let base = rope.line_to_char(line);
+            let s = start.saturating_sub(base) as u32;
+            let e = if line == el {
+                (end - base) as u32
+            } else {
+                u32::MAX
+            };
+            SelSpan::Chars(s, e)
+        }
+    }
 }
 
 /// Selection footprint of the current visual mode on `line` (focused only).
@@ -603,6 +657,7 @@ fn styled_visible(
         syntax,
         diags,
         selection,
+        sel_bg,
         line_bg,
         focused,
     } = *inks;
@@ -672,7 +727,7 @@ fn styled_visible(
             SelSpan::Cells(l, r) => (start as u32) >= l && (start as u32) <= r,
         };
         let style = if selected {
-            style_at(this_off).bg(palette::SELECTION_BG)
+            style_at(this_off).bg(sel_bg)
         } else {
             style_at(this_off)
         };
@@ -688,7 +743,7 @@ fn styled_visible(
     }
     if used < width {
         let pad_style = if matches!(selection, SelSpan::Line) {
-            default_style.bg(palette::SELECTION_BG)
+            default_style.bg(sel_bg)
         } else {
             default_style
         };

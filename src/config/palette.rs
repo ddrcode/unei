@@ -9,6 +9,8 @@ pub const COMMENT: Color = Color::Rgb(0x54, 0x6E, 0x7A);
 
 /// Visual-selection background (material-ish, distinct from cursorline).
 pub const SELECTION_BG: Color = Color::Rgb(0x3C, 0x50, 0x5E);
+/// Yank-flash background (warm, IncSearch-like).
+pub const YANK_FLASH_BG: Color = Color::Rgb(0x55, 0x4A, 0x28);
 
 /// Custom gutter background (the user's `LineNr { bg = "#233939" }`).
 pub const GUTTER_BG: Color = Color::Rgb(0x23, 0x39, 0x39);
