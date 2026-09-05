@@ -686,6 +686,7 @@ name = "tailored"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cc",
  "ignore",
  "nucleo-matcher",
  "ratatui",
@@ -699,6 +700,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-javascript",
  "tree-sitter-json",
+ "tree-sitter-language",
  "tree-sitter-md",
  "tree-sitter-nix",
  "tree-sitter-python",
