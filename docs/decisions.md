@@ -167,6 +167,26 @@ mirror to the system clipboard via OSC 52 write; paste from the system
 arrives through Kitty's bracketed paste (literal in insert, charwise put
 in normal, selection-replace in visual), never as interpreted keys.
 
+## 2026-09-05 — The machine lens: K is total, and the half-life rule
+
+Ticket #45. `K` means "tell me about the thing under the cursor" — one
+verb, providers by context: rust-analyzer hover in rust files, the
+machine lens everywhere else (numeric literals in any file type;
+instruction facts and visual-selection cycle sums in assembly). What may
+be compiled in is decided by the fact's HALF-LIFE: language and silicon
+knowledge frozen for decades (65C02 timing, unchanged since 1983)
+compiles in beside the grammars; codebase knowledge (a project's
+register map, placeholder latencies) never does — that belongs to the
+project's own docs, or someday its own language server. Corollaries:
+cycle counting exists only where timing IS ISA knowledge (the 6502
+family — on pipelined ISAs cycles belong to a core, so a future riscv
+provider speaks of encodings, not time); and all assembly knowledge is
+gated by the in-file modeline `; asm: <isa> [<assembler>]` (first five
+lines, comment leader opaque — the format #18's highlighting will share)
+because colors may guess a dialect but numbers must know it. Mnemonics
+are an open set — macros look exactly like opcodes — so the lens answers
+only from its table and reports the rest as not-counted, never guessed.
+
 ## 2026-09-05 — Preview: a per-window projection, a mode only on focus
 
 Ticket #39 phase 1 resolves its own open question: the VIEW TRANSFORM is

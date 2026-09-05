@@ -47,7 +47,7 @@ fn char_to_byte_col(line: &str, char_col: usize) -> usize {
 }
 
 impl Editor {
-    fn current_rust_file(&self) -> Option<PathBuf> {
+    pub(crate) fn current_rust_file(&self) -> Option<PathBuf> {
         let path = self.buffer.path.as_ref()?;
         if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());

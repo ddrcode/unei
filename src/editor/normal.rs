@@ -242,6 +242,12 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 clear_pending(ed);
                 return;
             }
+            Token::Hover => {
+                // the machine lens: cycle sum over the selected lines
+                ed.lens_cycle_sum();
+                clear_pending(ed);
+                return;
+            }
             Token::Insert(InsertEntry::OpenBelow) => {
                 // `o` swaps the selection ends in visual mode
                 std::mem::swap(&mut ed.visual_anchor, &mut ed.cursor);
@@ -352,7 +358,7 @@ fn dispatch(ed: &mut Editor, key: Key) {
         Token::Hover => {
             clear_pending(ed);
             ed.drop_recording();
-            ed.analyzer_hover();
+            ed.hover();
         }
         Token::PrefixG => ed.pending.awaiting = Awaiting::G,
         Token::PrefixZ => {

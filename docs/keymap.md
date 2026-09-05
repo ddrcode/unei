@@ -93,6 +93,25 @@ honored).
 | `Ctrl+^` / `Ctrl+6` | alternate buffer |
 | `Ctrl+O` / `Ctrl+I` (`Tab`) | jumplist back / forward (crosses buffers) |
 
+### Machine lens
+
+`K` is the single "tell me about this" key. Rust files ask rust-analyzer
+(below); everywhere else the editor answers from compiled-in knowledge.
+Any key dismisses the float.
+
+| Context | `K` shows |
+|---|---|
+| a numeric literal, any file | all bases, signedness, lo/hi bytes, byte order |
+| a 65C02/6502 instruction | addressing mode, encoding bytes, cycles + penalties |
+| visual selection of asm lines | cycle sum — penalties as ranges, unknowns counted, never guessed |
+
+Assembly knowledge activates only when the file declares its dialect in a
+**modeline** within the first five lines — `; asm: 65c02 acme` — with
+whatever comment leader your assembler accepts (`;`, `#`, `//`, …).
+`65c02` and `6502` (NMOS) carry separate timing tables; where history
+disagrees the float shows both, and 65C02-only instructions are called
+out in a `6502` file.
+
 ### rust-analyzer
 
 | Keys | Action |
