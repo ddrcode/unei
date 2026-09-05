@@ -75,6 +75,8 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
 }
 
 fn leave_insert(ed: &mut Editor) {
+    // block-change replication happens inside the same undo transaction
+    ed.finish_block_change();
     // an unchanged session leaves no undo entry, but like vim any completed
     // insert — even an empty one — becomes the dot-repeat
     ed.buffer.end_change();

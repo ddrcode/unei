@@ -100,6 +100,9 @@ fn run(
         if editor.lsp_tick() {
             needs_redraw = true;
         }
+        if editor.yank_flash_active() {
+            needs_redraw = true;
+        }
 
         if editor.should_quit {
             editor.lsp_shutdown();

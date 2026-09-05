@@ -6,8 +6,8 @@
 //! so `dh` still deletes left, exactly like the author's nvim.
 
 use crate::core::commands::{
-    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, Token, WinCmd,
-    WinDir,
+    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, Token,
+    VisualKind, WinCmd, WinDir,
 };
 use crate::core::motion::Motion;
 
@@ -80,6 +80,11 @@ pub fn normal_token(key: Key) -> Option<Token> {
         Key::Down => Token::Motion(Motion::Down),
         Key::Left => Token::Motion(Motion::Left),
         Key::Right => Token::Motion(Motion::Right),
+
+        // visual mode
+        Key::Char('v') => Token::Visual(VisualKind::Char),
+        Key::Char('V') => Token::Visual(VisualKind::Line),
+        Key::Ctrl('v') => Token::Visual(VisualKind::Block),
 
         // operators
         Key::Char('d') => Token::Op(Op::Delete),
@@ -221,4 +226,15 @@ pub fn operator_extra_motion(key: Key) -> Option<Motion> {
         Key::Char('h') => Some(Motion::Left),
         _ => None,
     }
+}
+
+/// Visual-mode overrides: `h` is a motion again (the insert remap is
+/// normal-mode-only, per keyboard.lua), and `x`/`s` alias delete/change.
+pub fn visual_extra(key: Key) -> Option<Token> {
+    Some(match key {
+        Key::Char('h') => Token::Motion(Motion::Left),
+        Key::Char('x') => Token::Op(Op::Delete),
+        Key::Char('s') => Token::Op(Op::Change),
+        _ => return None,
+    })
 }

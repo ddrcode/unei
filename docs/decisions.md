@@ -127,6 +127,19 @@ statusline counts. The line-scope hover (`gK`) splices inlay-hint labels
 into the current line. Scratch macro expansions get a fake `.rs` path for
 highlighting and are never written unless explicitly saved.
 
+## 2026-09-05 — Visual mode: three kinds, one non-yanking paste
+
+Visual char/line/block (ticket #11) reuse the normal-mode dispatcher: in a
+visual mode, motions extend the selection and operators consume it. `h` is
+a left motion again (keyboard.lua remaps it in normal mode only) and `x`/`s`
+alias delete/change. Block operations work in display cells (correct across
+tabs and wide chars); a blockwise register kind joins char/line, and block
+`c` replicates the top-line insert to every block line on Esc, inside the
+same undo step. Deviation from vim, at the author's request (#10): visual
+paste NEVER writes the replaced text to the register — select elsewhere and
+paste the same content repeatedly. Deferred: visual `J`/`r`/`>`, dot-repeat
+of visual operators, `p` count.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),
