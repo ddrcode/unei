@@ -1,0 +1,145 @@
+# Keymap
+
+The layout everything else is built around: **IJKL navigation** (one row up
+from vim's HJKL, arrow-shaped), with `h` — freed from moving left — entering
+insert mode. It mirrors the author's long-standing Neovim remap and applies
+everywhere navigation appears: motions, window focus, list selection.
+
+```
+        i               ↑
+      j k l    =    ←   ↓   →        h → insert mode (vim's i)
+```
+
+Uppercase `I J K L` keep their vim meanings where they had one (`J` joins,
+`K` hovers); vim's `H`/`L` screen jumps don't exist. In operator-pending and
+visual contexts `h` is a **left motion** again (`dh` deletes left), because
+the insert remap is a normal-mode affair. There are no `i`-prefixed text
+objects for the same reason; the planned inner-object prefix is `n` (#12).
+
+The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
+
+## Normal mode
+
+### Motions (all take counts; all work as operator targets)
+
+| Keys | Motion |
+|---|---|
+| `i` `k` `j` `l`, arrows | up, down, left, right |
+| `0` `^` `$`, Home/End | line start, first non-blank, line end |
+| `w` `W` `b` `B` `e` `E` | word / WORD forward, back, end |
+| `gg` `G` | first line, last line (count: `:N`-style goto) |
+| `{` `}` | paragraph back / forward |
+| `f`/`F`/`t`/`T` + char, `;` `,` | find on line, repeat, repeat reversed |
+
+### Operators & edits
+
+| Keys | Action |
+|---|---|
+| `d` `c` `y` + motion | delete / change / yank (`dd` `cc` `yy` linewise; `2d3w` = six words) |
+| `D` `C` `Y` | to end of line (`Y` = `y$`, nvim-style) |
+| `x` `X` | delete char right / left |
+| `r`+char | replace char(s) |
+| `s` `S` | substitute char / line |
+| `~` | toggle case |
+| `J` | join lines |
+| `p` `P` | paste after / before (char, line, or block register) |
+| `u` / `Ctrl+R` | undo / redo (insert session = one unit) |
+| `.` | repeat last change (`3.` replaces the count) |
+
+### Mode changes
+
+| Keys | Action |
+|---|---|
+| `h` `H` | insert before cursor / at first non-blank |
+| `a` `A` | append after cursor / at line end |
+| `o` `O` | open line below / above |
+| `v` `V` `Ctrl+V` | visual char / line / block |
+| `:` | command line |
+
+### Files, buffers, jumps
+
+| Keys | Action |
+|---|---|
+| `Ctrl+P`, `Space p` | fuzzy file picker |
+| `Space b` | buffer list |
+| `Ctrl+^` / `Ctrl+6` | alternate buffer |
+| `Ctrl+O` / `Ctrl+I` (`Tab`) | jumplist back / forward (crosses buffers) |
+
+### rust-analyzer
+
+| Keys | Action |
+|---|---|
+| `K` | hover (type + docs); any key dismisses |
+| `gd` | goto definition |
+| `gK` | line-scope hover: the line with all types spliced in, plus the call signature |
+| `Space c a` | code actions menu |
+| `Space r m` | expand macro (into a split) |
+| `Space d h` | toggle end-of-line diagnostic text |
+
+### Windows (`Ctrl+W` or `Space w`, then…)
+
+| Key | Action |
+|---|---|
+| `i` `k` `j` `l`, arrows | focus window in that direction |
+| `Ctrl+W` | cycle to next window |
+| `Alt+i/k/j/l` | resize, tmux-style (push the border) |
+| `s` / `x` | horizontal split |
+| `v` | vertical split |
+| `n` | horizontal split with a new empty buffer |
+| `q` | close window (last one quits) |
+| `o` | only — close all others |
+| `=` | equalize sizes |
+| `r` | rotate windows in their container |
+| `Space` | flip container layout (side-by-side ↔ stacked) |
+| `z` | zoom toggle (statusline shows `[Z]`) |
+
+### Scrolling & misc
+
+| Keys | Action |
+|---|---|
+| `Ctrl+D` / `Ctrl+U` | half page down / up |
+| `Ctrl+F` / `Ctrl+B`, PgDn/PgUp | page down / up |
+| `zz` `zt` `zb` | cursor to center / top / bottom |
+| `ZZ` / `ZQ` | save-and-quit / force-quit |
+| `gv` | reselect last visual selection |
+| `Esc` | clear pending input |
+
+## Visual mode
+
+Motions extend the selection; `h` is a left motion here.
+
+| Keys | Action |
+|---|---|
+| `d` / `x` | delete selection |
+| `c` / `s` | change selection (block: type once, Esc replicates to every line) |
+| `y` | yank (with flash) |
+| `~` | toggle case |
+| `p` | replace selection with register — **never clobbers the register** |
+| `o` / `O` | swap ends / swap block corners |
+| `v` `V` `Ctrl+V` | switch kind (same kind exits) |
+| `Esc`, `Ctrl+C` | back to normal |
+
+## Insert mode
+
+| Keys | Action |
+|---|---|
+| `Esc`, `Ctrl+C`, `Ctrl+[` | back to normal |
+| `Enter` | new line, copying the current indent |
+| `Tab` | spaces to the next 4-column stop |
+| `Backspace` / `Del` | delete back / forward (joins lines at edges) |
+| `Ctrl+W` | delete word back |
+| `Ctrl+U` | delete to indent |
+| arrows, Home/End | movement without leaving insert |
+
+## Command line
+
+`:w` `:q` `:q!` `:wq` `:x` — with splits open, quit commands close the window
+first; the last window checks *all* buffers for unsaved changes. `:bd`/`:bd!`
+close the buffer. `:{number}` jumps to a line.
+
+## Overlays
+
+- **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes.
+- **Buffer list** — `i`/`k` select, `Enter` switches, `x` closes a buffer, `Esc`/`q` dismiss.
+- **Code actions** — `i`/`k` select, `Enter` applies, `Esc`/`q` dismiss.
+- **Hover float** — any key dismisses (`Esc`/`q`/`K` do nothing else).
