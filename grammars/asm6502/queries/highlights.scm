@@ -1,4 +1,4 @@
-; 6502/65C02 (ACME) highlighting — tailorED #18.
+; 6502/65C02 (ACME) highlighting — Unei #18.
 
 (comment) @comment
 

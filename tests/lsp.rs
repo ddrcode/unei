@@ -6,13 +6,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tailored::core::buffer::Buffer;
-use tailored::editor::Editor;
-use tailored::editor::testing::{feed, text};
-use tailored::lsp::Severity;
+use unei::core::buffer::Buffer;
+use unei::editor::Editor;
+use unei::editor::testing::{feed, text};
+use unei::lsp::Severity;
 
 fn install_fake_rust_analyzer() {
-    let bin = std::env::temp_dir().join(format!("tailored-lsp-bin-{}", std::process::id()));
+    let bin = std::env::temp_dir().join(format!("unei-lsp-bin-{}", std::process::id()));
     let _ = fs::remove_dir_all(&bin);
     fs::create_dir_all(&bin).unwrap();
     let script_path = std::fs::canonicalize("tests/fake_lsp.py").unwrap();
@@ -29,7 +29,7 @@ fn install_fake_rust_analyzer() {
 }
 
 fn project() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tailored-lsp-proj-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("unei-lsp-proj-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(dir.join("Cargo.toml"), "[package]\nname = \"t\"\n").unwrap();

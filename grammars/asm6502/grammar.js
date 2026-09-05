@@ -1,5 +1,5 @@
 // Bespoke tree-sitter grammar for 6502/65C02 assembly in ACME syntax
-// (tailorED ticket #18, simplest form). Scope: what highlighting needs —
+// (Unei ticket #18, simplest form). Scope: what highlighting needs —
 // comments, labels, mnemonics, ACME pseudo-ops (!byte, * =, +macro), and
 // operand atoms (hex/bin/dec, strings, char, symbol refs). Not a full
 // expression grammar; operands are a flat token run, which is plenty for

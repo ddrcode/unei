@@ -1,6 +1,6 @@
 //! Search (ticket #8 phase 1): incremental /?, n/N, *, hlsearch, :s.
 
-use tailored::editor::testing::{editor_from, editor_with_buffers, feed, text};
+use unei::editor::testing::{editor_from, editor_with_buffers, feed, text};
 
 #[test]
 fn slash_jumps_incrementally_and_enter_commits() {

@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use tailored::core::buffer::Buffer;
-use tailored::editor::Editor;
-use tailored::editor::testing::{feed, text};
+use unei::core::buffer::Buffer;
+use unei::editor::Editor;
+use unei::editor::testing::{feed, text};
 
 const DOC: &str = "# Title\n\nSome *emphasis* and **strong** and `code`.\n\n## Section two\n\n- alpha\n- beta\n\n```rust\nfn demo() {}\n```\n\n> a quote line\n";
 

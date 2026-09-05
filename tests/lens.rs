@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use tailored::core::buffer::Buffer;
-use tailored::editor::Editor;
-use tailored::editor::testing::feed;
+use unei::core::buffer::Buffer;
+use unei::editor::Editor;
+use unei::editor::testing::feed;
 
 fn editor(content: &str, name: &str) -> Editor {
     let mut b = Buffer::from_text(content);

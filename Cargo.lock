@@ -682,36 +682,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tailored"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "ignore",
- "nucleo-matcher",
- "ratatui",
- "regex",
- "ropey",
- "serde_json",
- "streaming-iterator",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-css",
- "tree-sitter-html",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-language",
- "tree-sitter-md",
- "tree-sitter-nix",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
- "tree-sitter-yaml",
- "unicode-segmentation",
- "unicode-width 0.2.0",
-]
-
-[[package]]
 name = "tree-sitter"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -838,6 +808,36 @@ checksum = "53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97"
 dependencies = [
  "cc",
  "tree-sitter-language",
+]
+
+[[package]]
+name = "unei"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "ignore",
+ "nucleo-matcher",
+ "ratatui",
+ "regex",
+ "ropey",
+ "serde_json",
+ "streaming-iterator",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-css",
+ "tree-sitter-html",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-language",
+ "tree-sitter-md",
+ "tree-sitter-nix",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-yaml",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

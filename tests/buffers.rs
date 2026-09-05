@@ -1,9 +1,9 @@
 //! Buffer management: switching, the buffer list, closing (ticket #2).
 //! Layout reminder: i=up, k=down, j=left, l=right, h=insert; leader is space.
 
-use tailored::editor::testing::{editor_from, editor_with_buffers, feed, text};
+use unei::editor::testing::{editor_from, editor_with_buffers, feed, text};
 
-fn three() -> tailored::editor::Editor {
+fn three() -> unei::editor::Editor {
     editor_with_buffers(&[("a.txt", "aaa\n"), ("b.txt", "bbb\n"), ("c.txt", "ccc\n")])
 }
 

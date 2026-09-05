@@ -1,4 +1,4 @@
-# tailorED
+# Unei
 
 A bespoke, zero-config, vim-like terminal editor — made to measure for exactly one person, and written entirely by an AI.
 
@@ -35,9 +35,9 @@ This project takes the other road. Thanks to AI-assisted development it became p
 ```sh
 nix develop          # toolchain via the flake (rustc, cargo, rust-analyzer, treefmt…)
 cargo build --release
-./target/release/tailored            # scratch buffer
-./target/release/tailored src/       # directory → opens into the file picker
-./target/release/tailored foo.rs bar.md
+./target/release/unei            # scratch buffer
+./target/release/unei src/       # directory → opens into the file picker
+./target/release/unei foo.rs bar.md
 ```
 
 Best experienced in Kitty. Under tmux, italics and instant-Esc depend on your tmux terminfo (`tmux-256color` recommended).
@@ -48,7 +48,7 @@ Personal daily driver for Rust and Markdown. Development happens ticket-by-ticke
 
 ## The name
 
-A tailor makes clothes for one body. This editor is tailor**ED** — made to measure, with the classic `ed → ex → vi → vim` lineage stitched into the suffix.
+The same four keys, a different keyboard. Navigation here is **IJKL** — `i` up, `k` down, `j` left, `l` right — and if you type those four physical keys on a [Colemak](https://colemak.com) layout, they spell **unei** (QWERTY `I J K L` sit where Colemak types `U N E I`). Colemak support is on the roadmap; the name got there first. It also reads as 運営 — Japanese *un'ei*, "operations," the running of a thing — and keeps company with the author's other project, Maiko.
 
 ## Docs
 

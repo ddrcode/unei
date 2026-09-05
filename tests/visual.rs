@@ -2,8 +2,8 @@
 //! Layout reminder: i=up, k=down, j=left, l=right; h is a LEFT motion in
 //! visual mode (the insert remap is normal-mode-only).
 
-use tailored::editor::Mode;
-use tailored::editor::testing::{editor_from, feed, text};
+use unei::editor::Mode;
+use unei::editor::testing::{editor_from, feed, text};
 
 macro_rules! golf {
     ($name:ident, $before:expr, $keys:expr, $after:expr) => {
@@ -19,7 +19,7 @@ macro_rules! golf {
 // entry, exit, kind switching
 #[test]
 fn visual_modes_enter_and_exit() {
-    use tailored::core::commands::VisualKind;
+    use unei::core::commands::VisualKind;
     let mut ed = editor_from("abc\n");
     feed(&mut ed, "v");
     assert_eq!(ed.mode, Mode::Visual(VisualKind::Char));
@@ -150,7 +150,7 @@ golf!(
 // yank flash (nvim's on_yank): set on every yank shape, expires on its own
 #[test]
 fn yank_flash_lifecycle() {
-    use tailored::editor::FlashRegion;
+    use unei::editor::FlashRegion;
     let mut ed = editor_from("one two\nthree\n");
     feed(&mut ed, "yy");
     assert!(matches!(ed.yank_flash, Some((_, FlashRegion::Line(0, 0)))));

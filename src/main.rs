@@ -6,14 +6,14 @@ use ratatui::crossterm::cursor::SetCursorStyle;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 
-use tailored::core::buffer::Buffer;
-use tailored::editor::{Editor, Mode};
-use tailored::{term, ui};
+use unei::core::buffer::Buffer;
+use unei::editor::{Editor, Mode};
+use unei::{term, ui};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-    let launch = tailored::launch::resolve(&args, cwd);
+    let launch = unei::launch::resolve(&args, cwd);
 
     let mut editor = if launch.files.is_empty() {
         Editor::new(Buffer::from_text(""))
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     };
     editor.set_root(launch.root);
     if launch.open_picker {
-        tailored::editor::file_picker::open(&mut editor);
+        unei::editor::file_picker::open(&mut editor);
     }
 
     term::install_panic_hook();

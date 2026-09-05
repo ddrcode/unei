@@ -56,8 +56,7 @@ mod tests {
     use std::fs;
 
     fn tmp(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("tailored-launch-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("unei-launch-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("sub")).unwrap();
         fs::write(dir.join("a.txt"), "a").unwrap();

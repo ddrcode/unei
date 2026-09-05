@@ -1,6 +1,6 @@
 //! The yank/cut register split + system clipboard mirroring (ticket #10).
 
-use tailored::editor::testing::{editor_from, feed, text};
+use unei::editor::testing::{editor_from, feed, text};
 
 #[test]
 fn deletes_do_not_clobber_the_yank() {

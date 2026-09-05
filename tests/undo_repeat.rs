@@ -6,7 +6,7 @@
 //! nvim oracle (keys fed with `feedkeys(..., 'tx')` so undo blocks split as
 //! they do interactively) and translated through the IJKL keymap.
 
-use tailored::editor::testing::{editor_from, feed, text};
+use unei::editor::testing::{editor_from, feed, text};
 
 macro_rules! golf {
     ($(#[$meta:meta])* $name:ident, $before:expr, $keys:expr, $after:expr) => {

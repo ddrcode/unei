@@ -5,12 +5,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use tailored::core::buffer::Buffer;
-use tailored::editor::Editor;
-use tailored::editor::testing::{feed, text};
+use unei::core::buffer::Buffer;
+use unei::editor::Editor;
+use unei::editor::testing::{feed, text};
 
 fn project(name: &str, with_config: bool) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tailored-fmt-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("unei-fmt-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     if with_config {
@@ -31,13 +31,13 @@ fn editor_on(path: PathBuf, content: &str) -> Editor {
 /// Installs a fake `treefmt` on PATH: uppercases the target file's content
 /// (arg 5 per the editor's invocation), or sleeps when SLOW is requested.
 fn install_fake_treefmt() -> PathBuf {
-    let bin = std::env::temp_dir().join(format!("tailored-fmt-bin-{}", std::process::id()));
+    let bin = std::env::temp_dir().join(format!("unei-fmt-bin-{}", std::process::id()));
     let _ = fs::remove_dir_all(&bin);
     fs::create_dir_all(&bin).unwrap();
     let script = "#!/bin/sh\n\
         f=\"$5\"\n\
-        if [ -n \"$TAILORED_FAKE_SLOW\" ]; then sleep 5; exit 0; fi\n\
-        if [ -n \"$TAILORED_FAKE_FAIL\" ]; then echo boom >&2; exit 1; fi\n\
+        if [ -n \"$UNEI_FAKE_SLOW\" ]; then sleep 5; exit 0; fi\n\
+        if [ -n \"$UNEI_FAKE_FAIL\" ]; then echo boom >&2; exit 1; fi\n\
         tr 'a-z' 'A-Z' < \"$f\" > \"$f.tmp\" && mv \"$f.tmp\" \"$f\"\n";
     let path = bin.join("treefmt");
     fs::write(&path, script).unwrap();
@@ -79,11 +79,11 @@ fn format_on_save_scenarios() {
     assert!(!ed.message.as_ref().unwrap().text.contains("formatted"));
 
     // 4. formatter failure: file stays written, error shown, buffer intact
-    unsafe { std::env::set_var("TAILORED_FAKE_FAIL", "1") };
+    unsafe { std::env::set_var("UNEI_FAKE_FAIL", "1") };
     let dir3 = project("fail", true);
     let mut ed = editor_on(dir3.join("c.txt"), "keep\n");
     feed(&mut ed, ":w<CR>");
-    unsafe { std::env::remove_var("TAILORED_FAKE_FAIL") };
+    unsafe { std::env::remove_var("UNEI_FAKE_FAIL") };
     assert_eq!(text(&ed), "keep\n");
     let msg = ed.message.as_ref().unwrap();
     assert!(msg.error && msg.text.contains("boom"));
@@ -97,12 +97,12 @@ fn format_on_save_scenarios() {
     assert_eq!(text(&ed), "DEEP\n");
 
     // 6. timeout: the slow formatter is killed, save still succeeds
-    unsafe { std::env::set_var("TAILORED_FAKE_SLOW", "1") };
+    unsafe { std::env::set_var("UNEI_FAKE_SLOW", "1") };
     let dir5 = project("slow", true);
     let mut ed = editor_on(dir5.join("e.txt"), "slow\n");
     let t0 = std::time::Instant::now();
     feed(&mut ed, ":w<CR>");
-    unsafe { std::env::remove_var("TAILORED_FAKE_SLOW") };
+    unsafe { std::env::remove_var("UNEI_FAKE_SLOW") };
     assert!(
         t0.elapsed().as_millis() < 4000,
         "killed well before 5s sleep"

@@ -1,8 +1,8 @@
 [package]
-name = "tailored"
+name = "unei"
 version = "0.1.0"
 edition = "2024"
-description = "tailorED - bespoke, zero-config, vim-like editor"
+description = "unei - bespoke, zero-config, vim-like editor"
 license = "MIT"
 
 [dependencies]
@@ -34,9 +34,9 @@ regex = "1.13.1"
 cc = "1"
 
 [[bin]]
-name = "tailored"
+name = "unei"
 path = "src/main.rs"
 
 [lib]
-name = "tailored"
+name = "unei"
 path = "src/lib.rs"

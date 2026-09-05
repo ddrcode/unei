@@ -1,5 +1,5 @@
 # Formatting for this repo, used both by `treefmt` on the CLI and by
-# tailorED itself on save (the editor's single formatting integration).
+# Unei itself on save (the editor's single formatting integration).
 
 [formatter.rustfmt]
 command = "rustfmt"

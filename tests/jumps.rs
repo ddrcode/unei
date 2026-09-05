@@ -1,6 +1,6 @@
 //! Jumplist (Ctrl+o / Ctrl+i) and Ctrl+w Ctrl+w window cycling.
 
-use tailored::editor::testing::{editor_from, editor_with_buffers, feed, text};
+use unei::editor::testing::{editor_from, editor_with_buffers, feed, text};
 
 #[test]
 fn ctrl_o_returns_from_a_goto_jump() {

@@ -1,5 +1,5 @@
 {
-  description = "tailorED - my personal vim-like editor";
+  description = "unei - my personal vim-like editor";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
