@@ -45,6 +45,8 @@ pub enum Awaiting {
     LeaderR,
     /// `<leader>d…` — diagnostics chord.
     LeaderD,
+    /// `gc…` — comment chord (awaiting the second `c` of `gcc`).
+    GComment,
 }
 
 #[derive(Debug, Default)]
@@ -1591,6 +1593,69 @@ impl Editor {
         }
     }
 
+    /// `gcc` — toggle line comment on the current line and `count-1` below.
+    pub(crate) fn toggle_comment_lines(&mut self, count: usize) {
+        let last = self.buffer.rope.len_lines().saturating_sub(1);
+        let from = self.cursor.line.min(last);
+        let to = (from + count.saturating_sub(1)).min(last);
+        self.toggle_comment(from, to);
+    }
+
+    /// `gc` in visual mode — toggle line comments over the selected lines.
+    pub(crate) fn toggle_comment_visual(&mut self) {
+        let (a, b) = (self.visual_anchor.line, self.cursor.line);
+        let (from, to) = (a.min(b), a.max(b));
+        self.leave_visual();
+        self.toggle_comment(from, to);
+    }
+
+    /// Toggles line comments over `from..=to`: uncomments when every
+    /// non-blank line is already commented, comments otherwise. Comment
+    /// markers align to the shallowest indentation; blank lines are left be.
+    pub(crate) fn toggle_comment(&mut self, from: usize, to: usize) {
+        use crate::core::text::{first_non_blank, line_content};
+        let Some(token) = crate::comment::line_comment(&self.buffer) else {
+            self.err("no line-comment syntax for this file");
+            return;
+        };
+        let last = self.buffer.rope.len_lines().saturating_sub(1);
+        let to = to.min(last);
+        let targets: Vec<usize> = (from..=to)
+            .filter(|&l| !line_content(&self.buffer.rope, l).trim().is_empty())
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        let all_commented = targets
+            .iter()
+            .all(|&l| crate::comment::is_commented(&line_content(&self.buffer.rope, l), &token));
+        let tok_len = token.chars().count();
+        self.buffer.begin_change(self.cursor);
+        if all_commented {
+            for &l in targets.iter().rev() {
+                let col = first_non_blank(&self.buffer.rope, l);
+                let start = self.buffer.rope.line_to_char(l) + col;
+                self.buffer.remove(start..start + tok_len);
+                if self.buffer.rope.get_char(start) == Some(' ') {
+                    self.buffer.remove(start..start + 1);
+                }
+            }
+        } else {
+            let indent = targets
+                .iter()
+                .map(|&l| first_non_blank(&self.buffer.rope, l))
+                .min()
+                .unwrap_or(0);
+            let insertion = format!("{token} ");
+            for &l in targets.iter().rev() {
+                let at = self.buffer.rope.line_to_char(l) + indent;
+                self.buffer.insert(at, &insertion);
+            }
+        }
+        self.buffer.end_change();
+        self.clamp_cursor();
+    }
+
     /// `K` — the one "tell me about this" verb: LSP hover where a server
     /// exists, the machine lens (#45) everywhere else.
     pub(crate) fn hover(&mut self) {
@@ -1786,6 +1851,7 @@ impl Editor {
             Awaiting::Find(FindKind::TillBack) => s.push('T'),
             Awaiting::Replace => s.push('r'),
             Awaiting::G => s.push('g'),
+            Awaiting::GComment => s.push_str("gc"),
             Awaiting::Z => s.push('z'),
             Awaiting::ZUpper => s.push('Z'),
             Awaiting::Leader => s.push('␣'),

@@ -58,6 +58,29 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     ed.toggle_preview();
                     clear_pending(ed);
                 }
+                Key::Char('c') => {
+                    // gc: comment the selection in visual mode; in normal
+                    // mode wait for the second c of gcc
+                    if matches!(ed.mode, Mode::Visual(_)) {
+                        ed.drop_recording();
+                        ed.toggle_comment_visual();
+                        clear_pending(ed);
+                    } else {
+                        ed.pending.awaiting = Awaiting::GComment;
+                    }
+                }
+                _ => clear_pending(ed),
+            }
+        }
+        Awaiting::GComment => {
+            ed.pending.awaiting = Awaiting::None;
+            match key {
+                Key::Char('c') => {
+                    ed.drop_recording();
+                    let count = ed.pending.take_count().unwrap_or(1);
+                    ed.toggle_comment_lines(count);
+                    clear_pending(ed);
+                }
                 _ => clear_pending(ed),
             }
         }
