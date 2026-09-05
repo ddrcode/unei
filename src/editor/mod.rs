@@ -1591,6 +1591,20 @@ impl Editor {
         }
     }
 
+    /// Leaves preview on this window, landing the cursor on the source
+    /// line mapped from the given rendered line.
+    fn preview_jump_to_source(&mut self, id: windows::WinId, view_line: usize, width: usize) {
+        let source = self
+            .preview_doc_for(self.current, width)
+            .source_line_for_view(view_line);
+        self.preview_windows.remove(&id);
+        self.preview_nav.remove(&id);
+        self.cursor = Cursor::new(source, 0);
+        self.goal = None;
+        self.clamp_cursor();
+        self.refresh_focused_view();
+    }
+
     /// Keyboard when a preview window has focus: navigation over the
     /// rendered document; Enter/gd jumps to source; gp/Esc projects back.
     pub(crate) fn preview_key(&mut self, key: Key) {
@@ -1612,15 +1626,20 @@ impl Editor {
             K::Char('G') => line = last,
             K::Enter => {
                 // jump to source at the mapped line
-                let source = self
-                    .preview_doc_for(self.current, width)
-                    .source_line_for_view(line);
-                self.preview_windows.remove(&id);
-                self.preview_nav.remove(&id);
-                self.cursor = Cursor::new(source, 0);
-                self.goal = None;
-                self.clamp_cursor();
-                self.refresh_focused_view();
+                self.preview_jump_to_source(id, line, width);
+                return;
+            }
+            K::Char('h') => {
+                // start editing right here: source at the mapped line, insert
+                self.preview_jump_to_source(id, line, width);
+                normal::enter_insert(self, crate::core::commands::InsertEntry::Before);
+                return;
+            }
+            K::Char(':') => {
+                // the command line works from a preview (`:q` closes the panel)
+                self.cmdline.clear();
+                self.prompt = Prompt::Command;
+                self.mode = Mode::Command;
                 return;
             }
             K::Char('p') | K::Esc => {

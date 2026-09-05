@@ -676,7 +676,7 @@ fn motion_cursor_of_abs(ed: &Editor, abs: usize) -> Cursor {
     Cursor::new(line, text::snap_to_grapheme(&grs, col))
 }
 
-fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
+pub(crate) fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
     ed.goal = None;
     let rope = &ed.buffer.rope;
     let line = ed.cursor.line;

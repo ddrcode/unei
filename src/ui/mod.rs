@@ -280,7 +280,9 @@ fn draw_preview_window(
             rows.push(Line::default());
             continue;
         };
-        let reading = focused && idx == cursor_line;
+        // the reading line stays washed when unfocused too: a following
+        // preview marks where the source cursor is
+        let reading = idx == cursor_line;
         let line_bg = if reading {
             palette::CURSORLINE_BG
         } else {
