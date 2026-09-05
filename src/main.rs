@@ -50,10 +50,11 @@ fn main() -> Result<()> {
 }
 
 fn run(
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+    terminal: &mut ratatui::Terminal<term::KittyBackend<io::Stdout>>,
     editor: &mut Editor,
 ) -> Result<()> {
     let mut last_mode = None;
+    let mut needs_redraw = true;
     loop {
         let mode = editor.mode;
         if last_mode != Some(mode) {
@@ -65,19 +66,43 @@ fn run(
             last_mode = Some(mode);
         }
 
-        terminal.draw(|f| ui::render(f, editor))?;
+        if needs_redraw {
+            terminal.draw(|f| ui::render(f, editor))?;
+            needs_redraw = false;
+        }
 
-        match event::read()? {
-            Event::Key(k) => {
-                if let Some(key) = term::convert(k) {
-                    editor.handle_key(key);
+        // poll so rust-analyzer messages are handled while idle
+        if event::poll(std::time::Duration::from_millis(30))? {
+            match event::read()? {
+                Event::Key(k) => {
+                    if let Some(key) = term::convert(k) {
+                        editor.handle_key(key);
+                        needs_redraw = true;
+                    }
+                }
+                Event::Resize(..) => needs_redraw = true,
+                _ => {}
+            }
+            // drain any burst of input before redrawing
+            while event::poll(std::time::Duration::ZERO)? {
+                match event::read()? {
+                    Event::Key(k) => {
+                        if let Some(key) = term::convert(k) {
+                            editor.handle_key(key);
+                        }
+                    }
+                    Event::Resize(..) => {}
+                    _ => {}
                 }
             }
-            Event::Resize(..) => {}
-            _ => {}
+        }
+
+        if editor.lsp_tick() {
+            needs_redraw = true;
         }
 
         if editor.should_quit {
+            editor.lsp_shutdown();
             return Ok(());
         }
     }

@@ -111,6 +111,22 @@ buffer clean. The process is killed after `OPTIONS.format_timeout_ms`
 config, not editor config, so zero-config holds. This repo dogfoods it
 (treefmt.toml: rustfmt + nixpkgs-fmt; both in the dev shell).
 
+## 2026-09-05 — rust-analyzer: hand-rolled client, utf-8 positions
+
+The LSP client (ticket #6) is ~500 lines of std: a reader thread feeding a
+channel, JSON-RPC framing by hand, and a poll-based main loop (30ms) so
+server messages land while the editor idles. No async runtime, no lsp-types
+crate — serde_json values and a typed event enum at the editor boundary.
+utf-8 position encoding is negotiated so LSP columns are byte offsets
+(converted to editor char columns in exactly one module). Documents sync
+full-content, debounced 200ms. Diagnostics render as underlines — straight
+red for errors, curly yellow for warnings via a custom ratatui backend that
+repurposes the two blink modifier bits for Kitty underline SGR (ratatui
+cannot express undercurl) — plus toggleable end-of-line ghost text and
+statusline counts. The line-scope hover (`gK`) splices inlay-hint labels
+into the current line. Scratch macro expansions get a fake `.rs` path for
+highlighting and are never written unless explicitly saved.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

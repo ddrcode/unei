@@ -100,6 +100,8 @@ pub enum Token {
     AlternateBuffer,
     /// `Ctrl+p` — file picker.
     FilePicker,
+    /// `K` — hover: type/docs of the item under the cursor (rust-analyzer).
+    Hover,
     CmdLine,
 }
 
@@ -112,6 +114,12 @@ pub enum LeaderCmd {
     FilePicker,
     /// `<leader>w` — same as `Ctrl+w`.
     WindowPrefix,
+    /// `<leader>c…` — code chord (`ca` = code actions).
+    CodePrefix,
+    /// `<leader>r…` — rust chord (`rm` = expand macro).
+    RustPrefix,
+    /// `<leader>d…` — diagnostics chord (`dh` = toggle ghost text).
+    DiagPrefix,
 }
 
 /// Keys inside the buffer-list overlay.
