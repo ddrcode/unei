@@ -130,6 +130,7 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
 fn window_cmd(ed: &mut Editor, cmd: WinCmd) {
     match cmd {
         WinCmd::Focus(dir) => ed.focus_direction(dir),
+        WinCmd::FocusNext => ed.focus_next_window(),
         WinCmd::Resize(dir) => ed.resize_window(dir),
         WinCmd::Equalize => ed.equalize_windows(),
         WinCmd::Rotate => ed.rotate_windows(),
@@ -282,6 +283,16 @@ fn clear_pending(ed: &mut Editor) {
 fn process_motion(ed: &mut Editor, motion: Motion) {
     let count = ed.pending.take_count();
     let op = ed.pending.op.take();
+
+    // plain jumps (not operator targets) land on the jumplist, like vim
+    if op.is_none()
+        && matches!(
+            motion,
+            Motion::GotoFirst | Motion::GotoLast | Motion::ParaForward | Motion::ParaBack
+        )
+    {
+        ed.record_jump();
+    }
 
     if let Some(op) = op {
         apply_operator(ed, op, motion, count);
@@ -632,6 +643,8 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
             ed.goal = None;
         }
         SimpleCmd::Repeat => ed.repeat_last_change(count_given),
+        SimpleCmd::JumpBack => ed.jump_back(),
+        SimpleCmd::JumpForward => ed.jump_forward(),
         SimpleCmd::DeleteToEol => apply_operator(ed, Op::Delete, Motion::LineEnd, Some(count)),
         SimpleCmd::ChangeToEol => apply_operator(ed, Op::Change, Motion::LineEnd, Some(count)),
         SimpleCmd::YankToEol => apply_operator(ed, Op::Yank, Motion::LineEnd, Some(count)),

@@ -115,6 +115,10 @@ pub fn normal_token(key: Key) -> Option<Token> {
         // rust-analyzer
         Key::Char('K') => Token::Hover,
 
+        // jumplist
+        Key::Ctrl('o') => Token::Simple(SimpleCmd::JumpBack),
+        Key::Ctrl('i') | Key::Tab => Token::Simple(SimpleCmd::JumpForward),
+
         // file picker
         Key::Ctrl('p') => Token::FilePicker,
 
@@ -153,6 +157,7 @@ pub fn leader_token(key: Key) -> Option<LeaderCmd> {
 pub fn window_token(key: Key) -> Option<WinCmd> {
     Some(match key {
         // focus: IJKL and arrows
+        Key::Ctrl('w') => WinCmd::FocusNext,
         Key::Char('i') | Key::Up => WinCmd::Focus(WinDir::Up),
         Key::Char('k') | Key::Down => WinCmd::Focus(WinDir::Down),
         Key::Char('j') | Key::Left => WinCmd::Focus(WinDir::Left),

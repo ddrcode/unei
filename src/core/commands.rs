@@ -68,6 +68,10 @@ pub enum SimpleCmd {
     Redo,
     /// `.`
     Repeat,
+    /// `Ctrl+o` — jumplist back.
+    JumpBack,
+    /// `Ctrl+i` / `Tab` — jumplist forward.
+    JumpForward,
     /// `D`
     DeleteToEol,
     /// `C`
@@ -164,6 +168,8 @@ pub enum WinDir {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WinCmd {
     Focus(WinDir),
+    /// `Ctrl+w Ctrl+w` — cycle to the next window.
+    FocusNext,
     /// tmux-style: push the window border in that direction.
     Resize(WinDir),
     /// `=`
