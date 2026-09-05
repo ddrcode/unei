@@ -121,14 +121,15 @@ golf!(yy_p_below, "one\ntwo\n", "yyp", "one\none\ntwo\n");
 golf!(yy_p_at_last_line, "one\n", "yyp", "one\none\n");
 golf!(yy_big_p_above, "one\ntwo\n", "kyyP", "one\ntwo\ntwo\n");
 golf!(yw_p_charwise, "one two\n", "ywwp", "one tone wo\n");
-golf!(x_then_p_swaps_chars, "ab\n", "xp", "ba\n");
+// the swap idiom via the cut register (#10 split)
+golf!(x_then_p_swaps_chars, "ab\n", "x p", "ba\n");
 golf!(
     dd_p_moves_line_down,
     "one\ntwo\nthree\n",
-    "ddp",
+    "dd p",
     "two\none\nthree\n"
 );
-golf!(paste_with_count, "ab\n", "x3p", "baaa\n");
+golf!(paste_with_count, "ab\n", "yl3p", "aaaab\n");
 
 // undo / redo / repeat
 golf!(undo_dd, "one\ntwo\n", "ddu", "one\ntwo\n");

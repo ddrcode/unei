@@ -152,7 +152,8 @@ pub fn normal_token(key: Key) -> Option<Token> {
 pub fn leader_token(key: Key) -> Option<LeaderCmd> {
     match key {
         Key::Char('b') => Some(LeaderCmd::BufferList),
-        Key::Char('p') => Some(LeaderCmd::FilePicker),
+        Key::Char('p') => Some(LeaderCmd::PasteCutAfter),
+        Key::Char('P') => Some(LeaderCmd::PasteCutBefore),
         Key::Char('w') => Some(LeaderCmd::WindowPrefix),
         Key::Char('c') => Some(LeaderCmd::CodePrefix),
         Key::Char('r') => Some(LeaderCmd::RustPrefix),

@@ -99,7 +99,7 @@ fn abs(ed: &Editor) -> usize {
     ed.buffer.rope.line_to_char(ed.cursor.line) + ed.cursor.col
 }
 
-fn insert_text(ed: &mut Editor, text: &str) {
+pub(crate) fn insert_text(ed: &mut Editor, text: &str) {
     let at = abs(ed);
     ed.buffer.insert(at, text);
     let chars = text.chars().count();
