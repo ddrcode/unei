@@ -167,6 +167,22 @@ mirror to the system clipboard via OSC 52 write; paste from the system
 arrives through Kitty's bracketed paste (literal in insert, charwise put
 in normal, selection-replace in visual), never as interpreted keys.
 
+## 2026-09-05 — Preview: a per-window projection, a mode only on focus
+
+Ticket #39 phase 1 resolves its own open question: the VIEW TRANSFORM is
+window state (source vs rendered projection — two windows can show one
+buffer both ways at once), and PREVIEW the keyboard mode simply is what
+the editor is in while a projecting window holds focus (navigation only,
+Enter jumps to source, mutating keys inert). The projection is a pure
+function of (buffer, width) cached by version — the syntax-cache pattern —
+and every rendered line carries its source line (the LineMap), which is
+what makes follow-scrolling and jump-to-source possible and why a bespoke
+renderer beats shelling out to any external previewer. Markdown renders
+via the tree-sitter grammars already in the binary; fenced code highlights
+through the grammar registry. Wrapped-paragraph lines all map to the
+block's first source line (block-granular follow — fine at phase 1). Next
+phases per the ticket: the rust fully-annotated view, csv tables.
+
 ## 2026-09-03 — Ticket #1 ships without soft wrap
 
 The author's nvim uses `wrap` + `linebreak` (relevant for Markdown prose),

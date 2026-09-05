@@ -58,9 +58,14 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
         ed.ensure_syntax(b);
     }
     ed.search_ensure_current();
+    ed.sync_preview_follow();
 
     for (id, rect) in &rects {
         if rect.height < 2 || rect.width < 3 {
+            continue;
+        }
+        if ed.is_preview_window(*id) {
+            draw_preview_window(f, ed, *id, *rect, *id == focused_id);
             continue;
         }
         let view = if *id == focused_id {
@@ -128,6 +133,14 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
         Mode::Command => {
             let x = (1 + ed.cmdline.width() as u16).min(area.width - 1);
             f.set_cursor_position((x, area.height - 1));
+        }
+        _ if ed.focused_is_preview() => {
+            if let Some((_, rect)) = rects.iter().find(|(id, _)| *id == focused_id) {
+                let (line, top) = ed.preview_nav_state(focused_id);
+                let y =
+                    rect.y + (line.saturating_sub(top) as u16).min(rect.height.saturating_sub(2));
+                f.set_cursor_position((rect.x, y));
+            }
         }
         _ => {
             if let Some((_, rect)) = rects.iter().find(|(id, _)| *id == focused_id) {
@@ -235,6 +248,109 @@ fn draw_actions_menu(f: &mut Frame, menu: &crate::editor::analyzer::ActionsMenu,
         ),
         rect,
     );
+}
+
+/// A window projecting its buffer as a rendered preview (#39).
+fn draw_preview_window(
+    f: &mut Frame,
+    ed: &mut Editor,
+    id: crate::editor::windows::WinId,
+    rect: Rect,
+    focused: bool,
+) {
+    let text_rect = Rect::new(rect.x, rect.y, rect.width, rect.height - 1);
+    let status_rect = Rect::new(rect.x, rect.y + rect.height - 1, rect.width, 1);
+    let width = rect.width.saturating_sub(2) as usize;
+    let (cursor_line, top) = ed.preview_nav_state(id);
+    let buf = if focused {
+        ed.current_buffer_id()
+    } else {
+        ed.parked_window(id)
+            .map(|s| s.buf_id)
+            .unwrap_or_else(|| ed.current_buffer_id())
+    };
+    let name = buffer_display_name(ed.buffer_ref(buf).path.as_deref());
+    let doc = ed.preview_doc_for(buf, width);
+
+    let base = Style::default().bg(palette::BG).fg(palette::FG);
+    let mut rows: Vec<Line> = Vec::with_capacity(text_rect.height as usize);
+    for row in 0..text_rect.height as usize {
+        let idx = top + row;
+        let Some(frags) = doc.lines.get(idx) else {
+            rows.push(Line::default());
+            continue;
+        };
+        let reading = focused && idx == cursor_line;
+        let line_bg = if reading {
+            palette::CURSORLINE_BG
+        } else {
+            palette::BG
+        };
+        let mut spans: Vec<Span> = vec![Span::styled("  ", Style::default().bg(line_bg))];
+        let mut used = 2usize;
+        for (text, style) in frags {
+            // fragments with their own background (code chips) keep it;
+            // transparent ones take the line wash
+            let style = if style.bg.is_some() {
+                *style
+            } else {
+                style.bg(line_bg)
+            };
+            used += text.width();
+            spans.push(Span::styled(text.clone(), style));
+        }
+        if used < rect.width as usize {
+            spans.push(Span::styled(
+                " ".repeat(rect.width as usize - used),
+                Style::default().bg(line_bg),
+            ));
+        }
+        rows.push(Line::from(spans));
+    }
+    f.render_widget(Paragraph::new(rows).style(base), text_rect);
+
+    // statusline: PREVIEW badge when focused, [P] tag otherwise
+    let mut spans: Vec<Span> = Vec::new();
+    let mut used = 0usize;
+    if focused {
+        let label = " PREVIEW ";
+        spans.push(Span::styled(
+            label,
+            Style::default()
+                .bg(palette::PURPLE)
+                .fg(palette::MODE_LABEL_FG)
+                .add_modifier(Modifier::BOLD),
+        ));
+        used += label.width();
+    }
+    let left = format!(" {name} [P]");
+    let pct = (cursor_line + 1) * 100 / doc.line_count().max(1);
+    let right = if focused {
+        format!(" {}/{}  {pct}% ", cursor_line + 1, doc.line_count())
+    } else {
+        String::new()
+    };
+    let avail = (rect.width as usize).saturating_sub(used + right.width());
+    let mut left = left;
+    if left.width() > avail {
+        left = left.chars().take(avail).collect();
+    }
+    let pad = avail.saturating_sub(left.width());
+    spans.push(Span::styled(
+        format!("{left}{}", " ".repeat(pad)),
+        Style::default().bg(palette::STATUSLINE_BG).fg(if focused {
+            palette::STATUSLINE_FG
+        } else {
+            palette::GUTTER_FG
+        }),
+    ));
+    if !right.is_empty() {
+        spans.push(Span::styled(
+            right,
+            Style::default().bg(palette::STATUSLINE_BG).fg(palette::FG),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), status_rect);
 }
 
 fn buffer_display_name(path: Option<&std::path::Path>) -> String {
