@@ -58,8 +58,22 @@ fn opcode_lens_requires_modeline() {
     feed(&mut ed, "fl");
     feed(&mut ed, "K");
     let float = float_text(&ed);
-    assert!(float.contains("LDA — (zp),Y"), "{float}");
+    assert!(float.contains("LDA — load accumulator (N,Z)"), "{float}");
+    assert!(float.contains("(zp),Y · 2 bytes"), "{float}");
     assert!(float.contains("5 cycles · +1 if page crossed"), "{float}");
+}
+
+#[test]
+fn opcode_lens_sees_through_a_label() {
+    // the reported bug: `s2   ROL $34` (bare label) showed nothing
+    let src = "; asm: 65c02 acme\ns2   rol $34\n";
+    let mut ed = editor(src, "code.s");
+    feed(&mut ed, "k");
+    feed(&mut ed, "fr"); // cursor onto the mnemonic
+    feed(&mut ed, "K");
+    let float = float_text(&ed);
+    assert!(float.contains("ROL — rotate left through carry"), "{float}");
+    assert!(float.contains("5 cycles"), "{float}"); // $34 is zero page
 }
 
 #[test]

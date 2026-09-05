@@ -102,7 +102,7 @@ Any key dismisses the float.
 | Context | `K` shows |
 |---|---|
 | a numeric literal, any file | all bases, signedness, lo/hi bytes, byte order |
-| a 65C02/6502 instruction | addressing mode, encoding bytes, cycles + penalties |
+| a 65C02/6502 instruction | one-line description + flags, addressing mode, encoding bytes, cycles + penalties |
 | visual selection of asm lines | cycle sum — penalties as ranges, unknowns counted, never guessed |
 
 Assembly knowledge activates only when the file declares its dialect in a
