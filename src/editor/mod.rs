@@ -141,6 +141,10 @@ pub struct Editor {
     /// End-of-line diagnostic ghost text toggle (<leader>dh).
     pub ghost_text: bool,
     diag_views: std::collections::HashMap<std::path::PathBuf, analyzer::DiagView>,
+    /// Jump history (Ctrl+o / Ctrl+i), editor-global. `jump_index == len`
+    /// means "at the live end".
+    jumplist: Vec<(BufId, Cursor)>,
+    jump_index: usize,
     /// Working folder: picker listings and relative opens resolve against it.
     root: std::path::PathBuf,
     /// All buffers in creation order; the current one is checked out into
@@ -219,6 +223,8 @@ impl Editor {
             actions_menu: None,
             ghost_text: true,
             diag_views: std::collections::HashMap::new(),
+            jumplist: Vec::new(),
+            jump_index: 0,
             root: std::path::PathBuf::from("."),
             slots,
             current: 1,
@@ -300,11 +306,84 @@ impl Editor {
         self.current = id;
     }
 
+    /// Remembers the current position on the jumplist (vim-style: recorded
+    /// at the source of a jump, before it happens).
+    pub(crate) fn record_jump(&mut self) {
+        let entry = (self.current, self.cursor);
+        self.jumplist.truncate(self.jump_index);
+        if self.jumplist.last() != Some(&entry) {
+            self.jumplist.push(entry);
+        }
+        if self.jumplist.len() > 100 {
+            self.jumplist.remove(0);
+        }
+        self.jump_index = self.jumplist.len();
+    }
+
+    fn goto_jump_entry(&mut self, index: usize) {
+        let (buf, cursor) = self.jumplist[index];
+        if self.slot_index(buf).is_none() {
+            // buffer no longer exists; drop the stale entry
+            self.jumplist.remove(index);
+            if self.jump_index > index {
+                self.jump_index -= 1;
+            }
+            return;
+        }
+        if buf != self.current {
+            let old = self.current;
+            self.checkout_buffer(buf);
+            self.alternate = Some(old);
+        }
+        self.cursor = cursor;
+        self.goal = None;
+        self.clamp_cursor();
+        self.refresh_focused_view();
+    }
+
+    /// `Ctrl+o` — walk back through the jumplist.
+    pub(crate) fn jump_back(&mut self) {
+        if self.jump_index == 0 {
+            self.msg("at oldest jump");
+            return;
+        }
+        if self.jump_index == self.jumplist.len() {
+            // entering history: remember where we are so Ctrl+i returns
+            let entry = (self.current, self.cursor);
+            if self.jumplist.last() != Some(&entry) {
+                self.jumplist.push(entry);
+            }
+        }
+        self.jump_index -= 1;
+        self.goto_jump_entry(self.jump_index);
+    }
+
+    /// `Ctrl+i` / `Tab` — walk forward again.
+    pub(crate) fn jump_forward(&mut self) {
+        if self.jump_index + 1 >= self.jumplist.len() {
+            self.msg("at newest jump");
+            return;
+        }
+        self.jump_index += 1;
+        self.goto_jump_entry(self.jump_index);
+    }
+
+    /// `Ctrl+w Ctrl+w` — cycle focus through windows in layout order.
+    pub(crate) fn focus_next_window(&mut self) {
+        let ids = self.win_root.window_ids();
+        if ids.len() < 2 {
+            return;
+        }
+        let pos = ids.iter().position(|w| *w == self.focused_win).unwrap_or(0);
+        self.focus_window(ids[(pos + 1) % ids.len()]);
+    }
+
     /// Switches the focused window to buffer `id` (sets the alternate).
     pub(crate) fn switch_to(&mut self, id: BufId) {
         if id == self.current || self.slot_index(id).is_none() {
             return;
         }
+        self.record_jump();
         let old = self.current;
         self.checkout_buffer(id);
         self.alternate = Some(old);
@@ -529,6 +608,7 @@ impl Editor {
     /// file; otherwise loads it (a missing file becomes a "[New File]"
     /// buffer that materializes on :w).
     pub(crate) fn open_path(&mut self, rel: &str, split: Option<SplitDir>) {
+        self.record_jump();
         let abs = self.root.join(rel);
         let canon = std::fs::canonicalize(&abs).unwrap_or_else(|_| abs.clone());
         let existing = self.slots.iter().find_map(|slot| {
@@ -1058,6 +1138,7 @@ impl Editor {
     }
 
     pub(crate) fn goto_line(&mut self, line: usize) {
+        self.record_jump();
         let last = text_lines(&self.buffer.rope) - 1;
         self.cursor.line = line.min(last);
         self.cursor.col = first_non_blank(&self.buffer.rope, self.cursor.line);
