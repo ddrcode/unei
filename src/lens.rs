@@ -5,8 +5,9 @@
 //! frozen enough to compile in (the half-life rule, docs/decisions.md):
 //!
 //! - the NUMBER LENS, in any file: bases, signedness, byte splits;
-//! - the 65C02/6502 OPCODE LENS in assembly files: addressing mode,
-//!   encoding bytes, cycles with penalty footnotes;
+//! - the 65C02/6502 OPCODE LENS in assembly files: a one-line
+//!   description with the flags it sets, the opcode byte, addressing
+//!   mode, length, and cycles with penalty footnotes;
 //! - the CYCLE SUM over a visual selection of straight-line code.
 //!
 //! Assembly knowledge activates only when the file declares its dialect in
