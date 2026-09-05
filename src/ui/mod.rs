@@ -284,11 +284,18 @@ fn draw_preview_window(
         // preview marks where the source cursor is
         let reading = idx == cursor_line;
         let line_bg = if reading {
-            palette::CURSORLINE_BG
+            palette::PREVIEW_READING_BG
         } else {
             palette::BG
         };
-        let mut spans: Vec<Span> = vec![Span::styled("  ", Style::default().bg(line_bg))];
+        // the margin bar keeps the reading line findable even over lines
+        // whose fragments carry their own background (code panels)
+        let margin = if reading {
+            Span::styled("▎ ", Style::default().fg(palette::PURPLE).bg(line_bg))
+        } else {
+            Span::styled("  ", Style::default().bg(line_bg))
+        };
+        let mut spans: Vec<Span> = vec![margin];
         let mut used = 2usize;
         for (text, style) in frags {
             // fragments with their own background (code chips) keep it;
