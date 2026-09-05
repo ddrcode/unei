@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-tailorED is a bespoke, personal vim-like terminal editor written in Rust (Ratatui as renderer). It is intentionally opinionated and zero-config: a monolith with no plugins and no external configuration. Work is ticket-driven: one GitHub issue → one branch → one PR.
+Unei is a bespoke, personal vim-like terminal editor written in Rust (Ratatui as renderer). It is intentionally opinionated and zero-config: a monolith with no plugins and no external configuration. Work is ticket-driven: one GitHub issue → one branch → one PR.
 
 ## Architecture
 

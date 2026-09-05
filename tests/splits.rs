@@ -2,8 +2,8 @@
 //! Layout reminder: i=up, k=down, j=left, l=right; window chord is
 //! Ctrl+w or <Space>w.
 
-use tailored::editor::Editor;
-use tailored::editor::testing::{editor_from, editor_with_buffers, feed, text};
+use unei::editor::Editor;
+use unei::editor::testing::{editor_from, editor_with_buffers, feed, text};
 
 fn rect_of(ed: &Editor, id: usize) -> ratatui::layout::Rect {
     ed.window_rects()
@@ -235,7 +235,7 @@ fn flip_layout_toggles_direction() {
 fn zoom_makes_focused_fullscreen_and_back() {
     let mut ed = editor_from("a\n");
     feed(&mut ed, "<C-w>v");
-    let area = tailored::editor::testing::window_area(&ed);
+    let area = unei::editor::testing::window_area(&ed);
     feed(&mut ed, "<C-w>z");
     assert!(ed.is_zoomed());
     let rects = ed.window_rects();
@@ -339,12 +339,12 @@ fn window_chord_cancels_cleanly_on_unknown_key() {
 /// text dimensions. The event loop draws after every key, so scroll math
 /// always runs against dimensions set by a previous frame.
 fn render_pass(ed: &mut Editor) {
-    ed.set_window_area(tailored::editor::testing::window_area(ed));
+    ed.set_window_area(unei::editor::testing::window_area(ed));
     let rects = ed.window_rects();
     let focused = ed.focused_window_id();
     if let Some((_, r)) = rects.iter().find(|(id, _)| *id == focused) {
-        let lines = tailored::core::text::text_lines(&ed.buffer.rope);
-        let gutter = tailored::config::gutter_width(lines);
+        let lines = unei::core::text::text_lines(&ed.buffer.rope);
+        let gutter = unei::config::gutter_width(lines);
         ed.set_view(
             r.width.saturating_sub(gutter) as usize,
             r.height.saturating_sub(1) as usize,

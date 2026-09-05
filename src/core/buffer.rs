@@ -106,10 +106,10 @@ impl Buffer {
         let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
         let tmp = match dir {
             Some(d) => d.join(format!(
-                ".{}.tailored.tmp",
+                ".{}.unei.tmp",
                 path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
             )),
-            None => PathBuf::from(format!(".{}.tailored.tmp", path.display())),
+            None => PathBuf::from(format!(".{}.unei.tmp", path.display())),
         };
         let write = (|| -> Result<()> {
             let mut f = fs::File::create(&tmp)?;

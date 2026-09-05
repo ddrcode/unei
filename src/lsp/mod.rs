@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn project_root_prefers_outermost_cargo_toml() {
-        let base = std::env::temp_dir().join(format!("tailored-lsp-root-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("unei-lsp-root-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("member/src")).unwrap();
         std::fs::write(base.join("Cargo.toml"), "[workspace]\n").unwrap();

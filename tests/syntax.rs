@@ -3,10 +3,10 @@
 
 use std::path::PathBuf;
 
-use tailored::config::theme;
-use tailored::core::buffer::Buffer;
-use tailored::editor::Editor;
-use tailored::editor::testing::feed;
+use unei::config::theme;
+use unei::core::buffer::Buffer;
+use unei::editor::Editor;
+use unei::editor::testing::feed;
 
 fn editor_with(name: &str, content: &str) -> Editor {
     let mut b = Buffer::from_text(content);
@@ -63,7 +63,7 @@ fn pathless_buffer_renders_plain() {
 
 #[test]
 fn toml_keys_and_strings() {
-    let mut ed = editor_with("Cargo.toml", "[package]\nname = \"tailored\"\n");
+    let mut ed = editor_with("Cargo.toml", "[package]\nname = \"unei\"\n");
     ed.ensure_syntax(1);
     // registry override: pair keys are property-pale (nvim look, per the
     // author — "toml is very yellow in nature"); [table] headers stay @type
@@ -205,7 +205,10 @@ const ASM: &str =
 #[test]
 fn asm6502_highlights_when_modeline_present() {
     let mut ed = editor_with("game.s", ASM);
-    assert!(ed.ensure_syntax(1), "modeline should select the 6502 grammar");
+    assert!(
+        ed.ensure_syntax(1),
+        "modeline should select the 6502 grammar"
+    );
     assert_eq!(capture_at(&ed, 0, 2), Some("comment")); // ; asm: … modeline
     assert_eq!(capture_at(&ed, 1, 0), Some("label")); // loop
     assert_eq!(capture_at(&ed, 1, 8), Some("keyword")); // LDA
@@ -230,6 +233,9 @@ fn asm_without_modeline_stays_plain() {
 fn non_6502_asm_stays_plain() {
     // a RISC-V/gas file must NOT be colored by the 6502 grammar
     let mut ed = editor_with("boot.s", "# asm: rv32e gas\nstart:  li a0, 1\n");
-    assert!(!ed.ensure_syntax(1), "rv32e is not 6502 — plain until it has a grammar");
+    assert!(
+        !ed.ensure_syntax(1),
+        "rv32e is not 6502 — plain until it has a grammar"
+    );
     assert!(spans(&ed, 1).is_empty());
 }

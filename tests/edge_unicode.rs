@@ -2,7 +2,7 @@
 //! wide chars, and operations at the buffer edges.
 //! Remember the layout: i=up, k=down, j=left, l=right, h=insert.
 
-use tailored::editor::testing::{editor_from, feed, text};
+use unei::editor::testing::{editor_from, feed, text};
 
 macro_rules! golf {
     ($name:ident, $before:expr, $keys:expr, $after:expr) => {
@@ -42,7 +42,7 @@ golf!(huge_count_left_right_clamp, "abc\n", "999l999jx", "bc\n");
 golf!(huge_count_down_clamps, "a\nb\n", "999kx", "a\n\n");
 golf!(huge_count_up_clamps, "a\nb\n", "G999ix", "\nb\n");
 golf!(huge_count_operator_word, "one two\n", "d1000w", "\n");
-// vim fails a `1000}`/`1000{` outright (cursor stays); tailorED clamps to the
+// vim fails a `1000}`/`1000{` outright (cursor stays); Unei clamps to the
 // buffer edges — after the round trip both end up back on 'a'
 golf!(
     huge_count_para_roundtrip,

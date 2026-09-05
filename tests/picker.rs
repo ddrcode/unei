@@ -3,12 +3,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use tailored::editor::Editor;
-use tailored::editor::testing::{editor_from, feed, text};
+use unei::editor::Editor;
+use unei::editor::testing::{editor_from, feed, text};
 
 /// A throwaway project tree: gitignored and hidden files must not appear.
 fn project(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tailored-picker-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("unei-picker-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::create_dir_all(dir.join("docs")).unwrap();

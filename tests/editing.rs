@@ -1,7 +1,7 @@
 //! End-to-end editing flows through the modal state machine.
 //! Remember the layout: i=up, k=down, j=left, l=right, h=insert.
 
-use tailored::editor::testing::{editor_from, feed, text};
+use unei::editor::testing::{editor_from, feed, text};
 
 macro_rules! golf {
     ($name:ident, $before:expr, $keys:expr, $after:expr) => {
