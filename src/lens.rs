@@ -504,10 +504,21 @@ fn find_op(ops: &'static [Op], mode: Mode) -> Option<&'static Op> {
     })
 }
 
-/// Splits an assembly line into (label?, mnemonic, operand), stripping a
-/// `;` comment. Returns None for blank, directive, or label-only lines.
+/// Splits an assembly line into (mnemonic, operand), skipping a leading
+/// label, and stripping a `;` comment. Returns None for blank, directive,
+/// or label-only lines.
+///
+/// Labels come with or without a colon (Acme and ca65 both allow bare),
+/// which collides with the mnemonic slot. Two signals resolve it: a
+/// column-0 token is a label unless it names an opcode (un-indented code),
+/// while an indented first token is the mnemonic itself (or a macro the
+/// caller will find unknown). So `s2   ROL $34` yields ROL, not s2.
 fn split_line(line: &str) -> Option<(String, String)> {
     let code = line.split(';').next().unwrap_or("");
+    if code.trim().is_empty() {
+        return None;
+    }
+    let indented = code.starts_with([' ', '\t']);
     let mut s = code.trim();
     if let Some(colon) = s.find(':')
         && s[..colon]
@@ -519,14 +530,105 @@ fn split_line(line: &str) -> Option<(String, String)> {
     if s.is_empty() || s.starts_with(['.', '!', '*', '=', '+', '-']) || s.contains('=') {
         return None;
     }
-    let (mn, rest) = match s.find(char::is_whitespace) {
-        Some(i) => (&s[..i], s[i..].trim()),
-        None => (s, ""),
+    let peel = |t: &str| match t.find(char::is_whitespace) {
+        Some(i) => (t[..i].to_string(), t[i..].trim_start().to_string()),
+        None => (t.to_string(), String::new()),
     };
-    if !mn.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return None;
+    let alnum = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric());
+    let (t0, r0) = peel(s);
+    if indented || ops_for(&t0).is_some() {
+        // first token is the mnemonic position (indented line, or a
+        // column-0 opcode written without indentation)
+        return alnum(&t0).then_some((t0, r0));
     }
-    Some((mn.to_string(), rest.to_string()))
+    // column-0 token that isn't an opcode is a bare label; take the next
+    let (t1, r1) = peel(&r0);
+    alnum(&t1).then_some((t1, r1))
+}
+
+/// One-line description of what a mnemonic does, with the flags it sets.
+/// ISA-independent (LDA loads the accumulator on NMOS and CMOS alike);
+/// `RMB`/`SMB`/`BBR`/`BBS` resolve by prefix.
+pub fn describe(mnemonic: &str) -> Option<&'static str> {
+    let m = mnemonic.to_ascii_uppercase();
+    let key = if m.len() == 4 && m.as_bytes()[3].is_ascii_digit() {
+        &m[..3]
+    } else {
+        m.as_str()
+    };
+    Some(match key {
+        "LDA" => "load accumulator (N,Z)",
+        "LDX" => "load X (N,Z)",
+        "LDY" => "load Y (N,Z)",
+        "STA" => "store accumulator",
+        "STX" => "store X",
+        "STY" => "store Y",
+        "STZ" => "store zero (65C02)",
+        "TAX" => "transfer A→X (N,Z)",
+        "TAY" => "transfer A→Y (N,Z)",
+        "TXA" => "transfer X→A (N,Z)",
+        "TYA" => "transfer Y→A (N,Z)",
+        "TSX" => "transfer SP→X (N,Z)",
+        "TXS" => "transfer X→SP",
+        "PHA" => "push accumulator",
+        "PHP" => "push processor status",
+        "PLA" => "pull accumulator (N,Z)",
+        "PLP" => "pull processor status (all flags)",
+        "PHX" => "push X (65C02)",
+        "PHY" => "push Y (65C02)",
+        "PLX" => "pull X (65C02) (N,Z)",
+        "PLY" => "pull Y (65C02) (N,Z)",
+        "ADC" => "add with carry (N,V,Z,C)",
+        "SBC" => "subtract with carry (N,V,Z,C)",
+        "CMP" => "compare with accumulator (N,Z,C)",
+        "CPX" => "compare with X (N,Z,C)",
+        "CPY" => "compare with Y (N,Z,C)",
+        "INC" => "increment memory or A (N,Z)",
+        "DEC" => "decrement memory or A (N,Z)",
+        "INX" => "increment X (N,Z)",
+        "INY" => "increment Y (N,Z)",
+        "DEX" => "decrement X (N,Z)",
+        "DEY" => "decrement Y (N,Z)",
+        "AND" => "AND with accumulator (N,Z)",
+        "ORA" => "OR with accumulator (N,Z)",
+        "EOR" => "exclusive-OR with accumulator (N,Z)",
+        "BIT" => "test bits (N=b7, V=b6, Z)",
+        "TRB" => "test and reset bits (65C02) (Z)",
+        "TSB" => "test and set bits (65C02) (Z)",
+        "ASL" => "arithmetic shift left (N,Z,C)",
+        "LSR" => "logical shift right (N,Z,C)",
+        "ROL" => "rotate left through carry (N,Z,C)",
+        "ROR" => "rotate right through carry (N,Z,C)",
+        "JMP" => "jump",
+        "JSR" => "jump to subroutine",
+        "RTS" => "return from subroutine",
+        "RTI" => "return from interrupt",
+        "BRK" => "force break / software interrupt",
+        "BCC" => "branch if carry clear",
+        "BCS" => "branch if carry set",
+        "BEQ" => "branch if equal (Z=1)",
+        "BNE" => "branch if not equal (Z=0)",
+        "BMI" => "branch if minus (N=1)",
+        "BPL" => "branch if plus (N=0)",
+        "BVC" => "branch if overflow clear",
+        "BVS" => "branch if overflow set",
+        "BRA" => "branch always (65C02)",
+        "CLC" => "clear carry",
+        "SEC" => "set carry",
+        "CLI" => "clear interrupt disable",
+        "SEI" => "set interrupt disable",
+        "CLD" => "clear decimal mode",
+        "SED" => "set decimal mode",
+        "CLV" => "clear overflow",
+        "NOP" => "no operation",
+        "WAI" => "wait for interrupt (65C02)",
+        "STP" => "stop the processor (65C02)",
+        "RMB" => "reset memory bit (65C02)",
+        "SMB" => "set memory bit (65C02)",
+        "BBR" => "branch if bit reset (65C02)",
+        "BBS" => "branch if bit set (65C02)",
+        _ => return None,
+    })
 }
 
 /// The opcode float for the instruction on this line, or None when the
@@ -536,22 +638,22 @@ pub fn opcode_hover(line: &str, family: &Family) -> Option<Vec<String>> {
     let ops = ops_for(&mn)?;
     let mode = infer_mode(&mn, &operand);
     let mnu = mn.to_ascii_uppercase();
+    let title = match describe(&mnu) {
+        Some(desc) => format!("{mnu} — {desc}"),
+        None => mnu.clone(),
+    };
     let Some(entry) = find_op(ops, mode) else {
         let modes: Vec<&str> = ops.iter().map(|o| o.mode.label()).collect();
-        return Some(vec![
-            format!("{mnu} — operand didn't parse"),
-            format!("modes: {}", modes.join(" · ")),
-        ]);
+        return Some(vec![title, format!("modes: {}", modes.join(" · "))]);
     };
-    let mut out = Vec::new();
+    let mut out = vec![title];
     let nmos = matches!(family, Family::Nmos6502);
     if nmos && entry.cmos_only {
-        out.push(format!("{mnu} — 65C02 only"));
-        out.push("not available on NMOS 6502".into());
+        out.push("65C02 only — not available on NMOS 6502".into());
         return Some(out);
     }
     out.push(format!(
-        "{mnu} — {} · {} byte{}",
+        "{} · {} byte{}",
         entry.mode.label(),
         entry.mode.bytes(),
         if entry.mode.bytes() == 1 { "" } else { "s" }
@@ -701,29 +803,60 @@ mod tests {
 
     #[test]
     fn opcode_cycles_spot_checks() {
+        // line 0 = description, line 1 = encoding, line 2 = timing
         let h = opcode_hover("   lda ($3e),y", &fam()).unwrap();
-        assert!(h[0].contains("(zp),Y"), "{h:?}");
-        assert!(h[1].contains("5 cycles · +1 if page crossed"), "{h:?}");
+        assert!(h[0].contains("LDA — load accumulator"), "{h:?}");
+        assert!(h[1].contains("(zp),Y"), "{h:?}");
+        assert!(h[2].contains("5 cycles · +1 if page crossed"), "{h:?}");
 
         let h = opcode_hover("jmp ($fffc)", &fam()).unwrap();
-        assert!(h[1].contains("6 cycles (NMOS: 5)"), "{h:?}");
+        assert!(h[2].contains("6 cycles (NMOS: 5)"), "{h:?}");
 
         let h = opcode_hover("asl $1000,x", &Family::Nmos6502).unwrap();
-        assert!(h[1].starts_with("7 cycles"), "{h:?}");
+        assert!(h[2].starts_with("7 cycles"), "{h:?}");
         let h = opcode_hover("asl $1000,x", &fam()).unwrap();
-        assert!(h[1].contains("6 cycles · +1 if page crossed"), "{h:?}");
+        assert!(h[2].contains("6 cycles · +1 if page crossed"), "{h:?}");
 
         let h = opcode_hover("bne loop", &fam()).unwrap();
-        assert!(h[1].contains("2 cycles · +1 taken"), "{h:?}");
+        assert!(h[2].contains("2 cycles · +1 taken"), "{h:?}");
 
         let h = opcode_hover("stz $10", &Family::Nmos6502).unwrap();
         assert!(h[1].contains("not available"), "{h:?}");
 
         let h = opcode_hover("loop:  dex", &fam()).unwrap();
-        assert!(h[1].starts_with("2 cycles"), "{h:?}");
+        assert!(h[2].starts_with("2 cycles"), "{h:?}");
 
         assert!(opcode_hover("syscall SYSFN_PRINT", &fam()).is_none());
         assert!(opcode_hover(".section .text", &fam()).is_none());
+    }
+
+    #[test]
+    fn label_before_mnemonic_is_seen() {
+        // the reported bug: a bare (colon-less) label hid the instruction
+        for line in ["s2   ROL $34", "s2:  ROL $34", "loop    rol $34"] {
+            let h = opcode_hover(line, &fam()).unwrap();
+            assert!(h[0].contains("ROL — rotate left"), "{line}: {h:?}");
+            assert!(h[1].contains("zp"), "{line}: {h:?}"); // $34 is zero page
+            assert!(h[2].starts_with("5 cycles"), "{line}: {h:?}");
+        }
+        // an un-indented instruction with no label still resolves
+        let h = opcode_hover("lda #$10", &fam()).unwrap();
+        assert!(h[0].contains("LDA"), "{h:?}");
+        // a bare label alone is not an instruction
+        assert!(opcode_hover("forever", &fam()).is_none());
+        // a labelled macro stays unknown (label stripped, macro not in table)
+        assert!(opcode_hover("s2  syscall 3", &fam()).is_none());
+    }
+
+    #[test]
+    fn descriptions_cover_the_table() {
+        // every mnemonic the opcode table knows also has a description
+        for m in [
+            "LDA", "STZ", "PHX", "ADC", "BIT", "ROL", "JSR", "BRA", "CLV", "WAI", "RMB0", "BBS3",
+        ] {
+            assert!(describe(m).is_some(), "no description for {m}");
+        }
+        assert!(describe("SYSCALL").is_none());
     }
 
     #[test]
