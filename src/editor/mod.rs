@@ -1591,6 +1591,57 @@ impl Editor {
         }
     }
 
+    /// `K` — the one "tell me about this" verb: LSP hover where a server
+    /// exists, the machine lens (#45) everywhere else.
+    pub(crate) fn hover(&mut self) {
+        if self.current_rust_file().is_some() {
+            self.analyzer_hover();
+        } else {
+            self.lens_hover();
+        }
+    }
+
+    /// The asm dialect this buffer declares in its modeline, if any.
+    fn lens_family(&self) -> Option<crate::lens::Family> {
+        crate::lens::modeline(self.buffer.rope.lines().take(5).map(|l| l.to_string()))
+    }
+
+    /// The machine lens: a numeric literal under the cursor answers as a
+    /// number; otherwise, in a dialect-declared asm file, the line answers
+    /// as an instruction.
+    fn lens_hover(&mut self) {
+        let line = crate::core::text::line_content(&self.buffer.rope, self.cursor.line);
+        if let Some(word) = crate::lens::literal_at(&line, self.cursor.col)
+            && let Some(float) = crate::lens::number_hover(&word)
+        {
+            self.info_float = Some(float);
+            return;
+        }
+        if let Some(family) = self.lens_family()
+            && let Some(float) = crate::lens::opcode_hover(&line, &family)
+        {
+            self.info_float = Some(float);
+            return;
+        }
+        self.msg("K: nothing to tell about this");
+    }
+
+    /// Visual `K` in a 6502-family file: cycle sum over the selected lines.
+    pub(crate) fn lens_cycle_sum(&mut self) {
+        let Some(family) = self.lens_family() else {
+            return;
+        };
+        if matches!(family, crate::lens::Family::Other(_)) {
+            return;
+        }
+        let (a, b) = (self.visual_anchor.line, self.cursor.line);
+        let (from, to) = (a.min(b), a.max(b));
+        let lines: Vec<String> = (from..=to)
+            .map(|i| crate::core::text::line_content(&self.buffer.rope, i))
+            .collect();
+        self.info_float = Some(crate::lens::cycle_sum(&lines, &family));
+    }
+
     /// Leaves preview on this window, landing the cursor on the source
     /// line mapped from the given rendered line.
     fn preview_jump_to_source(&mut self, id: windows::WinId, view_line: usize, width: usize) {

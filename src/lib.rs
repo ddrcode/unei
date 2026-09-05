@@ -3,6 +3,7 @@ pub mod core;
 pub mod editor;
 pub mod format;
 pub mod launch;
+pub mod lens;
 pub mod lsp;
 pub mod preview;
 pub mod search;
