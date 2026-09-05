@@ -157,9 +157,81 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                     x.min(rect.x + rect.width - 1),
                     y.min(rect.y + rect.height.saturating_sub(2)),
                 ));
+                if let Some(menu) = &ed.completion {
+                    // anchor the popup under the first char of the prefix
+                    let back = ed.cursor.col.saturating_sub(menu.anchor_col) as u16;
+                    draw_completion_menu(f, menu, x.saturating_sub(back), y, *rect);
+                }
             }
         }
     }
+}
+
+/// The completion popup (#22): a compact, borderless list anchored at the
+/// cursor, below it or above when the window bottom is near.
+fn draw_completion_menu(
+    f: &mut Frame,
+    menu: &crate::editor::analyzer::CompletionMenu,
+    anchor_x: u16,
+    cursor_y: u16,
+    win: Rect,
+) {
+    use ratatui::widgets::Clear;
+    let rows: Vec<(&str, Option<&str>)> = menu.rows().collect();
+    if rows.is_empty() {
+        return;
+    }
+    let h = (rows.len().min(10) as u16).max(1);
+    let top = menu.selected.saturating_sub(h as usize - 1);
+    let label_w = rows.iter().map(|(l, _)| l.width()).max().unwrap_or(8);
+    let detail_w = rows
+        .iter()
+        .filter_map(|(_, d)| d.map(str::width))
+        .max()
+        .unwrap_or(0);
+    let w = ((label_w + detail_w + 3) as u16).clamp(14, win.width.max(14));
+    let below = cursor_y + 1;
+    let y = if below + h <= win.y + win.height {
+        below
+    } else {
+        cursor_y.saturating_sub(h)
+    };
+    let x = anchor_x.min((win.x + win.width).saturating_sub(w));
+    let rect = Rect::new(x, y, w, h);
+
+    let base = Style::default().bg(palette::FLOAT_BG).fg(palette::FG);
+    let lines: Vec<Line> = rows[top..top + h as usize]
+        .iter()
+        .enumerate()
+        .map(|(i, (label, detail))| {
+            let selected = top + i == menu.selected;
+            let bg = if selected {
+                palette::MODE_NORMAL
+            } else {
+                palette::FLOAT_BG
+            };
+            let fg = if selected {
+                palette::MODE_LABEL_FG
+            } else {
+                palette::FG
+            };
+            let mut label_style = Style::default().bg(bg).fg(fg);
+            if selected {
+                label_style = label_style.add_modifier(Modifier::BOLD);
+            }
+            let right = detail.map(|d| format!("{d} ")).unwrap_or_default();
+            let left = format!(" {label}");
+            let pad = (w as usize).saturating_sub(left.width() + right.width());
+            let dim = if selected { fg } else { palette::COMMENT };
+            Line::from(vec![
+                Span::styled(left, label_style),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                Span::styled(right, Style::default().bg(bg).fg(dim)),
+            ])
+        })
+        .collect();
+    f.render_widget(Clear, rect);
+    f.render_widget(Paragraph::new(lines).style(base), rect);
 }
 
 /// Hover / annotated-line float: centered, content-sized, scrollless MVP.

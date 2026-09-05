@@ -167,6 +167,25 @@ mirror to the system clipboard via OSC 52 write; paste from the system
 arrives through Kitty's bracketed paste (literal in insert, charwise put
 in normal, selection-replace in visual), never as interpreted keys.
 
+## 2026-09-05 — Completion: LSP-only, manual, no snippets (ticket #22)
+
+Iteration one is deliberately the smallest useful thing: Rust only,
+rust-analyzer only, **manual** trigger. `Ctrl+N`/`Ctrl+P` in insert mode
+request `textDocument/completion` through the same async client and
+`lsp_tick` pump as hover — the response opens a cursor-anchored popup a
+tick later; no auto-trigger-on-`.` (that debounce/round-trip-per-keystroke
+complexity is iteration two). The server's list is fetched once and
+filtered/ranked client-side as you keep typing (prefix hits before
+substring hits, then the server's sortText), so narrowing costs no new
+round-trip. Accept (`Enter`/`Tab`) replaces the typed prefix and folds
+into the open insert session's single undo. **No snippets** (the ticket's
+"hell no"): the client advertises `snippetSupport: false`, and any snippet
+insert that still arrives is reduced to plain text — accepting a method
+inserts its name, not a `${1:…}` placeholder dance. The `completion`
+capability must be advertised in `initialize` or rust-analyzer returns
+null. Local-word / ctags fallbacks and single-line AI completion stay
+future, per the ticket.
+
 ## 2026-09-05 — The machine lens: K is total, and the half-life rule
 
 Ticket #45. `K` means "tell me about the thing under the cursor" — one

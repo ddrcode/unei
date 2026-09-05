@@ -174,6 +174,10 @@ pub struct Editor {
     /// Hover / annotated-line float (any key dismisses).
     pub info_float: Option<Vec<String>>,
     pub actions_menu: Option<analyzer::ActionsMenu>,
+    /// Active completion popup (#22); lives only during an insert session.
+    pub completion: Option<analyzer::CompletionMenu>,
+    /// In-flight completion request context: (line, prefix-start char col).
+    completion_req: Option<(usize, usize)>,
     /// End-of-line diagnostic ghost text toggle (<leader>dh).
     pub ghost_text: bool,
     diag_views: std::collections::HashMap<std::path::PathBuf, analyzer::DiagView>,
@@ -284,6 +288,8 @@ impl Editor {
             lsp_dirty_since: None,
             info_float: None,
             actions_menu: None,
+            completion: None,
+            completion_req: None,
             ghost_text: true,
             diag_views: std::collections::HashMap::new(),
             jumplist: Vec::new(),

@@ -45,6 +45,23 @@ pub struct Action {
     pub raw: Value,
 }
 
+/// One completion candidate (ticket #22, iteration one).
+#[derive(Clone)]
+pub struct CompletionItem {
+    /// Display text in the popup.
+    pub label: String,
+    /// Plain text inserted on accept (snippet placeholders stripped).
+    pub insert_text: String,
+    /// Text matched against the typed prefix (label when absent).
+    pub filter_text: String,
+    /// Server-provided ranking key (label when absent).
+    pub sort_text: String,
+    /// Type / signature, shown dimmed beside the label.
+    pub detail: Option<String>,
+    /// LSP CompletionItemKind (2=method, 3=function, 5=field, …).
+    pub kind: Option<i64>,
+}
+
 /// Typed events handed to the editor each tick.
 pub enum Event {
     DiagnosticsUpdated(PathBuf),
@@ -52,6 +69,7 @@ pub enum Event {
     Definition(Option<Location>),
     Actions(Vec<Action>),
     ActionResolved(Box<Value>),
+    Completion(Vec<CompletionItem>),
     ExpandedMacro(Option<(String, String)>),
     /// The line-scope hover: (annotated line, signature label).
     InlayLine(Option<String>, Option<String>),
@@ -66,6 +84,7 @@ enum Pending {
     Hover,
     Definition,
     Actions,
+    Completion,
     ResolveAction,
     ExpandMacro,
     InlayLine { text: String },
@@ -153,7 +172,13 @@ impl Client {
                             "resolveSupport": { "properties": ["edit"] }
                         },
                         "inlayHint": {},
-                        "definition": {}
+                        "definition": {},
+                        "completion": {
+                            "completionItem": {
+                                "snippetSupport": false,
+                                "labelDetailsSupport": true
+                            }
+                        }
                     },
                     "window": { "workDoneProgress": true },
                     "workspace": { "applyEdit": true, "workspaceEdit": { "documentChanges": true } }
@@ -276,6 +301,18 @@ impl Client {
             Pending::Definition,
             "textDocument/definition",
             Self::doc_pos(path, line, col),
+        );
+    }
+
+    pub fn completion(&mut self, path: &Path, line: usize, col: usize) {
+        self.request(
+            Pending::Completion,
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri(path) },
+                "position": { "line": line, "character": col },
+                "context": { "triggerKind": 1 }
+            }),
         );
     }
 
@@ -461,6 +498,7 @@ impl Client {
                     .unwrap_or_default();
                 events.push(Event::Actions(actions));
             }
+            Pending::Completion => events.push(Event::Completion(parse_completion(&result))),
             Pending::ResolveAction => events.push(Event::ActionResolved(Box::new(result))),
             Pending::ExpandMacro => {
                 let expansion = result["expansion"].as_str().map(|e| {
@@ -517,6 +555,77 @@ fn parse_diagnostic(v: &Value) -> Option<Diagnostic> {
         severity,
         message: v["message"].as_str()?.to_string(),
     })
+}
+
+/// A CompletionList (`{items:[…]}`) or a bare item array → typed items.
+/// Snippet-format inserts are reduced to plain text (no snippets, #22).
+fn parse_completion(result: &Value) -> Vec<CompletionItem> {
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .or_else(|| result.as_array());
+    let Some(items) = items else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|v| {
+            let label = v["label"].as_str()?.to_string();
+            let is_snippet = v["insertTextFormat"].as_i64() == Some(2);
+            let raw_insert = v["insertText"]
+                .as_str()
+                .or_else(|| v["textEdit"]["newText"].as_str())
+                .unwrap_or(&label);
+            let insert_text = if is_snippet {
+                strip_snippet(raw_insert)
+            } else {
+                raw_insert.to_string()
+            };
+            Some(CompletionItem {
+                filter_text: v["filterText"].as_str().unwrap_or(&label).to_string(),
+                sort_text: v["sortText"].as_str().unwrap_or(&label).to_string(),
+                detail: v["detail"].as_str().map(str::to_string),
+                kind: v["kind"].as_i64(),
+                insert_text,
+                label,
+            })
+        })
+        .collect()
+}
+
+/// Removes LSP snippet placeholders — `$0`, `$1`, `${1:name}` — leaving the
+/// literal text around them (so `foo($0)` becomes `foo()`).
+fn strip_snippet(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // escaped char in a snippet: keep the next literal
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
+        } else if c == '$' {
+            match chars.peek() {
+                Some('{') => {
+                    // ${n:placeholder} — drop up to the matching brace
+                    for n in chars.by_ref() {
+                        if n == '}' {
+                            break;
+                        }
+                    }
+                }
+                Some(d) if d.is_ascii_digit() => {
+                    while chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+                        chars.next();
+                    }
+                }
+                _ => out.push('$'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn parse_hover(result: &Value) -> Option<String> {
@@ -604,6 +713,39 @@ fn splice_inlay_hints(text: &str, result: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_snippet_removes_placeholders() {
+        assert_eq!(strip_snippet("foo($0)"), "foo()");
+        assert_eq!(strip_snippet("push(${1:value})"), "push()");
+        assert_eq!(strip_snippet("plain"), "plain");
+        assert_eq!(strip_snippet("a${1}b$0c"), "abc");
+        assert_eq!(strip_snippet(r"cost \$5"), "cost $5");
+    }
+
+    #[test]
+    fn parse_completion_shapes() {
+        // CompletionList with items; snippet reduced to plain
+        let list = serde_json::json!({
+            "isIncomplete": false,
+            "items": [
+                { "label": "len", "detail": "usize", "kind": 5 },
+                { "label": "push", "insertText": "push($0)", "insertTextFormat": 2, "kind": 2 },
+                { "label": "map", "textEdit": { "newText": "map" }, "sortText": "0001" },
+            ]
+        });
+        let items = parse_completion(&list);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].label, "len");
+        assert_eq!(items[0].detail.as_deref(), Some("usize"));
+        assert_eq!(items[1].insert_text, "push()"); // snippet stripped
+        assert_eq!(items[2].insert_text, "map");
+        // a bare array is also accepted
+        let arr = serde_json::json!([{ "label": "x" }]);
+        assert_eq!(parse_completion(&arr).len(), 1);
+        // filter/sort default to the label
+        assert_eq!(items[0].filter_text, "len");
+    }
 
     #[test]
     fn splices_type_hints_only() {
