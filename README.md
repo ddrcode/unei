@@ -13,10 +13,10 @@ This project takes the other road. Thanks to AI-assisted development it became p
 ## Core ideas
 
 - **Zero configuration.** All behavior is compiled in. The `config/` module *is* the configuration — editing it requires rebuilding, and that's the point. ([docs/configuration.md](docs/configuration.md))
-- **One way of doing things.** One highlighting engine (tree-sitter), one formatter integration (treefmt), one file-opening mechanism (the picker), one search dialect (planned: Rust regex). No fallback chains.
+- **One way of doing things.** One highlighting engine (tree-sitter), one formatter integration (treefmt), one file-opening mechanism (the picker), one search dialect (Rust regex). No fallback chains.
 - **Kitty is the terminal.** The editor assumes [Kitty](https://sw.kovidgoyal.net/kitty/) and uses its extensions freely: the keyboard protocol (instant Esc, distinct Ctrl+I/Tab), curly underlines for diagnostics, true color everywhere.
 - **A personal keymap.** Navigation is IJKL, not HJKL, with `h` entering insert mode. This is not configurable — it's *the* layout. ([docs/keymap.md](docs/keymap.md))
-- **Vim philosophy, not vim compatibility.** Modal editing, operators × motions, counts, registers — with deliberate deviations where vim's defaults annoy (visual paste never clobbers the register; ghost diagnostics hide while typing).
+- **Vim philosophy, not vim compatibility.** It began as a vim-like editor for Rust and Markdown and kept growing. Modal editing, operators × motions, counts, registers — with deliberate deviations where vim's defaults annoy (visual paste never clobbers the register; ghost diagnostics hide while typing), and capabilities vim never had at all (live Markdown preview, per-instruction assembly intelligence).
 
 ## Features
 
@@ -25,10 +25,32 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - **Buffers**: `Ctrl+^` alternate, floating buffer list, vim-style numbering
 - **Splits**: vim/tmux hybrid — `Ctrl+w` chord, tmux-style resizing, zoom, layout flip; per-window statuslines
 - **Fuzzy file picker** (`Ctrl+P`): gitignore-aware listing, nucleo matching, open-in-split, create-file-with-parents
-- **Tree-sitter highlighting**: Rust, Markdown (with fenced-code injection), TOML, YAML, JSON, JS, HTML, Bash, Nix, Python, CSS — material oceanic theme
+- **Search**: incremental `/` `?`, `n`/`N`, `*`, hlsearch, `:s` substitution — one dialect, Rust regex, smartcase
+- **Tree-sitter highlighting**: Rust, Markdown (with fenced-code injection), TOML, YAML, JSON, JS, HTML, Bash, Nix, Python, CSS, and a bespoke **6502/ACME** assembler grammar — material oceanic theme
 - **rust-analyzer**: diagnostics with straight-red / **curly-yellow** underlines, end-of-line ghost text, hover (`K`), goto definition (`gd`), code actions, macro expansion, and a line-scope type annotator (`gK`) with no nvim equivalent
+- **Markdown preview** (`gp`): a live, side-by-side rendered view that follows the cursor as you edit — headings, tables, task lists, and syntax-highlighted code fences. Vim never came with this.
+- **Assembly intelligence vim never had**: on 6502/65C02, `K` shows an instruction's one-line description and the flags it sets, its opcode byte and addressing mode, and cycle counts *including the NMOS-vs-CMOS differences* — plus a cycle **sum** over a visual selection, and a number-base lens (hex / dec / bin / byte split) that works in any file
+- **Clipboard**: separate yank and cut registers; yanks mirror to the system clipboard (OSC 52); bracketed paste
 - **Format on save** via treefmt (project-level `treefmt.toml`; silence otherwise)
 - Jumplist (`Ctrl+O`/`Ctrl+I`), dimmed inactive panels, full-width cursorline, scrolloff 15
+
+## Make it yours
+
+unei is not built to be configured. It is built to be **forked and re-told**.
+
+That is the whole thesis, not a slogan. A traditional editor ships a binary plus a configuration language to bend it toward you — a plugin API, config files, an approximation with friction. unei has none of that, on purpose: its configuration language is the one that produced it — *a conversation with Claude, over the source itself*. For its author that meant hardcoding every preference. For you it means forking the repo and describing, in plain language, the editor **you** want.
+
+The preference surface is small and data-shaped by design. Point a Claude session at your fork and ask:
+
+- **Other keys?** The bindings are data tables in [`src/config/keymap.rs`](src/config/keymap.rs) — IJKL lives there precisely so a variant is a table edit. *"Navigate with WASD; put insert on E."*
+- **Other colors?** [`src/config/palette.rs`](src/config/palette.rs) and [`src/config/theme.rs`](src/config/theme.rs). *"Make it Gruvbox."*
+- **Other languages?** The grammar registry is [`src/config/languages.rs`](src/config/languages.rs), one entry each. *"Add Go, drop the ones I don't use."*
+- **Fewer features?** Most are self-contained modules — `lens.rs` (the assembly & number lens), `preview.rs` (markdown preview), the rust-analyzer client under `lsp/`. *"Remove the assembly support entirely."*
+- **Not on Kitty?** That one is load-bearing — but ask, and find out what it costs.
+
+Tell your session to read [docs/decisions.md](docs/decisions.md) first. It records *why* each choice was made — IJKL over HJKL, tree-sitter as the only colorizer, snapshot undo — so the re-tailoring goes with the grain instead of fighting design it can't see the reason for.
+
+What you get is not *your config for unei*; it is *your editor*, which merely started as unei. That is the experiment: when producing software is this cheap, a personal fork replaces the config file. Configuration, in the old sense, is dead — which may deserve a blog post of its own.
 
 ## Running
 
@@ -44,7 +66,7 @@ Best experienced in Kitty. Under tmux, italics and instant-Esc depend on your tm
 
 ## Status
 
-Personal daily driver for Rust and Markdown. Development happens ticket-by-ticket in this repo's issues; the roadmap *is* the issue list. It may never serve anyone else's preferences — that is a feature.
+Personal daily driver for Rust, Markdown, and 6502 assembly. Development is ticket-by-ticket in this repo's issues; the roadmap *is* the issue list.
 
 ## The name
 
