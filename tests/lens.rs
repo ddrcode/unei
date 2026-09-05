@@ -59,7 +59,10 @@ fn opcode_lens_requires_modeline() {
     feed(&mut ed, "K");
     let float = float_text(&ed);
     assert!(float.contains("LDA — load accumulator (N,Z)"), "{float}");
-    assert!(float.contains("(zp),Y · 2 bytes"), "{float}");
+    assert!(
+        float.contains("$B1 · (zp),Y · 2 bytes"),
+        "opcode byte: {float}"
+    );
     assert!(float.contains("5 cycles · +1 if page crossed"), "{float}");
 }
 

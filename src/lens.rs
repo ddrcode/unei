@@ -504,6 +504,166 @@ fn find_op(ops: &'static [Op], mode: Mode) -> Option<&'static Op> {
     })
 }
 
+/// The machine-code byte for a (mnemonic, mode) pair — the same on NMOS
+/// and CMOS for shared instructions; the 65C02 additions have their own.
+/// None for a pair the chip doesn't encode. The mnemonic + mode already
+/// determine it, so this is a pure lookup, not new knowledge.
+pub fn opcode_byte(mnemonic: &str, mode: Mode) -> Option<u8> {
+    let m = mnemonic.to_ascii_uppercase();
+    // RMB0-7 / SMB0-7 / BBR0-7 / BBS0-7: a base plus bit×$10
+    if m.len() == 4 && m.as_bytes()[3].is_ascii_digit() {
+        let bit = m.as_bytes()[3] - b'0';
+        let base = match &m[..3] {
+            "RMB" => 0x07u8,
+            "SMB" => 0x87,
+            "BBR" => 0x0F,
+            "BBS" => 0x8F,
+            _ => return None,
+        };
+        return Some(base + bit * 0x10);
+    }
+    // ALU / load-store-compare group (cc=01): aaa<<5 | bbb<<2 | 1,
+    // and the 65C02 (zp) form at aaa<<5 | $12.
+    let alu = |aaa: u8| -> Option<u8> {
+        let bbb: u8 = match mode {
+            IndX => 0,
+            Zp => 1,
+            Imm => 2,
+            Abs => 3,
+            IndY => 4,
+            ZpX => 5,
+            AbsY => 6,
+            AbsX => 7,
+            ZpInd => return Some((aaa << 5) | 0x12),
+            _ => return None,
+        };
+        Some((aaa << 5) | (bbb << 2) | 0x01)
+    };
+    match m.as_str() {
+        "ORA" => return alu(0),
+        "AND" => return alu(1),
+        "EOR" => return alu(2),
+        "ADC" => return alu(3),
+        "STA" => return alu(4),
+        "LDA" => return alu(5),
+        "CMP" => return alu(6),
+        "SBC" => return alu(7),
+        _ => {}
+    }
+    Some(match (m.as_str(), mode) {
+        ("LDX", Imm) => 0xA2,
+        ("LDX", Zp) => 0xA6,
+        ("LDX", ZpY) => 0xB6,
+        ("LDX", Abs) => 0xAE,
+        ("LDX", AbsY) => 0xBE,
+        ("LDY", Imm) => 0xA0,
+        ("LDY", Zp) => 0xA4,
+        ("LDY", ZpX) => 0xB4,
+        ("LDY", Abs) => 0xAC,
+        ("LDY", AbsX) => 0xBC,
+        ("STX", Zp) => 0x86,
+        ("STX", ZpY) => 0x96,
+        ("STX", Abs) => 0x8E,
+        ("STY", Zp) => 0x84,
+        ("STY", ZpX) => 0x94,
+        ("STY", Abs) => 0x8C,
+        ("STZ", Zp) => 0x64,
+        ("STZ", ZpX) => 0x74,
+        ("STZ", Abs) => 0x9C,
+        ("STZ", AbsX) => 0x9E,
+        ("CPX", Imm) => 0xE0,
+        ("CPX", Zp) => 0xE4,
+        ("CPX", Abs) => 0xEC,
+        ("CPY", Imm) => 0xC0,
+        ("CPY", Zp) => 0xC4,
+        ("CPY", Abs) => 0xCC,
+        ("BIT", Zp) => 0x24,
+        ("BIT", Abs) => 0x2C,
+        ("BIT", Imm) => 0x89,
+        ("BIT", ZpX) => 0x34,
+        ("BIT", AbsX) => 0x3C,
+        ("TRB", Zp) => 0x14,
+        ("TRB", Abs) => 0x1C,
+        ("TSB", Zp) => 0x04,
+        ("TSB", Abs) => 0x0C,
+        ("INC", Acc) => 0x1A,
+        ("INC", Zp) => 0xE6,
+        ("INC", ZpX) => 0xF6,
+        ("INC", Abs) => 0xEE,
+        ("INC", AbsX) => 0xFE,
+        ("DEC", Acc) => 0x3A,
+        ("DEC", Zp) => 0xC6,
+        ("DEC", ZpX) => 0xD6,
+        ("DEC", Abs) => 0xCE,
+        ("DEC", AbsX) => 0xDE,
+        ("INX", _) => 0xE8,
+        ("INY", _) => 0xC8,
+        ("DEX", _) => 0xCA,
+        ("DEY", _) => 0x88,
+        ("ASL", Acc) => 0x0A,
+        ("ASL", Zp) => 0x06,
+        ("ASL", ZpX) => 0x16,
+        ("ASL", Abs) => 0x0E,
+        ("ASL", AbsX) => 0x1E,
+        ("LSR", Acc) => 0x4A,
+        ("LSR", Zp) => 0x46,
+        ("LSR", ZpX) => 0x56,
+        ("LSR", Abs) => 0x4E,
+        ("LSR", AbsX) => 0x5E,
+        ("ROL", Acc) => 0x2A,
+        ("ROL", Zp) => 0x26,
+        ("ROL", ZpX) => 0x36,
+        ("ROL", Abs) => 0x2E,
+        ("ROL", AbsX) => 0x3E,
+        ("ROR", Acc) => 0x6A,
+        ("ROR", Zp) => 0x66,
+        ("ROR", ZpX) => 0x76,
+        ("ROR", Abs) => 0x6E,
+        ("ROR", AbsX) => 0x7E,
+        ("JMP", Abs) => 0x4C,
+        ("JMP", Ind) => 0x6C,
+        ("JMP", IndAbsX) => 0x7C,
+        ("JSR", Abs) => 0x20,
+        ("RTS", _) => 0x60,
+        ("RTI", _) => 0x40,
+        ("BRK", _) => 0x00,
+        ("BPL", _) => 0x10,
+        ("BMI", _) => 0x30,
+        ("BVC", _) => 0x50,
+        ("BVS", _) => 0x70,
+        ("BCC", _) => 0x90,
+        ("BCS", _) => 0xB0,
+        ("BNE", _) => 0xD0,
+        ("BEQ", _) => 0xF0,
+        ("BRA", _) => 0x80,
+        ("CLC", _) => 0x18,
+        ("SEC", _) => 0x38,
+        ("CLI", _) => 0x58,
+        ("SEI", _) => 0x78,
+        ("CLV", _) => 0xB8,
+        ("CLD", _) => 0xD8,
+        ("SED", _) => 0xF8,
+        ("TAX", _) => 0xAA,
+        ("TXA", _) => 0x8A,
+        ("TAY", _) => 0xA8,
+        ("TYA", _) => 0x98,
+        ("TSX", _) => 0xBA,
+        ("TXS", _) => 0x9A,
+        ("PHA", _) => 0x48,
+        ("PLA", _) => 0x68,
+        ("PHP", _) => 0x08,
+        ("PLP", _) => 0x28,
+        ("PHX", _) => 0xDA,
+        ("PLX", _) => 0xFA,
+        ("PHY", _) => 0x5A,
+        ("PLY", _) => 0x7A,
+        ("NOP", _) => 0xEA,
+        ("WAI", _) => 0xCB,
+        ("STP", _) => 0xDB,
+        _ => return None,
+    })
+}
+
 /// Splits an assembly line into (mnemonic, operand), skipping a leading
 /// label, and stripping a `;` comment. Returns None for blank, directive,
 /// or label-only lines.
@@ -652,8 +812,12 @@ pub fn opcode_hover(line: &str, family: &Family) -> Option<Vec<String>> {
         out.push("65C02 only — not available on NMOS 6502".into());
         return Some(out);
     }
+    let byte = match opcode_byte(&mnu, entry.mode) {
+        Some(b) => format!("${b:02X} · "),
+        None => String::new(),
+    };
     out.push(format!(
-        "{} · {} byte{}",
+        "{byte}{} · {} byte{}",
         entry.mode.label(),
         entry.mode.bytes(),
         if entry.mode.bytes() == 1 { "" } else { "s" }
@@ -846,6 +1010,57 @@ mod tests {
         assert!(opcode_hover("forever", &fam()).is_none());
         // a labelled macro stays unknown (label stripped, macro not in table)
         assert!(opcode_hover("s2  syscall 3", &fam()).is_none());
+    }
+
+    const ALL_MNEMONICS: &[&str] = &[
+        "LDA", "LDX", "LDY", "STA", "STX", "STY", "STZ", "AND", "ORA", "EOR", "ADC", "SBC", "CMP",
+        "CPX", "CPY", "BIT", "TRB", "TSB", "INC", "DEC", "INX", "INY", "DEX", "DEY", "ASL", "LSR",
+        "ROL", "ROR", "JMP", "JSR", "RTS", "RTI", "BRK", "BCC", "BCS", "BEQ", "BNE", "BMI", "BPL",
+        "BVC", "BVS", "BRA", "CLC", "SEC", "CLI", "SEI", "CLD", "SED", "CLV", "TAX", "TAY", "TXA",
+        "TYA", "TSX", "TXS", "PHA", "PHP", "PLA", "PLP", "PHX", "PHY", "PLX", "PLY", "NOP", "WAI",
+        "STP",
+    ];
+
+    #[test]
+    fn opcode_bytes_spot_checks() {
+        assert_eq!(opcode_byte("LDA", Imm), Some(0xA9));
+        assert_eq!(opcode_byte("LDA", IndY), Some(0xB1));
+        assert_eq!(opcode_byte("LDA", ZpInd), Some(0xB2)); // 65C02 (zp)
+        assert_eq!(opcode_byte("STA", Abs), Some(0x8D));
+        assert_eq!(opcode_byte("JMP", Ind), Some(0x6C));
+        assert_eq!(opcode_byte("JSR", Abs), Some(0x20));
+        assert_eq!(opcode_byte("BNE", Rel), Some(0xD0));
+        assert_eq!(opcode_byte("ROL", Zp), Some(0x26));
+        assert_eq!(opcode_byte("INX", Imp), Some(0xE8));
+        assert_eq!(opcode_byte("BRK", Imp), Some(0x00));
+        assert_eq!(opcode_byte("STZ", Abs), Some(0x9C));
+        assert_eq!(opcode_byte("RMB3", Zp), Some(0x37));
+        assert_eq!(opcode_byte("BBS3", ZpRel), Some(0xBF));
+    }
+
+    #[test]
+    fn opcode_bytes_unique_and_cover_the_cycle_table() {
+        // every (mnemonic, mode) the cycle table lists must encode to a
+        // byte, and no two pairs may share one — a transcription tripwire
+        let mut seen: std::collections::HashMap<u8, String> = std::collections::HashMap::new();
+        let mut check = |mn: &str| {
+            for o in ops_for(mn).unwrap_or_else(|| panic!("no ops: {mn}")) {
+                let b =
+                    opcode_byte(mn, o.mode).unwrap_or_else(|| panic!("no byte: {mn} {:?}", o.mode));
+                if let Some(prev) = seen.insert(b, format!("{mn} {:?}", o.mode)) {
+                    panic!("byte ${b:02X}: {prev} vs {mn} {:?}", o.mode);
+                }
+            }
+        };
+        for mn in ALL_MNEMONICS {
+            check(mn);
+        }
+        for base in ["RMB", "SMB", "BBR", "BBS"] {
+            for d in 0..8 {
+                check(&format!("{base}{d}"));
+            }
+        }
+        assert!(seen.len() > 140, "only {} opcodes mapped", seen.len());
     }
 
     #[test]
