@@ -23,6 +23,9 @@ use windows::{MIN_WIN_HEIGHT, MIN_WIN_WIDTH, Node, SplitDir, WinId, WinState};
 pub enum Mode {
     Normal,
     Insert,
+    /// `R` — overtype: typed characters replace the ones under the cursor
+    /// so the line keeps its length (tab-aligned trailing comments stay put).
+    Replace,
     Command,
     Visual(crate::core::commands::VisualKind),
 }
@@ -192,6 +195,10 @@ pub struct Editor {
     /// Per-buffer marks (#14): (buffer, letter) → position. The `` ` ``
     /// letter holds the pre-jump position for the `` `` `` / `''` toggle.
     marks: std::collections::HashMap<(BufId, char), Cursor>,
+    /// Replace-mode overtype history: per typed char, the original it
+    /// covered (`Some`) or nothing when appending past line end (`None`),
+    /// so Backspace can restore it.
+    pub(crate) replace_stack: Vec<Option<char>>,
     /// End-of-line diagnostic ghost text toggle (<leader>dh).
     pub ghost_text: bool,
     diag_views: std::collections::HashMap<std::path::PathBuf, analyzer::DiagView>,
@@ -305,6 +312,7 @@ impl Editor {
             completion: None,
             completion_req: None,
             marks: std::collections::HashMap::new(),
+            replace_stack: Vec::new(),
             ghost_text: true,
             diag_views: std::collections::HashMap::new(),
             jumplist: Vec::new(),
@@ -1107,7 +1115,7 @@ impl Editor {
         let version_before = self.buffer.version();
         match self.mode {
             Mode::Normal | Mode::Visual(_) => normal::handle_key(self, key),
-            Mode::Insert => insert::handle_key(self, key),
+            Mode::Insert | Mode::Replace => insert::handle_key(self, key),
             Mode::Command => cmdline::handle_key(self, key),
         }
         if self.buffer.version() != version_before {
@@ -1202,7 +1210,7 @@ impl Editor {
             self.cursor.line = last;
         }
         let limit = match self.mode {
-            Mode::Insert => line_len(&self.buffer.rope, self.cursor.line),
+            Mode::Insert | Mode::Replace => line_len(&self.buffer.rope, self.cursor.line),
             _ => max_normal_col(&self.buffer.rope, self.cursor.line, OPTIONS.tabstop),
         };
         if self.cursor.col > limit {
@@ -1914,7 +1922,7 @@ impl Editor {
         }
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         match self.mode {
-            Mode::Insert => insert::insert_text(self, &normalized),
+            Mode::Insert | Mode::Replace => insert::insert_text(self, &normalized),
             Mode::Visual(_) => {
                 normal::visual_paste_with(self, Register::Char(normalized));
                 self.lsp_note_edit();

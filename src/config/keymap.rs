@@ -98,6 +98,7 @@ pub fn normal_token(key: Key) -> Option<Token> {
         Key::Char('x') => Token::Simple(SimpleCmd::DeleteRight),
         Key::Char('X') => Token::Simple(SimpleCmd::DeleteLeft),
         Key::Char('r') => Token::ReplaceStart,
+        Key::Char('R') => Token::ReplaceMode,
         Key::Char('m') => Token::SetMark,
         Key::Char('`') => Token::JumpMark { exact: true },
         Key::Char('\'') => Token::JumpMark { exact: false },

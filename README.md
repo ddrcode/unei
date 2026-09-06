@@ -75,6 +75,7 @@ The same four keys, a different keyboard. Navigation here is **IJKL** — `i` up
 ## Docs
 
 - [docs/keymap.md](docs/keymap.md) — every binding, and why IJKL
+- [docs/vim-compatibility.md](docs/vim-compatibility.md) — what's ported, what's different, what's skipped
 - [docs/configuration.md](docs/configuration.md) — the config-as-code tour
 - [docs/architecture.md](docs/architecture.md) — how it's built
 - [docs/decisions.md](docs/decisions.md) — the decision log

@@ -987,6 +987,7 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
             Mode::Normal if ed.pending.is_idle() => (" NORMAL ", palette::MODE_NORMAL),
             Mode::Normal => (" NORMAL ", palette::MODE_PENDING),
             Mode::Insert => (" INSERT ", palette::MODE_INSERT),
+            Mode::Replace => (" REPLACE ", palette::MODE_INSERT),
             Mode::Command => (" COMMAND ", palette::MODE_COMMAND),
             Mode::Visual(VisualKind::Char) => (" VISUAL ", palette::MODE_COMMAND),
             Mode::Visual(VisualKind::Line) => (" V-LINE ", palette::MODE_COMMAND),

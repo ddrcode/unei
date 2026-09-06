@@ -60,6 +60,7 @@ fn run(
         if last_mode != Some(mode) {
             let style = match mode {
                 Mode::Insert => SetCursorStyle::SteadyBar,
+                Mode::Replace => SetCursorStyle::SteadyUnderScore,
                 _ => SetCursorStyle::SteadyBlock,
             };
             execute!(io::stdout(), style)?;

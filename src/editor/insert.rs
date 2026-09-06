@@ -34,7 +34,8 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
     }
     match key {
         Key::Esc | Key::Ctrl('c') | Key::Ctrl('[') => leave_insert(ed),
-        Key::Ctrl('n') | Key::Ctrl('p') => ed.request_completion(),
+        Key::Ctrl('n') | Key::Ctrl('p') if ed.mode == Mode::Insert => ed.request_completion(),
+        Key::Char(c) if ed.mode == Mode::Replace => replace_char(ed, c),
         Key::Char(c) => insert_text(ed, &c.to_string()),
         Key::Enter => {
             let indent = line_indent(&ed.buffer.rope, ed.cursor.line);
@@ -53,6 +54,7 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 insert_text(ed, "\t");
             }
         }
+        Key::Backspace if ed.mode == Mode::Replace => replace_backspace(ed),
         Key::Backspace => backspace(ed),
         Key::Delete => delete_forward(ed),
         Key::Ctrl('w') => delete_word_back(ed),
@@ -134,6 +136,42 @@ pub(crate) fn insert_text(ed: &mut Editor, text: &str) {
         ed.cursor = Cursor::new(ed.cursor.line + text.matches('\n').count(), after_nl);
     } else {
         ed.cursor.col += chars;
+    }
+    ed.goal = None;
+}
+
+/// Replace mode: overtype the character under the cursor (append past the
+/// line end), remembering what was covered so Backspace can restore it.
+fn replace_char(ed: &mut Editor, c: char) {
+    let len = line_len(&ed.buffer.rope, ed.cursor.line);
+    if ed.cursor.col < len {
+        let at = ed.buffer.rope.line_to_char(ed.cursor.line) + ed.cursor.col;
+        let original = ed.buffer.rope.char(at);
+        ed.replace_stack.push(Some(original));
+        ed.buffer.remove(at..at + 1);
+        ed.buffer.insert(at, &c.to_string());
+        ed.cursor.col += 1;
+        ed.goal = None;
+    } else {
+        ed.replace_stack.push(None);
+        insert_text(ed, &c.to_string());
+    }
+}
+
+/// Replace-mode Backspace: step left and undo the overtype — restore the
+/// covered character, or delete an appended one.
+fn replace_backspace(ed: &mut Editor) {
+    match ed.replace_stack.pop() {
+        Some(entry) if ed.cursor.col > 0 => {
+            ed.cursor.col -= 1;
+            let at = ed.buffer.rope.line_to_char(ed.cursor.line) + ed.cursor.col;
+            ed.buffer.remove(at..at + 1);
+            if let Some(original) = entry {
+                ed.buffer.insert(at, &original.to_string());
+            }
+        }
+        _ if ed.cursor.col > 0 => ed.cursor.col -= 1,
+        _ => {}
     }
     ed.goal = None;
 }
