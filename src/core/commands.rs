@@ -91,6 +91,10 @@ pub enum SimpleCmd {
     SubstChar,
     /// `S`
     SubstLine,
+    /// `Ctrl+A` — increment the number under (or after) the cursor.
+    Increment,
+    /// `Ctrl+X` — decrement it.
+    Decrement,
 }
 
 /// What a key means in normal mode, before pending state is applied.

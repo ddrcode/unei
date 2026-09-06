@@ -26,9 +26,11 @@ line, and operator-pending — all present and behave as in vim.
 `f F t T` with `;` `,`; and `%` between matching `()[]{}`.
 
 **Operators & edits.** `d c y` over motions, text objects, and counts
-(`2d3w`); `D C Y`; `x X`; `r`; `s S`; `~`; `J` (join); `>>` `<<` and `>`/`<`
-over motions/selections; `u` / `Ctrl+R` undo & redo (an insert session is one
-unit); and `.` dot-repeat.
+(`2d3w`); `D C Y`; `x X`; `r`; `s S`; `~`; `J` / `gJ` (join, with / without a
+space); `Ctrl+A` / `Ctrl+X` (increment / decrement the number under the
+cursor — decimal, `0x`/`$` hex, `0b`/`%` binary, preserving width and case);
+`>>` `<<` and `>`/`<` over motions/selections; `u` / `Ctrl+R` undo & redo (an
+insert session is one unit); and `.` dot-repeat.
 
 **Text objects.** The full around/inner families — word, WORD, paragraph,
 the bracket pairs, and quotes — on `d`/`c`/`y` and in visual mode. (The prefix
@@ -107,8 +109,13 @@ reformatting, and runtime `:map` remapping (the keymap is compiled data — you
 change it by editing `config/keymap.rs` and rebuilding, or by forking and
 asking Claude to).
 
+Two small motions are skipped as low-value for this workflow rather than on
+principle: **`ge`/`gE`** (back to the previous word end) and **count-prefixed
+insert** (`3ihello` → `hellohellohello`, `3o…`). Trivial to add if daily use
+ever misses them.
+
 ## Not yet — on the roadmap, not excluded
 
 These simply aren't built yet (see the issue tracker): soft wrap, a Colemak
-keymap variant, auto-triggered completion, a picker preview pane, and a few
-small parity items (`gJ`, `Ctrl+A`/`Ctrl+X`, `ge`/`gE`).
+keymap variant, auto-triggered completion, and `Ctrl+E`/`Ctrl+Y` (scroll a
+line without moving the cursor).

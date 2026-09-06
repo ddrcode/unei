@@ -2,6 +2,7 @@ pub mod buffer;
 pub mod commands;
 pub mod hex;
 pub mod motion;
+pub mod numedit;
 pub mod text;
 pub mod textobject;
 

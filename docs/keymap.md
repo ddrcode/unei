@@ -42,7 +42,8 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `r`+char | replace char(s) |
 | `s` `S` | substitute char / line |
 | `~` | toggle case |
-| `J` | join lines |
+| `J` / `gJ` | join lines (with / without a space at the seam) |
+| `Ctrl+A` / `Ctrl+X` | increment / decrement the number under (or after) the cursor — decimal, `0x`/`$` hex, `0b`/`%` binary; keeps width and case, counts multiply (`5 Ctrl+A`) |
 | `>>` `<<`, `>`/`<` + motion | shift lines right / left by a shiftwidth (`3>>`, `>%`, `>G`); one undo step, dot-repeatable |
 | `p` `P` | paste the **yank** register after / before (char, line, or block) |
 | `Space p` / `Space P` | paste the **cut** register after / before (the `dd`+`p` line-move lives here) |
