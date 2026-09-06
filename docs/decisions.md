@@ -3,6 +3,26 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-06 — External changes: never overwrite, reload when safe (ticket #80)
+
+A bug, not a feature gap: the editor wrote over files that an agent or
+treefmt had changed underneath it, silently. The fix records each file's
+**disk stamp** — (mtime, size) — when read or written (size rides along so a
+rewrite inside one mtime tick still registers), and treats a moved stamp as
+"someone else touched this". Two consequences. **`:w` refuses** on a moved
+stamp (`:w!` / `:wq!` / `:x!` overwrite) — a hard stop rather than vim's
+y/n prompt, because the editor has one message line and two commands read
+better than a modal question. And a **one-second poll** on the current buffer
+(the main loop already ticks for the LSP) applies vim's `autoread` logic:
+a *clean* buffer reloads itself as one undoable change — an agent's edit just
+appears, `u` brings the old text back — while a *dirty* buffer is flagged
+`[!]`, warned once, and never touched; `:e` reloads (refusing over unsaved
+edits), `:e!` discards and reloads. Our own writes and the treefmt round-trip
+re-stamp through `mark_saved`, so they never read as external. Only the
+current buffer is polled — a parked buffer is checked the moment it's shown.
+Deletion on disk is deliberately not an alarm: the next `:w` simply recreates
+the file. `:e {path}` stays absent — the picker is the one way to open.
+
 ## 2026-09-06 — Live grep: in-process, the picker's third source (ticket #72)
 
 Project-wide grep (`Space g`) runs **in-process** — the `ignore` walker (the

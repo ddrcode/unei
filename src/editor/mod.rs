@@ -177,6 +177,8 @@ pub struct Editor {
     pub top_line: usize,
     pub left_cell: usize,
     pub should_quit: bool,
+    /// When the external-change poll last ran (#80); `None` = never.
+    last_disk_check: Option<std::time::Instant>,
     pub view: View,
     pub buffer_list: Option<BufferList>,
     pub file_picker: Option<file_picker::FilePicker>,
@@ -297,6 +299,7 @@ impl Editor {
             top_line: 0,
             left_cell: 0,
             should_quit: false,
+            last_disk_check: None,
             view: View {
                 width: 80,
                 height: 22,
@@ -510,7 +513,9 @@ impl Editor {
         };
         self.buffer.path = Some(abs);
         self.syntax.invalidate(self.current); // extension may have changed
-        self.save();
+        // a fresh binding: the old file's disk stamp no longer applies
+        self.buffer.forget_disk_stamp();
+        self.save(false);
     }
 
     pub(crate) fn record_jump(&mut self) {
@@ -1360,8 +1365,9 @@ impl Editor {
         }
     }
 
-    pub(crate) fn save(&mut self) -> bool {
-        let (path, lines) = match self.buffer.save() {
+    /// `:w` (`force` = `:w!`, which overwrites a file that changed on disk).
+    pub(crate) fn save(&mut self, force: bool) -> bool {
+        let (path, lines) = match self.buffer.save(force) {
             Ok(ok) => ok,
             Err(e) => {
                 self.err(format!("E212: {e:#}"));
@@ -1408,8 +1414,68 @@ impl Editor {
         self.scroll_to_cursor();
     }
 
-    pub(crate) fn save_and_quit(&mut self, only_if_modified: bool) {
-        if (!only_if_modified || self.buffer.is_modified()) && !self.save() {
+    /// Reloads the current buffer from disk as one undoable change (`:e`;
+    /// `force` = `:e!`, which discards unsaved edits). Clears any
+    /// changed-on-disk conflict.
+    pub(crate) fn reload_from_disk(&mut self, force: bool) {
+        if self.buffer.path.is_none() {
+            self.err("E32: No file name");
+            return;
+        }
+        if !force && self.buffer.is_modified() {
+            self.err("E37: unsaved changes — :e! discards them and reloads");
+            return;
+        }
+        match self.buffer.read_disk() {
+            Ok(text) => {
+                self.reload_current_buffer(&text);
+                self.msg("reloaded from disk");
+            }
+            Err(e) => self.err(format!("{e:#}")),
+        }
+    }
+
+    /// The external-change poll (#80), throttled to about once a second:
+    /// when the current file changed on disk, a clean buffer reloads itself
+    /// (an agent's or formatter's edit simply appears), a dirty one is
+    /// flagged and warned — never silently overwritten. Returns whether a
+    /// redraw is needed.
+    pub fn disk_tick(&mut self) -> bool {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+        if self.last_disk_check.is_some_and(|t| t.elapsed() < EVERY) {
+            return false;
+        }
+        self.last_disk_check = Some(std::time::Instant::now());
+        self.check_disk()
+    }
+
+    /// The unthrottled body of [`disk_tick`].
+    pub fn check_disk(&mut self) -> bool {
+        if !self.buffer.disk_changed() {
+            return false;
+        }
+        if !self.buffer.is_modified() && self.mode == Mode::Normal {
+            match self.buffer.read_disk() {
+                Ok(text) => {
+                    self.reload_current_buffer(&text);
+                    self.msg("reloaded: file changed on disk");
+                }
+                Err(e) => self.err(format!("{e:#}")),
+            }
+            return true;
+        }
+        if !self.buffer.disk_conflict {
+            self.buffer.disk_conflict = true;
+            self.err(
+                "WARNING: file changed on disk — :e! reloads (drops your edits), :w! overwrites",
+            );
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn save_and_quit(&mut self, only_if_modified: bool, force: bool) {
+        if (!only_if_modified || self.buffer.is_modified()) && !self.save(force) {
             return;
         }
         if self.window_count() > 1 {

@@ -18,6 +18,8 @@ struct WinView<'a> {
     name: String,
     modified: bool,
     read_only: bool,
+    /// The file changed on disk while this buffer holds edits (#80).
+    disk_conflict: bool,
     cursor_line: usize,
     cursor_col: usize,
     top_line: usize,
@@ -76,6 +78,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                 name: buffer_display_name(ed.buffer.path.as_deref()),
                 modified: ed.buffer.is_modified(),
                 read_only: ed.buffer.read_only,
+                disk_conflict: ed.buffer.disk_conflict,
                 cursor_line: ed.cursor.line,
                 cursor_col: ed.cursor.col,
                 top_line: ed.top_line,
@@ -94,6 +97,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                 name: buffer_display_name(buffer.path.as_deref()),
                 modified: buffer.is_modified(),
                 read_only: buffer.read_only,
+                disk_conflict: buffer.disk_conflict,
                 cursor_line: state.cursor.line.min(last),
                 cursor_col: state.cursor.col,
                 top_line: state.top_line.min(last),
@@ -1151,7 +1155,8 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         ""
     };
     let ro = if view.read_only { " [RO]" } else { "" };
-    let left = format!(" {}{modified}{ro}{zoom}", view.name);
+    let conflict = if view.disk_conflict { " [!]" } else { "" };
+    let left = format!(" {}{modified}{ro}{conflict}{zoom}", view.name);
     let name_fg = if view.focused {
         palette::STATUSLINE_FG
     } else {
