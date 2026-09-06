@@ -25,6 +25,7 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - **Buffers**: `Ctrl+^` alternate, floating buffer list, vim-style numbering
 - **Splits**: vim/tmux hybrid — `Ctrl+w` chord, tmux-style resizing, zoom, layout flip; per-window statuslines
 - **Fuzzy file picker** (`Ctrl+P`): gitignore-aware listing, nucleo matching, a syntax-highlighted preview of the selected file, open-in-split, create-file-with-parents
+- **Symbol picker** (`Space s`): fuzzy-jump to a function / struct / trait / … in the current file, via tree-sitter
 - **Search**: incremental `/` `?`, `n`/`N`, `*`, hlsearch, `:s` substitution — one dialect, Rust regex, smartcase
 - **Tree-sitter highlighting**: Rust, Markdown (with fenced-code injection), TOML, YAML, JSON, JS, HTML, Bash, Nix, Python, CSS, and a bespoke **6502/ACME** assembler grammar — material oceanic theme
 - **rust-analyzer**: diagnostics with straight-red / **curly-yellow** underlines, end-of-line ghost text, hover (`K`), goto definition (`gd`), code actions, macro expansion, and a line-scope type annotator (`gK`) with no nvim equivalent

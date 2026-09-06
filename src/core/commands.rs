@@ -154,6 +154,8 @@ pub enum LeaderCmd {
     RustPrefix,
     /// `<leader>d…` — diagnostics chord (`dh` = toggle ghost text).
     DiagPrefix,
+    /// `<leader>s` — symbol picker for the current buffer (#62).
+    Symbols,
 }
 
 /// Keys inside the buffer-list overlay.

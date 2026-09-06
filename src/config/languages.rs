@@ -37,8 +37,29 @@ struct LangSpec {
     /// the place for small local overrides without vendoring whole queries.
     highlights_extra: &'static str,
     injections: &'static str,
+    /// Definition query for the symbol picker (#62): each pattern captures a
+    /// definition's name node under a kind-named capture (`@fn`, `@struct`,
+    /// …). Empty when the grammar has no symbol support yet.
+    symbols: &'static str,
     cell: OnceLock<LangConfig>,
 }
+
+/// Conservative Rust definitions for the symbol picker — the 90% that is
+/// function/method/type navigation; esoteric constructs are intentionally
+/// omitted (#62).
+const RUST_SYMBOLS: &str = r#"
+(function_item name: (identifier) @fn)
+(struct_item name: (type_identifier) @struct)
+(union_item name: (type_identifier) @struct)
+(enum_item name: (type_identifier) @enum)
+(trait_item name: (type_identifier) @trait)
+(mod_item name: (identifier) @mod)
+(const_item name: (identifier) @const)
+(static_item name: (identifier) @static)
+(type_item name: (type_identifier) @type)
+(macro_definition name: (identifier) @macro)
+(impl_item type: (type_identifier) @impl)
+"#;
 
 /// A compiled language: grammar, queries, and the query-capture → theme
 /// mapping (longest dotted-prefix match against `theme::CAPTURES`).
@@ -46,6 +67,8 @@ pub struct LangConfig {
     pub language: Language,
     pub highlights: Query,
     pub injections: Option<Query>,
+    /// Compiled symbol-definition query (#62), if the grammar has one.
+    pub symbols: Option<Query>,
     /// Highlight-query capture index → theme capture index.
     pub theme_map: Vec<Option<u16>>,
     /// First pattern index belonging to `highlights_extra`. Bundled patterns
@@ -65,6 +88,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: include_str!("../../grammars/asm6502/queries/highlights.scm"),
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -76,6 +100,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_rust::HIGHLIGHTS_QUERY,
         injections: tree_sitter_rust::INJECTIONS_QUERY,
+        symbols: RUST_SYMBOLS,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -87,6 +112,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
         injections: tree_sitter_md::INJECTION_QUERY_BLOCK,
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -98,6 +124,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
         injections: tree_sitter_md::INJECTION_QUERY_INLINE,
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -111,6 +138,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "(pair (bare_key) @property) (pair (dotted_key (bare_key) @property))",
         highlights: tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -122,6 +150,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "(block_mapping_pair key: (flow_node (plain_scalar (string_scalar) @property))) (flow_pair key: (flow_node (plain_scalar (string_scalar) @property)))",
         highlights: tree_sitter_yaml::HIGHLIGHTS_QUERY,
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -133,6 +162,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_json::HIGHLIGHTS_QUERY,
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -144,6 +174,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_javascript::HIGHLIGHT_QUERY,
         injections: tree_sitter_javascript::INJECTIONS_QUERY,
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -155,6 +186,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_html::HIGHLIGHTS_QUERY,
         injections: tree_sitter_html::INJECTIONS_QUERY,
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -166,6 +198,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_bash::HIGHLIGHT_QUERY,
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -177,6 +210,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_nix::HIGHLIGHTS_QUERY,
         injections: tree_sitter_nix::INJECTIONS_QUERY,
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -188,6 +222,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_python::HIGHLIGHTS_QUERY,
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -199,6 +234,7 @@ static LANGUAGES: [LangSpec; 13] = [
         highlights_extra: "",
         highlights: tree_sitter_css::HIGHLIGHTS_QUERY,
         injections: "",
+        symbols: "",
         cell: OnceLock::new(),
     },
 ];
@@ -227,6 +263,8 @@ fn build(spec: &LangSpec) -> LangConfig {
     };
     let injections = (!spec.injections.is_empty())
         .then(|| Query::new(&language, spec.injections).expect("injection query"));
+    let symbols = (!spec.symbols.is_empty())
+        .then(|| Query::new(&language, spec.symbols).expect("symbols query"));
     let theme_map = highlights
         .capture_names()
         .iter()
@@ -236,6 +274,7 @@ fn build(spec: &LangSpec) -> LangConfig {
         language,
         highlights,
         injections,
+        symbols,
         theme_map,
         extra_pattern_start,
     }

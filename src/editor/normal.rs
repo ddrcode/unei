@@ -138,6 +138,11 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     super::buffer_list::open(ed);
                     clear_pending(ed);
                 }
+                Some(LeaderCmd::Symbols) => {
+                    ed.drop_recording();
+                    super::file_picker::open_symbols(ed);
+                    clear_pending(ed);
+                }
                 Some(LeaderCmd::PasteCutAfter) => {
                     ed.drop_recording();
                     paste_cut(ed, true);

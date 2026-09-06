@@ -165,6 +165,7 @@ pub fn leader_token(key: Key) -> Option<LeaderCmd> {
         Key::Char('c') => Some(LeaderCmd::CodePrefix),
         Key::Char('r') => Some(LeaderCmd::RustPrefix),
         Key::Char('d') => Some(LeaderCmd::DiagPrefix),
+        Key::Char('s') => Some(LeaderCmd::Symbols),
         _ => None,
     }
 }

@@ -618,7 +618,13 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
-                .title(" files ")
+                .title(
+                    if p.kind == crate::editor::file_picker::PickerKind::Symbols {
+                        " symbols "
+                    } else {
+                        " files "
+                    },
+                )
                 .title_style(Style::default().bg(palette::FLOAT_BG).fg(palette::FG))
                 .title_bottom(Line::styled(count, dim).right_aligned()),
         ),
