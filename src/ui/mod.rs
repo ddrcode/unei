@@ -663,53 +663,49 @@ fn draw_picker_preview(
     let inner_h = rect.height.saturating_sub(2) as usize;
     let inner_w = rect.width.saturating_sub(2) as usize;
 
-    let rows: Vec<Line> = if let Some(note) = &preview.note {
-        vec![Line::styled(format!(" {note}"), dim)]
-    } else {
-        let text = preview.lines.join("\n");
-        let spans = preview
-            .lang
-            .as_deref()
-            .map(|lang| crate::syntax::highlight_text(&text, lang));
-        preview
-            .lines
-            .iter()
-            .take(inner_h)
-            .enumerate()
-            .map(|(i, raw)| {
-                let chars: Vec<char> = raw.chars().take(inner_w).collect();
-                let mut out: Vec<Span> = Vec::new();
-                let mut last = 0usize;
-                for (s, e, cap) in spans
-                    .as_ref()
-                    .and_then(|s| s.get(i))
-                    .map_or(&[][..], Vec::as_slice)
-                {
-                    let (s, e) = (*s as usize, (*e as usize).min(chars.len()));
-                    if s >= chars.len() {
-                        break;
-                    }
-                    if s > last {
-                        out.push(Span::styled(
-                            chars[last..s].iter().collect::<String>(),
-                            float,
-                        ));
-                    }
-                    let style =
-                        crate::config::theme::capture_style(*cap as usize).bg(palette::FLOAT_BG);
-                    out.push(Span::styled(chars[s..e].iter().collect::<String>(), style));
-                    last = e;
-                }
-                if last < chars.len() {
-                    out.push(Span::styled(
-                        chars[last..].iter().collect::<String>(),
-                        float,
-                    ));
-                }
-                Line::from(out)
-            })
-            .collect()
-    };
+    // an optional note (binary size, empty, …) heads the pane; content lines
+    // (highlighted text, or a plain hex dump) fill the rest
+    let mut rows: Vec<Line> = Vec::new();
+    if let Some(note) = &preview.note {
+        rows.push(Line::styled(format!(" {note}"), dim));
+    }
+    let body_h = inner_h.saturating_sub(rows.len());
+    let text = preview.lines.join("\n");
+    let spans = preview
+        .lang
+        .as_deref()
+        .map(|lang| crate::syntax::highlight_text(&text, lang));
+    for (i, raw) in preview.lines.iter().take(body_h).enumerate() {
+        let chars: Vec<char> = raw.chars().take(inner_w).collect();
+        let mut out: Vec<Span> = Vec::new();
+        let mut last = 0usize;
+        for (s, e, cap) in spans
+            .as_ref()
+            .and_then(|s| s.get(i))
+            .map_or(&[][..], Vec::as_slice)
+        {
+            let (s, e) = (*s as usize, (*e as usize).min(chars.len()));
+            if s >= chars.len() {
+                break;
+            }
+            if s > last {
+                out.push(Span::styled(
+                    chars[last..s].iter().collect::<String>(),
+                    float,
+                ));
+            }
+            let style = crate::config::theme::capture_style(*cap as usize).bg(palette::FLOAT_BG);
+            out.push(Span::styled(chars[s..e].iter().collect::<String>(), style));
+            last = e;
+        }
+        if last < chars.len() {
+            out.push(Span::styled(
+                chars[last..].iter().collect::<String>(),
+                float,
+            ));
+        }
+        rows.push(Line::from(out));
+    }
 
     let title: String = std::path::Path::new(name)
         .file_name()
