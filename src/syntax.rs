@@ -12,6 +12,7 @@
 //! render); unregistered languages render in the default color.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use ropey::Rope;
 use streaming_iterator::StreamingIterator;
@@ -89,12 +90,23 @@ impl Syntax {
 /// non-6502 one) means no asm grammar yet: plain, never mis-colored.
 fn detect_lang(buffer: &Buffer) -> Option<&'static str> {
     let path = buffer.path.as_deref()?;
+    detect_lang_for(path, buffer.rope.lines().map(|l| l.to_string()).take(5))
+}
+
+/// The registry language for a file, given its path and first few lines.
+/// Most files resolve by extension, but `.s`/`.asm` are dialect-ambiguous
+/// so their grammar comes from the asm modeline (#18) — shared by the live
+/// highlighter and the picker preview so both agree.
+pub fn detect_lang_for(
+    path: &Path,
+    first_lines: impl Iterator<Item = String>,
+) -> Option<&'static str> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase);
     if matches!(ext.as_deref(), Some("s") | Some("asm")) {
-        return match crate::lens::modeline(buffer.rope.lines().map(|l| l.to_string()).take(5)) {
+        return match crate::lens::modeline(first_lines) {
             Some(crate::lens::Family::Cmos65c02 | crate::lens::Family::Nmos6502) => Some("asm6502"),
             _ => None,
         };

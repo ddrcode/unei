@@ -247,9 +247,11 @@ fn build_preview(path: &Path) -> Preview {
     if lines.iter().all(|l| l.trim().is_empty()) {
         return note("blank".into());
     }
+    let lang =
+        crate::syntax::detect_lang_for(path, lines.iter().take(5).cloned()).map(str::to_string);
     Preview {
         lines,
-        lang: crate::config::languages::detect(Some(path)).map(str::to_string),
+        lang,
         note: None,
     }
 }
