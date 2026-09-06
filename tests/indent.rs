@@ -104,3 +104,10 @@ fn insert_ctrl_t_and_ctrl_d() {
     assert_eq!(text(&e), "foo\n");
     assert_eq!(e.cursor.col, 3);
 }
+
+#[test]
+fn visual_count_multiplies_shift() {
+    let mut e = ed("a\nb\nc\n");
+    feed(&mut e, "Vk3>"); // select two lines, indent three levels (12 spaces)
+    assert_eq!(text(&e), "            a\n            b\nc\n");
+}

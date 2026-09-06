@@ -541,7 +541,7 @@ fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>)
             ed.cursor.line.min(target.line),
             ed.cursor.line.max(target.line),
         );
-        indent_lines(ed, l1, l2, op == Op::Indent);
+        indent_lines(ed, l1, l2, op == Op::Indent, 1);
         return;
     }
 
@@ -677,7 +677,7 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
     let last = text_lines(&ed.buffer.rope) - 1;
     let (l1, l2) = (l1.min(last), l2.min(last));
     if matches!(op, Op::Indent | Op::Dedent) {
-        indent_lines(ed, l1, l2, op == Op::Indent);
+        indent_lines(ed, l1, l2, op == Op::Indent, 1);
         return;
     }
     let rope = &ed.buffer.rope;
@@ -737,11 +737,11 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
 /// one shiftwidth, preserving tabs-vs-spaces per `expandtab`, in a single
 /// undo step. Blank lines are left untouched. Cursor lands on the first
 /// non-blank of the first shifted line (vim).
-fn indent_lines(ed: &mut Editor, l1: usize, l2: usize, right: bool) {
+fn indent_lines(ed: &mut Editor, l1: usize, l2: usize, right: bool, steps: usize) {
     ed.buffer.begin_change(ed.cursor);
     let mut changed = false;
     for line in l1..=l2 {
-        changed |= shift_one(ed, line, right);
+        changed |= shift_one(ed, line, right, steps);
     }
     let committed = ed.buffer.end_change();
     if changed {
@@ -754,17 +754,18 @@ fn indent_lines(ed: &mut Editor, l1: usize, l2: usize, right: bool) {
 /// Shifts one line's leading indentation by a shiftwidth. Returns the
 /// signed change in indent character count (for insert-mode cursor
 /// tracking); leaves blank lines alone (returns 0).
-fn shift_one(ed: &mut Editor, line: usize, right: bool) -> bool {
+fn shift_one(ed: &mut Editor, line: usize, right: bool, steps: usize) -> bool {
     let content = line_content(&ed.buffer.rope, line);
     if content.trim().is_empty() {
         return false;
     }
+    let amount = OPTIONS.shiftwidth * steps;
     let indent = line_indent(&ed.buffer.rope, line);
     let cur_cols = indent_cols(&indent, OPTIONS.tabstop);
     let new_cols = if right {
-        cur_cols + OPTIONS.shiftwidth
+        cur_cols + amount
     } else {
-        cur_cols.saturating_sub(OPTIONS.shiftwidth)
+        cur_cols.saturating_sub(amount)
     };
     if new_cols == cur_cols {
         return false;
@@ -1256,13 +1257,15 @@ fn block_segment(ed: &Editor, line: usize, left: usize, right: usize) -> Option<
 fn visual_operate(ed: &mut Editor, op: Op) {
     let Mode::Visual(kind) = ed.mode else { return };
     ed.leave_visual();
-    // `>`/`<` shift the selected lines, whatever the selection kind
+    // `>`/`<` shift the selected lines, whatever the selection kind; a
+    // count multiplies the shift (`3>` indents three levels)
     if matches!(op, Op::Indent | Op::Dedent) {
+        let steps = ed.pending.take_count().unwrap_or(1);
         let (l1, l2) = (
             ed.visual_anchor.line.min(ed.cursor.line),
             ed.visual_anchor.line.max(ed.cursor.line),
         );
-        indent_lines(ed, l1, l2, op == Op::Indent);
+        indent_lines(ed, l1, l2, op == Op::Indent, steps);
         return;
     }
     match kind {
@@ -1345,7 +1348,7 @@ fn visual_block_operate(ed: &mut Editor, op: Op) {
                 ed.mode = Mode::Insert;
             }
         }
-        Op::Indent | Op::Dedent => indent_lines(ed, l1, l2, op == Op::Indent),
+        Op::Indent | Op::Dedent => indent_lines(ed, l1, l2, op == Op::Indent, 1),
     }
     ed.clamp_cursor();
 }
