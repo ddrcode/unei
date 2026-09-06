@@ -37,9 +37,10 @@ const PREVIEW_LINES: usize = 240;
 /// design: the first lines only.
 pub struct Preview {
     pub lines: Vec<String>,
-    /// Registry language for highlighting, if detected.
+    /// Registry language for highlighting, if detected (never for a hex dump).
     pub lang: Option<String>,
-    /// A one-line note instead of content (binary / empty / unreadable).
+    /// A one-line header shown above the content: the size for a binary hex
+    /// dump, or a standalone status (empty / blank / unreadable) with no lines.
     pub note: Option<String>,
 }
 
@@ -306,12 +307,17 @@ fn build_preview(path: &Path) -> Preview {
     let Ok(data) = std::fs::read(path) else {
         return note("unreadable".into());
     };
-    let head = &data[..data.len().min(PREVIEW_BYTES)];
-    if head.contains(&0) {
-        return note(format!("binary · {}", human_size(data.len())));
-    }
     if data.is_empty() {
         return note("empty file".into());
+    }
+    let head = &data[..data.len().min(PREVIEW_BYTES)];
+    if is_binary(head) {
+        // not text — a hex dump beats rendering mojibake (#67)
+        return Preview {
+            lines: hex_dump(head, PREVIEW_LINES),
+            lang: None,
+            note: Some(format!("binary · {}", human_size(data.len()))),
+        };
     }
     let text = String::from_utf8_lossy(head);
     let lines: Vec<String> = text
@@ -329,6 +335,58 @@ fn build_preview(path: &Path) -> Preview {
         lang,
         note: None,
     }
+}
+
+/// Whether a file's head is binary rather than text: a NUL byte, bytes that
+/// don't decode as UTF-8 (a multibyte char clipped by the sample boundary
+/// doesn't count), or valid text littered with control chars. A plain
+/// NUL test misses short 6502 images whose sampled head carries no NUL.
+fn is_binary(head: &[u8]) -> bool {
+    if head.contains(&0) {
+        return true;
+    }
+    match std::str::from_utf8(head) {
+        Ok(text) => {
+            let ctrl = text
+                .chars()
+                .filter(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r' | '\u{c}'))
+                .count();
+            ctrl * 20 > text.chars().count().max(1) // >5% control ⇒ binary
+        }
+        // an invalid byte within the last 3 is a char cut by the sample edge,
+        // not real binary; anything earlier means binary
+        Err(e) => e.valid_up_to() < head.len().saturating_sub(3),
+    }
+}
+
+/// A classic hex dump of the first `max_lines` rows of 16 bytes: offset,
+/// the bytes in two octets, then an ASCII gutter (non-printable → `.`).
+fn hex_dump(data: &[u8], max_lines: usize) -> Vec<String> {
+    data.chunks(16)
+        .take(max_lines)
+        .enumerate()
+        .map(|(row, chunk)| {
+            let mut hex = String::new();
+            for (i, b) in chunk.iter().enumerate() {
+                if i == 8 {
+                    hex.push(' '); // gap between the two octets
+                }
+                hex.push_str(&format!("{b:02x} "));
+            }
+            let ascii: String = chunk
+                .iter()
+                .map(|&b| {
+                    if (0x20..0x7f).contains(&b) {
+                        b as char
+                    } else {
+                        '.'
+                    }
+                })
+                .collect();
+            // pad the hex column (16×"xx " + 1 gap = 49) so gutters align
+            format!("{:08x}  {hex:<49}|{ascii}|", row * 16)
+        })
+        .collect()
 }
 
 fn human_size(bytes: usize) -> String {
@@ -352,7 +410,47 @@ fn valid_new_path(rel: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_preview, valid_new_path};
+    use super::{build_preview, hex_dump, is_binary, valid_new_path};
+
+    #[test]
+    fn detects_binary_without_a_nul_byte() {
+        // a small 6502 image: high opcode bytes, no NUL in the sampled head —
+        // the old `contains(&0)` check let this through as garbage text
+        let prg = [0x01u8, 0x08, 0xA9, 0x02, 0x8D, 0x20, 0xD0, 0xA2, 0xFF, 0xCA];
+        assert!(is_binary(&prg));
+        assert!(!is_binary(b"fn main() {}\n// plain rust\n"));
+        // a multibyte char clipped by the sample boundary is still text
+        let mut cut = "café au lait ".repeat(4).into_bytes();
+        cut.push(0xC3); // dangling lead byte of a 2-byte sequence
+        assert!(!is_binary(&cut));
+    }
+
+    #[test]
+    fn hex_dump_has_offset_bytes_and_ascii_gutter() {
+        let rows = hex_dump(&[0x00, 0xC0, 0x41, 0x42], 8);
+        assert_eq!(rows.len(), 1);
+        // offset, the bytes, then printable ascii ('.' for non-printable)
+        assert!(rows[0].starts_with("00000000  00 c0 41 42 "), "{}", rows[0]);
+        assert!(rows[0].ends_with("|..AB|"), "{}", rows[0]);
+    }
+
+    #[test]
+    fn binary_preview_is_a_hex_dump_not_a_bare_note() {
+        let dir = std::env::temp_dir().join(format!("unei-pvhex-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("rom.prg");
+        std::fs::write(&f, [0x01u8, 0x08, 0xA9, 0x02, 0x8D, 0x20, 0xD0]).unwrap();
+        let pv = build_preview(&f);
+        assert!(pv.note.unwrap().starts_with("binary"));
+        assert!(!pv.lines.is_empty(), "binary preview should carry hex rows");
+        assert!(
+            pv.lines[0].starts_with("00000000  01 08 a9"),
+            "{:?}",
+            pv.lines
+        );
+        assert!(pv.lang.is_none()); // hex is plain, never syntax-highlighted
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn preview_reads_text_and_detects_language() {
