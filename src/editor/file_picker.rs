@@ -19,13 +19,28 @@ use crate::editor::windows::SplitDir;
 
 use super::Editor;
 
-/// What the picker is picking (#62): files to open, or symbols in the
-/// current buffer to jump to. The fuzzy list and rendering are shared.
+/// What the picker is picking: files to open (#26), symbols in the current
+/// buffer (#62), or lines matching a regex across the project (grep, #72).
+/// The list, preview and rendering are shared; only the source differs.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum PickerKind {
     Files,
     Symbols,
+    Grep,
 }
+
+/// One grep result: where to jump when it's chosen (path relative to root,
+/// 0-based line and char column of the match).
+pub struct GrepHit {
+    path: String,
+    line: usize,
+    col: usize,
+}
+
+/// Live-grep caps: stop after this many matches, and never read a file bigger
+/// than this (keeps each keystroke's synchronous walk bounded).
+const MAX_GREP_MATCHES: usize = 500;
+const MAX_GREP_FILE_BYTES: u64 = 512 * 1024;
 
 /// Hard cap on the number of files walked (keeps huge trees responsive).
 const MAX_FILES: usize = 50_000;
@@ -43,6 +58,8 @@ pub struct Preview {
     /// A one-line header shown above the content: the size for a binary hex
     /// dump, or a standalone status (empty / blank / unreadable) with no lines.
     pub note: Option<String>,
+    /// The line within `lines` to highlight (a grep match); none otherwise.
+    pub focus: Option<usize>,
 }
 
 pub struct Match {
@@ -65,6 +82,8 @@ pub struct FilePicker {
     pub kind: PickerKind,
     /// Symbols mode: the source line for each item, parallel to `items`.
     targets: Vec<usize>,
+    /// Grep mode: where each result jumps to, parallel to `items`.
+    grep_hits: Vec<GrepHit>,
 }
 
 impl FilePicker {
@@ -76,28 +95,121 @@ impl FilePicker {
         self.items.len()
     }
 
+    /// The preview pane's title for the current selection: `path:line` for a
+    /// grep hit, otherwise the file's name.
+    pub fn preview_title(&self) -> String {
+        let Some(m) = self.matches.get(self.selected) else {
+            return "preview".to_string();
+        };
+        match self.kind {
+            PickerKind::Grep => {
+                let h = &self.grep_hits[m.item];
+                format!("{}:{}", h.path, h.line + 1)
+            }
+            _ => Path::new(self.item(m))
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.item(m).to_string()),
+        }
+    }
+
     /// Absolute path of the currently selected match.
     fn selected_path(&self) -> Option<PathBuf> {
         let m = self.matches.get(self.selected)?;
         Some(self.root.join(self.item(m)))
     }
 
-    /// Rebuilds the preview for the selected file, unless it hasn't changed.
-    /// Only files have a preview; the symbol picker is a plain list.
+    /// Rebuilds the preview for the selection. Files show their head; grep
+    /// shows the matched file around the hit line; symbols have no preview.
     fn refresh_preview(&mut self) {
-        if self.kind != PickerKind::Files {
-            return;
+        match self.kind {
+            PickerKind::Files => {
+                let path = self.selected_path();
+                if path == self.preview_for {
+                    return;
+                }
+                self.preview = path.as_deref().map(build_preview);
+                self.preview_for = path;
+            }
+            PickerKind::Grep => {
+                // rebuild on every move: the line, not just the file, frames it
+                self.preview = self
+                    .matches
+                    .get(self.selected)
+                    .map(|m| &self.grep_hits[m.item])
+                    .map(|hit| build_preview_at(&self.root.join(&hit.path), hit.line));
+                self.preview_for = None;
+            }
+            PickerKind::Symbols => {}
         }
-        let path = self.selected_path();
-        if path == self.preview_for {
-            return;
+    }
+
+    /// Live grep (#72): the query is a regex (unei's search dialect, smartcase),
+    /// run in-process across the project — `ignore` walks the tree, the Rust
+    /// `regex` matches each line. Synchronous but bounded: needs two chars,
+    /// caps matches and file size, skips anything that isn't UTF-8 text.
+    fn grep_search(&mut self) {
+        self.items.clear();
+        self.grep_hits.clear();
+        self.matches.clear();
+        self.truncated = false;
+        let Some(re) = (self.query.chars().count() >= 2)
+            .then(|| crate::search::compile(&self.query))
+            .flatten()
+        else {
+            return; // too short, or an incomplete/invalid regex — no results
+        };
+        let walker = ignore::WalkBuilder::new(&self.root)
+            .require_git(false)
+            .follow_links(false)
+            .build();
+        'walk: for entry in walker.flatten() {
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                continue;
+            }
+            if entry.metadata().map(|m| m.len()).unwrap_or(0) > MAX_GREP_FILE_BYTES {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(entry.path()) else {
+                continue; // binary / non-utf8 — skip
+            };
+            let rel = entry
+                .path()
+                .strip_prefix(&self.root)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .into_owned();
+            for (line_idx, line) in text.lines().enumerate() {
+                let Some(mat) = re.find(line) else { continue };
+                let col = line[..mat.start()].chars().count();
+                let (item, indices) = grep_row(&rel, line_idx, line, mat.start(), mat.end());
+                let idx = self.items.len();
+                self.items.push(item);
+                self.grep_hits.push(GrepHit {
+                    path: rel.clone(),
+                    line: line_idx,
+                    col,
+                });
+                self.matches.push(Match {
+                    item: idx,
+                    score: 0,
+                    indices,
+                });
+                if self.items.len() >= MAX_GREP_MATCHES {
+                    self.truncated = true;
+                    break 'walk;
+                }
+            }
         }
-        self.preview = path.as_deref().map(build_preview);
-        self.preview_for = path;
     }
 
     fn refilter(&mut self) {
         self.selected = 0;
+        if self.kind == PickerKind::Grep {
+            self.grep_search();
+            self.refresh_preview();
+            return;
+        }
         if self.query.is_empty() {
             self.matches = (0..self.items.len())
                 .map(|item| Match {
@@ -168,6 +280,28 @@ pub fn open(ed: &mut Editor) {
         preview_for: None,
         kind: PickerKind::Files,
         targets: Vec::new(),
+        grep_hits: Vec::new(),
+    };
+    picker.refilter();
+    ed.buffer_list = None;
+    ed.file_picker = Some(picker);
+}
+
+/// Opens the live-grep picker (#72): empty until you type, then each keystroke
+/// runs a regex search across the project in-process.
+pub fn open_grep(ed: &mut Editor) {
+    let mut picker = FilePicker {
+        query: String::new(),
+        items: Vec::new(),
+        matches: Vec::new(),
+        selected: 0,
+        truncated: false,
+        root: ed.root().to_path_buf(),
+        preview: None,
+        preview_for: None,
+        kind: PickerKind::Grep,
+        targets: Vec::new(),
+        grep_hits: Vec::new(),
     };
     picker.refilter();
     ed.buffer_list = None;
@@ -208,6 +342,7 @@ pub fn open_symbols(ed: &mut Editor) {
         preview_for: None,
         kind: PickerKind::Symbols,
         targets,
+        grep_hits: Vec::new(),
     };
     picker.refilter();
     ed.buffer_list = None;
@@ -272,6 +407,21 @@ fn command(ed: &mut Editor, cmd: PickerCmd) {
                     ed.clamp_cursor();
                     ed.scroll_to_cursor();
                 }
+                PickerKind::Grep => {
+                    let hit = &p.grep_hits[m.item];
+                    let (path, line, col) = (hit.path.clone(), hit.line, hit.col);
+                    ed.file_picker = None;
+                    let split = match cmd {
+                        PickerCmd::OpenVsplit => Some(SplitDir::Vertical),
+                        PickerCmd::OpenHsplit => Some(SplitDir::Horizontal),
+                        _ => None,
+                    };
+                    ed.open_path(&path, split); // records the jump
+                    ed.cursor = Cursor::new(line, col);
+                    ed.goal = None;
+                    ed.clamp_cursor();
+                    ed.scroll_to_cursor();
+                }
             }
         }
         PickerCmd::CreatePath => {
@@ -304,6 +454,7 @@ fn build_preview(path: &Path) -> Preview {
         lines: Vec::new(),
         lang: None,
         note: Some(n),
+        focus: None,
     };
     let Ok(data) = std::fs::read(path) else {
         return note("unreadable".into());
@@ -318,6 +469,7 @@ fn build_preview(path: &Path) -> Preview {
             lines: hex_dump(head, PREVIEW_LINES),
             lang: None,
             note: Some(format!("binary · {}", human_size(data.len()))),
+            focus: None,
         };
     }
     let text = String::from_utf8_lossy(head);
@@ -335,7 +487,58 @@ fn build_preview(path: &Path) -> Preview {
         lines,
         lang,
         note: None,
+        focus: None,
     }
+}
+
+/// Builds a preview of `path` framed on `line` (0-based) for a grep hit (#72):
+/// a window starting a few lines above the match, with that line marked so the
+/// renderer can highlight it.
+fn build_preview_at(path: &Path, line: usize) -> Preview {
+    let note = |n: String| Preview {
+        lines: Vec::new(),
+        lang: None,
+        note: Some(n),
+        focus: None,
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return note("unreadable".into());
+    };
+    let all: Vec<&str> = text.lines().collect();
+    if all.is_empty() {
+        return note("empty file".into());
+    }
+    let start = line.saturating_sub(6); // a little context above the hit
+    let end = (start + PREVIEW_LINES).min(all.len());
+    let lines: Vec<String> = all[start..end].iter().map(|s| s.to_string()).collect();
+    let lang =
+        crate::syntax::detect_lang_for(path, lines.iter().take(5).cloned()).map(str::to_string);
+    Preview {
+        focus: Some(line - start),
+        lines,
+        lang,
+        note: None,
+    }
+}
+
+/// Formats one grep result row — `"path:line: text"` with leading indent
+/// trimmed and long lines clipped — and the char columns of the match within
+/// it, for accenting. `mb0`/`mb1` are the match's byte range in `line`.
+fn grep_row(rel: &str, line_idx: usize, line: &str, mb0: usize, mb1: usize) -> (String, Vec<u32>) {
+    const MAX: usize = 200;
+    let trimmed = line.trim_start();
+    let lead = line.len() - trimmed.len();
+    let prefix = format!("{rel}:{}: ", line_idx + 1);
+    let pchars = prefix.chars().count();
+    let shown: String = trimmed.chars().take(MAX).collect();
+    let item = format!("{prefix}{shown}");
+    let item_len = item.chars().count();
+    // shift the match into the trimmed/clipped text, then into display columns
+    let tb0 = mb0.saturating_sub(lead).min(trimmed.len());
+    let tb1 = mb1.saturating_sub(lead).min(trimmed.len());
+    let c0 = (pchars + trimmed[..tb0].chars().count()).min(item_len);
+    let c1 = (pchars + trimmed[..tb1].chars().count()).min(item_len);
+    (item, (c0..c1).map(|x| x as u32).collect())
 }
 
 /// Whether a file's head is binary rather than text: a NUL byte, bytes that
@@ -363,7 +566,23 @@ fn valid_new_path(rel: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_preview, valid_new_path};
+    use super::{build_preview, grep_row, valid_new_path};
+
+    #[test]
+    fn grep_row_formats_and_locates_the_match() {
+        // line 10 (0-based 9), "42" at bytes 12..14 of the untrimmed line
+        let (item, idx) = grep_row("src/main.rs", 9, "    let x = 42;", 12, 14);
+        assert_eq!(item, "src/main.rs:10: let x = 42;");
+        // prefix "src/main.rs:10: " is 16 chars, "let x = " is 8 → match at 24..26
+        assert_eq!(idx, vec![24, 25]);
+    }
+
+    #[test]
+    fn grep_row_clips_long_lines_without_panic() {
+        let long = format!("{}needle", "x".repeat(400));
+        let (item, _) = grep_row("f", 0, &long, 400, 406);
+        assert!(item.chars().count() <= "f:1: ".chars().count() + 200);
+    }
 
     #[test]
     fn binary_preview_is_a_hex_dump_not_a_bare_note() {

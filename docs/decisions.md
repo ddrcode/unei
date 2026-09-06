@@ -3,6 +3,26 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-06 — Live grep: in-process, the picker's third source (ticket #72)
+
+Project-wide grep (`Space g`) runs **in-process** — the `ignore` walker (the
+file picker already uses it) plus unei's own `search::compile` regex (the same
+smartcase Rust-regex dialect as `/`) — never a shelled-out `rg`. That keeps
+the rule against running system commands intact AND reuses one search dialect
+instead of adding a second. It's the picker's third source after files (#26)
+and symbols (#62), but a genuinely different pipeline: the query *is* the
+regex and re-runs on every keystroke (not a fuzzy filter over a static list),
+each result carries a `(path, line, col)` jump target, and the preview frames
+the matched file on the hit line rather than showing its head. The light
+`PickerKind` enum earns its third variant here — but not a trait-based source
+framework: three concrete branches still read more clearly than an abstraction
+over three. Responsiveness is bought with bounds, not threads: a two-char
+minimum, a 500-match cap, a 512 KiB per-file cap, and UTF-8-only reads (binary
+skipped) keep each synchronous keystroke cheap on the modest repos unei
+targets; if a giant tree ever makes it stutter, the LSP's reader-thread +
+30 ms tick is the async pattern to borrow. This very likely retires the parked
+line-search idea (#64) — grep is the stronger large-file/large-project nav.
+
 ## 2026-09-03 — Text coloring: tree-sitter only
 
 The single text-coloring method (rules: "Single way of doing things") is

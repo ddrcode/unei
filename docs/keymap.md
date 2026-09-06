@@ -118,6 +118,7 @@ honored).
 | `Ctrl+P` | fuzzy file picker |
 | `Space b` | buffer list |
 | `Space s` | symbol picker — fuzzy-jump to a function / struct / … in the current file |
+| `Space g` | live grep — regex-search every line in the project, jump to the match |
 | `Ctrl+^` / `Ctrl+6` | alternate buffer |
 | `Ctrl+O` / `Ctrl+I` (`Tab`) | jumplist back / forward (crosses buffers) |
 | `m{a-z}` | set a mark at the cursor (per buffer) |
@@ -237,5 +238,7 @@ to a path and binds it there (how a bare-launch scratch buffer gets a home).
 - **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes. On a wide terminal a **preview pane** shows the selected file's head, syntax-highlighted (scroll-free — open it for more; binary/empty files are noted).
 - **Buffer list** — `i`/`k` select, `Enter` switches, `x` closes a buffer, `Esc`/`q` dismiss.
 - **Symbol picker** (`Space s`) — the current file's definitions from tree-sitter (functions, structs, enums, traits, impls, …); type to fuzzy-filter (typing a kind like `fn` narrows to those), `Enter` jumps and records the jumplist. Rust for now; conservative by design.
+
+- **Live grep** (`Space g`) — regex-search every line across the project, in-process (the `ignore` walker + unei's own smartcase regex — no `rg` subprocess). Starts empty; from two characters on, each keystroke re-searches. Rows read `path:line: text` with the match accented; the preview shows the hit in context with its line washed. `Enter` opens the file at the match (records the jumplist), `Ctrl+V`/`Ctrl+X` into a split. Capped at 500 matches for responsiveness.
 - **Code actions** — `i`/`k` select, `Enter` applies, `Esc`/`q` dismiss.
 - **Hover float** — any key dismisses (`Esc`/`q`/`K` do nothing else).
