@@ -5,7 +5,7 @@
 //! fuzzy engine behind Helix. Typed characters edit the query; commands sit
 //! on control keys (`config::keymap::picker_token`).
 
-use std::path::Component;
+use std::path::{Component, Path, PathBuf};
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -18,6 +18,20 @@ use super::Editor;
 
 /// Hard cap on the number of files walked (keeps huge trees responsive).
 const MAX_FILES: usize = 50_000;
+/// Preview reads at most this many bytes / renders at most this many lines —
+/// enough to recall what a file is; open it in the editor for more (#26).
+const PREVIEW_BYTES: usize = 64 * 1024;
+const PREVIEW_LINES: usize = 80;
+
+/// The selected file's head, for the picker's preview pane. Scroll-free by
+/// design: the first lines only.
+pub struct Preview {
+    pub lines: Vec<String>,
+    /// Registry language for highlighting, if detected.
+    pub lang: Option<String>,
+    /// A one-line note instead of content (binary / empty / unreadable).
+    pub note: Option<String>,
+}
 
 pub struct Match {
     pub item: usize,
@@ -32,6 +46,10 @@ pub struct FilePicker {
     pub matches: Vec<Match>,
     pub selected: usize,
     pub truncated: bool,
+    root: PathBuf,
+    pub preview: Option<Preview>,
+    /// The path the current preview was built for (skip re-reads on typing).
+    preview_for: Option<PathBuf>,
 }
 
 impl FilePicker {
@@ -41,6 +59,22 @@ impl FilePicker {
 
     pub fn total(&self) -> usize {
         self.items.len()
+    }
+
+    /// Absolute path of the currently selected match.
+    fn selected_path(&self) -> Option<PathBuf> {
+        let m = self.matches.get(self.selected)?;
+        Some(self.root.join(self.item(m)))
+    }
+
+    /// Rebuilds the preview for the selected file, unless it hasn't changed.
+    fn refresh_preview(&mut self) {
+        let path = self.selected_path();
+        if path == self.preview_for {
+            return;
+        }
+        self.preview = path.as_deref().map(build_preview);
+        self.preview_for = path;
     }
 
     fn refilter(&mut self) {
@@ -53,6 +87,7 @@ impl FilePicker {
                     indices: Vec::new(),
                 })
                 .collect();
+            self.refresh_preview();
             return;
         }
         let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
@@ -79,6 +114,7 @@ impl FilePicker {
                 .then_with(|| self.items[a.item].cmp(&self.items[b.item]))
         });
         self.matches = out;
+        self.refresh_preview();
     }
 }
 
@@ -108,6 +144,9 @@ pub fn open(ed: &mut Editor) {
         matches: Vec::new(),
         selected: 0,
         truncated,
+        root: ed.root().to_path_buf(),
+        preview: None,
+        preview_for: None,
     };
     picker.refilter();
     ed.buffer_list = None;
@@ -131,9 +170,13 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
 fn command(ed: &mut Editor, cmd: PickerCmd) {
     let Some(p) = &mut ed.file_picker else { return };
     match cmd {
-        PickerCmd::Up => p.selected = p.selected.saturating_sub(1),
+        PickerCmd::Up => {
+            p.selected = p.selected.saturating_sub(1);
+            p.refresh_preview();
+        }
         PickerCmd::Down => {
             p.selected = (p.selected + 1).min(p.matches.len().saturating_sub(1));
+            p.refresh_preview();
         }
         PickerCmd::DeleteChar => {
             p.query.pop();
@@ -176,6 +219,51 @@ fn command(ed: &mut Editor, cmd: PickerCmd) {
     }
 }
 
+/// Reads a file's head for the preview: the first lines, with the language
+/// detected for highlighting. Binary, empty, or unreadable files return a
+/// note instead of content.
+fn build_preview(path: &Path) -> Preview {
+    let note = |n: String| Preview {
+        lines: Vec::new(),
+        lang: None,
+        note: Some(n),
+    };
+    let Ok(data) = std::fs::read(path) else {
+        return note("unreadable".into());
+    };
+    let head = &data[..data.len().min(PREVIEW_BYTES)];
+    if head.contains(&0) {
+        return note(format!("binary · {}", human_size(data.len())));
+    }
+    if data.is_empty() {
+        return note("empty file".into());
+    }
+    let text = String::from_utf8_lossy(head);
+    let lines: Vec<String> = text
+        .lines()
+        .take(PREVIEW_LINES)
+        .map(str::to_string)
+        .collect();
+    if lines.iter().all(|l| l.trim().is_empty()) {
+        return note("blank".into());
+    }
+    Preview {
+        lines,
+        lang: crate::config::languages::detect(Some(path)).map(str::to_string),
+        note: None,
+    }
+}
+
+fn human_size(bytes: usize) -> String {
+    if bytes >= 1 << 20 {
+        format!("{:.1} MB", bytes as f64 / (1 << 20) as f64)
+    } else if bytes >= 1 << 10 {
+        format!("{:.1} KB", bytes as f64 / (1 << 10) as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// New paths stay inside the working folder: relative, no `..`, non-empty.
 fn valid_new_path(rel: &str) -> bool {
     if rel.is_empty() {
@@ -187,7 +275,33 @@ fn valid_new_path(rel: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_new_path;
+    use super::{build_preview, valid_new_path};
+
+    #[test]
+    fn preview_reads_text_and_detects_language() {
+        let dir = std::env::temp_dir().join(format!("unei-pv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("m.rs");
+        std::fs::write(&f, "fn main() {}\n// tail\n").unwrap();
+        let pv = build_preview(&f);
+        assert!(pv.note.is_none());
+        assert_eq!(pv.lines.first().map(String::as_str), Some("fn main() {}"));
+        assert_eq!(pv.lang.as_deref(), Some("rust"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn preview_flags_binary_and_empty() {
+        let dir = std::env::temp_dir().join(format!("unei-pvb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("b.bin");
+        std::fs::write(&bin, [0u8, 1, 2, 3, 0]).unwrap();
+        assert!(build_preview(&bin).note.unwrap().starts_with("binary"));
+        let empty = dir.join("e.txt");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(build_preview(&empty).note.as_deref(), Some("empty file"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn new_path_validation() {

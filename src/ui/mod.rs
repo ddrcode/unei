@@ -518,9 +518,22 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
 
     let Some(p) = &ed.file_picker else { return };
 
-    let w = (area.width.saturating_sub(10)).clamp(30, 72);
-    let h = (area.height.saturating_sub(4)).clamp(6, 16);
-    let x = (area.width - w) / 2;
+    // widen into a two-pane float (list left, preview right) when there's
+    // room and a preview to show; otherwise the list-only float (#26)
+    let show_preview = area.width >= 96 && p.preview.is_some();
+    let w = if show_preview {
+        (area.width / 3).clamp(34, 52)
+    } else {
+        (area.width.saturating_sub(10)).clamp(30, 72)
+    };
+    let preview_w = if show_preview {
+        (area.width.saturating_sub(w + 8)).clamp(30, 84)
+    } else {
+        0
+    };
+    let total_w = w + preview_w;
+    let h = (area.height.saturating_sub(4)).clamp(6, if show_preview { 24 } else { 16 });
+    let x = (area.width.saturating_sub(total_w)) / 2;
     let y = area.height.saturating_sub(h) / 6 + 1;
     let rect = Rect::new(x, y, w, h);
     let inner_w = w.saturating_sub(2) as usize;
@@ -610,9 +623,103 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
         ),
         rect,
     );
+    if show_preview {
+        let name = p
+            .matches
+            .get(p.selected)
+            .map(|m| p.item(m))
+            .unwrap_or("preview");
+        draw_picker_preview(
+            f,
+            p.preview.as_ref().unwrap(),
+            name,
+            Rect::new(x + w, y, preview_w, h),
+        );
+    }
+
     // terminal cursor sits in the query line
     let qx = rect.x + 4 + p.query.width() as u16;
     f.set_cursor_position((qx.min(rect.x + w - 2), rect.y + 1));
+}
+
+/// The picker's scroll-free preview pane: the file's head, syntax-highlighted
+/// through the same tree-sitter path (#26), or a note for binary/empty files.
+fn draw_picker_preview(
+    f: &mut Frame,
+    preview: &crate::editor::file_picker::Preview,
+    name: &str,
+    rect: Rect,
+) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear};
+    let float = Style::default().bg(palette::FLOAT_BG).fg(palette::FG);
+    let dim = Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT);
+    let inner_h = rect.height.saturating_sub(2) as usize;
+    let inner_w = rect.width.saturating_sub(2) as usize;
+
+    let rows: Vec<Line> = if let Some(note) = &preview.note {
+        vec![Line::styled(format!(" {note}"), dim)]
+    } else {
+        let text = preview.lines.join("\n");
+        let spans = preview
+            .lang
+            .as_deref()
+            .map(|lang| crate::syntax::highlight_text(&text, lang));
+        preview
+            .lines
+            .iter()
+            .take(inner_h)
+            .enumerate()
+            .map(|(i, raw)| {
+                let chars: Vec<char> = raw.chars().take(inner_w).collect();
+                let mut out: Vec<Span> = Vec::new();
+                let mut last = 0usize;
+                for (s, e, cap) in spans
+                    .as_ref()
+                    .and_then(|s| s.get(i))
+                    .map_or(&[][..], Vec::as_slice)
+                {
+                    let (s, e) = (*s as usize, (*e as usize).min(chars.len()));
+                    if s >= chars.len() {
+                        break;
+                    }
+                    if s > last {
+                        out.push(Span::styled(
+                            chars[last..s].iter().collect::<String>(),
+                            float,
+                        ));
+                    }
+                    let style =
+                        crate::config::theme::capture_style(*cap as usize).bg(palette::FLOAT_BG);
+                    out.push(Span::styled(chars[s..e].iter().collect::<String>(), style));
+                    last = e;
+                }
+                if last < chars.len() {
+                    out.push(Span::styled(
+                        chars[last..].iter().collect::<String>(),
+                        float,
+                    ));
+                }
+                Line::from(out)
+            })
+            .collect()
+    };
+
+    let title: String = std::path::Path::new(name)
+        .file_name()
+        .map(|n| format!(" {} ", n.to_string_lossy()))
+        .unwrap_or_else(|| " preview ".to_string());
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(rows).style(float).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
+                .title(Line::styled(title, dim))
+                .title_alignment(ratatui::layout::Alignment::Right),
+        ),
+        rect,
+    );
 }
 
 fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
