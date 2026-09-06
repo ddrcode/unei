@@ -32,6 +32,7 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - **Markdown preview** (`gp`): a live, side-by-side rendered view that follows the cursor as you edit — headings, tables, task lists, and syntax-highlighted code fences. Vim never came with this.
 - **Assembly intelligence vim never had**: on 6502/65C02, `K` shows an instruction's one-line description and the flags it sets, its opcode byte and addressing mode, and cycle counts *including the NMOS-vs-CMOS differences* — plus a cycle **sum** over a visual selection, and a number-base lens (hex / dec / bin / byte split) that works in any file
 - **6502 disassembler**: open a compiled `.prg` and read it as re-assemblable, syntax-highlighted 65C02 source — the same opcode table run backwards, so `K` then annotates the disassembly it just produced
+- **Binary files** open as a **read-only hex view** (offset · bytes · ASCII gutter) instead of garbage — ROMs, `.bin`, object files; the picker previews their head the same way
 - **Clipboard**: separate yank and cut registers; yanks mirror to the system clipboard (OSC 52); bracketed paste
 - **Format on save** via treefmt (project-level `treefmt.toml`; silence otherwise)
 - Jumplist (`Ctrl+O`/`Ctrl+I`), dimmed inactive panels, full-width cursorline, scrolloff 15

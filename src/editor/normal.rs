@@ -14,6 +14,31 @@ use crate::editor::windows::SplitDir;
 
 use super::{Awaiting, Editor, Mode};
 
+/// Whether a normal-mode command would change buffer text — the set a
+/// read-only view rejects (#69). Yank, motions, search, marks and undo stay
+/// allowed (undo/redo are inert on a view that was never edited).
+fn modifies(token: Token) -> bool {
+    use SimpleCmd::*;
+    match token {
+        Token::Insert(_) | Token::ReplaceStart | Token::ReplaceMode => true,
+        Token::Op(Op::Delete | Op::Change | Op::Indent | Op::Dedent) => true,
+        Token::Simple(c) => matches!(
+            c,
+            DeleteRight
+                | DeleteLeft
+                | ToggleCase
+                | Join
+                | PasteAfter
+                | PasteBefore
+                | SubstChar
+                | SubstLine
+                | DeleteToEol
+                | ChangeToEol
+        ),
+        _ => false,
+    }
+}
+
 pub fn handle_key(ed: &mut Editor, key: Key) {
     match ed.pending.awaiting {
         Awaiting::Find(kind) => {
@@ -354,6 +379,15 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 return;
             }
         }
+    }
+
+    // a read-only view (a binary opened as hex, #69) rejects edits with a
+    // message rather than silently swallowing the keystroke; motions, yank,
+    // search and navigation stay live
+    if ed.buffer.read_only && modifies(token) {
+        ed.err("read-only buffer");
+        clear_pending(ed);
+        return;
     }
 
     match token {

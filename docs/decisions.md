@@ -243,6 +243,24 @@ by construction (it decodes the CMOS bit ops at `$x7`/`$xF`); an NMOS-only
 image would mis-read those few slots — acceptable, and the emitted
 modeline states the chip it assumed.
 
+## 2026-09-06 — Binary files: read-only hex view (tickets #67, #69)
+
+The editor never renders a binary as text. A `.prg` opens disassembled
+(#65); everything else the editor can't decode — ROMs, `.bin`, object
+files — opens as a full **hex dump in a read-only buffer** (#69), and the
+picker previews a binary's head the same way (#67). One implementation of
+binary-sniffing and hex-formatting lives in `core::hex`, shared by the
+preview (first lines) and the open path (whole file, capped) — a single
+mechanism, two consumers. `read_only` is a real `Buffer` flag: mutations
+are inert, `save` is refused, and normal-mode edit commands report
+"read-only" instead of silently swallowing the key, so the file on disk is
+safe while you scroll, search and yank from it. Detection sniffs the head
+(a NUL byte, non-UTF-8 that isn't a boundary-clipped multibyte char, or
+dense control bytes) — a bare NUL test misses short 6502 images that carry
+none. The alternative, simply refusing to open binaries, was rejected as
+less useful for ROM inspection and less consistent with the disassembler's
+"open the special file as a view" shape.
+
 ## 2026-09-05 — Preview: a per-window projection, a mode only on focus
 
 Ticket #39 phase 1 resolves its own open question: the VIEW TRANSFORM is
