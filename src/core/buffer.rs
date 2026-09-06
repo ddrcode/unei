@@ -79,6 +79,27 @@ impl Buffer {
         Ok((buf, existed))
     }
 
+    /// Opens a compiled `.prg` (a Commodore/X16 program: 2-byte little-endian
+    /// load address, then the 65C02 code image) as its disassembly — a
+    /// read-only ACME listing produced by the machine lens's opcode table
+    /// (#65). Bound to a synthetic `.s` path so it highlights and answers `K`
+    /// like source, and a `:w` saves that source rather than the binary.
+    pub fn from_prg(path: &Path) -> Result<Buffer> {
+        let bytes = fs::read(path).with_context(|| format!("cannot open {}", path.display()))?;
+        if bytes.len() < 3 {
+            anyhow::bail!("{}: not a .prg (need at least 3 bytes)", path.display());
+        }
+        let org = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "prg".to_string());
+        let text = crate::lens::disassemble(&bytes[2..], org, &name, bytes.len());
+        let mut buf = Self::from_text(&text);
+        buf.path = Some(PathBuf::from(format!("{name}.disasm.s")));
+        Ok(buf)
+    }
+
     /// Declares the current content identical to what is on disk (used
     /// after reloading an externally formatted file).
     pub(crate) fn mark_saved(&mut self) {

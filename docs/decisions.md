@@ -222,6 +222,27 @@ because colors may guess a dialect but numbers must know it. Mnemonics
 are an open set — macros look exactly like opcodes — so the lens answers
 only from its table and reports the rest as not-counted, never guessed.
 
+## 2026-09-06 — Disassembler: the opcode table, run backwards (ticket #65)
+
+Opening a `.prg` shows its 65C02 disassembly instead of binary garbage.
+The decode table is built once by INVERTING the forward opcode table
+(`opcode_byte`) — the same ~150 (mnemonic, mode) rows the cycle table and
+the lens already trust, re-mapped byte→instruction — so it cannot drift
+from it; a unit test asserts every entry re-encodes to its own byte.
+Output is re-assemblable ACME carrying an `; asm: 65c02 acme` modeline and
+address+bytes trailing comments, which means the disassembly highlights
+and answers `K` through the exact machinery that produced it: the table
+decodes the image, then annotates its own output. This keeps the
+single-mechanism rule — no bespoke listing renderer, no illegal-opcode
+tables (undefined bytes are honest `!byte` data, and decoding resumes
+after them). Detection is by extension (`.prg` = 2-byte load address then
+image, unambiguous in the CBM/X16 world we target); the buffer binds to a
+synthetic `<name>.prg.disasm.s` path so it colours and a `:w` saves the
+disassembly as source rather than clobbering the binary. It is 65C02-only
+by construction (it decodes the CMOS bit ops at `$x7`/`$xF`); an NMOS-only
+image would mis-read those few slots — acceptable, and the emitted
+modeline states the chip it assumed.
+
 ## 2026-09-05 — Preview: a per-window projection, a mode only on focus
 
 Ticket #39 phase 1 resolves its own open question: the VIEW TRANSFORM is

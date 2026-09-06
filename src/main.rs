@@ -21,6 +21,11 @@ fn main() -> Result<()> {
         let mut buffers = Vec::new();
         let mut new_file = None;
         for path in &launch.files {
+            // a `.prg` is a compiled 6502 image — open it disassembled (#65)
+            if path.extension().and_then(|e| e.to_str()) == Some("prg") {
+                buffers.push(Buffer::from_prg(path)?);
+                continue;
+            }
             let (buffer, existed) = Buffer::from_path(path)?;
             if !existed && new_file.is_none() {
                 new_file = Some(path.clone());
