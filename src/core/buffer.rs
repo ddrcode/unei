@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use ropey::Rope;
@@ -32,6 +33,13 @@ pub struct Buffer {
     /// #69): mutations are inert and `save` is refused, so the source on disk
     /// can't be clobbered.
     pub read_only: bool,
+    /// The file as last read or written: (mtime, size). A mismatch with the
+    /// file now means something else changed it (#80) — `save` refuses
+    /// unless forced, and the editor's poll reloads or warns.
+    disk_stamp: Option<(SystemTime, u64)>,
+    /// Set by the poll when the file changed on disk while this buffer holds
+    /// unsaved edits; shown in the statusline, cleared by a reload or `:w!`.
+    pub disk_conflict: bool,
     version: u64,
     saved_version: u64,
     undo: Vec<Snapshot>,
@@ -54,12 +62,21 @@ fn normalized(text: &str) -> Rope {
     }
 }
 
+/// The file's (mtime, size) — the identity of "what's on disk right now".
+/// Size rides along so a rewrite within one mtime tick still registers.
+fn disk_stamp_of(path: &Path) -> Option<(SystemTime, u64)> {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
 impl Buffer {
     pub fn from_text(text: &str) -> Self {
         Self {
             rope: normalized(text),
             path: None,
             read_only: false,
+            disk_stamp: None,
+            disk_conflict: false,
             version: 0,
             saved_version: 0,
             undo: Vec::new(),
@@ -81,7 +98,33 @@ impl Buffer {
         let mut buf = Self::from_text("");
         buf.rope = rope;
         buf.path = Some(path.to_path_buf());
+        if existed {
+            buf.disk_stamp = disk_stamp_of(path);
+        }
         Ok((buf, existed))
+    }
+
+    /// Whether the file on disk differs from what this buffer last read or
+    /// wrote (#80): the mtime or size moved. A buffer never on disk, or a
+    /// file since deleted, reports `false`.
+    pub fn disk_changed(&self) -> bool {
+        match (self.path.as_deref(), self.disk_stamp) {
+            (Some(p), Some(recorded)) => disk_stamp_of(p).is_some_and(|now| now != recorded),
+            _ => false,
+        }
+    }
+
+    /// Drops the recorded disk stamp — after `:w {path}` rebinds the buffer,
+    /// the previous file's identity must not veto the first write.
+    pub(crate) fn forget_disk_stamp(&mut self) {
+        self.disk_stamp = None;
+        self.disk_conflict = false;
+    }
+
+    /// Reads the file's current content from disk (for a reload).
+    pub fn read_disk(&self) -> Result<String> {
+        let path = self.path.as_deref().context("no file name")?;
+        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))
     }
 
     /// Opens a compiled `.prg` (a Commodore/X16 program: 2-byte little-endian
@@ -127,9 +170,12 @@ impl Buffer {
     }
 
     /// Declares the current content identical to what is on disk (used
-    /// after reloading an externally formatted file).
+    /// after reloading an externally formatted file), and re-stamps the file
+    /// so that write isn't later mistaken for an external change.
     pub(crate) fn mark_saved(&mut self) {
         self.saved_version = self.version;
+        self.disk_stamp = self.path.as_deref().and_then(disk_stamp_of);
+        self.disk_conflict = false;
     }
 
     pub fn is_modified(&self) -> bool {
@@ -141,9 +187,15 @@ impl Buffer {
     }
 
     /// Writes atomically: temp file in the same directory, then rename.
-    pub fn save(&mut self) -> Result<(PathBuf, usize)> {
+    /// Refuses when the file changed on disk since it was read or written
+    /// (#80) unless `force` — an agent's or formatter's edits must never be
+    /// silently overwritten.
+    pub fn save(&mut self, force: bool) -> Result<(PathBuf, usize)> {
         if self.read_only {
             anyhow::bail!("read-only buffer");
+        }
+        if !force && self.disk_changed() {
+            anyhow::bail!("file changed on disk — :w! overwrites, :e reloads");
         }
         let path = self.path.clone().context("no file name")?;
         if OPTIONS.final_newline {
@@ -174,7 +226,7 @@ impl Buffer {
             let _ = fs::remove_file(&tmp);
         }
         write.with_context(|| format!("cannot write {}", path.display()))?;
-        self.saved_version = self.version;
+        self.mark_saved(); // also re-stamps: this write is ours, not external
         Ok((path, crate::core::text::text_lines(&self.rope)))
     }
 
@@ -320,6 +372,6 @@ mod tests {
         assert_eq!(b.rope.to_string(), "hello\n"); // untouched
         assert!(!b.is_modified());
         b.path = Some(PathBuf::from("/nonexistent/does-not-matter"));
-        assert!(b.save().is_err()); // refuses, so the source can't be clobbered
+        assert!(b.save(false).is_err()); // refuses, so the source can't be clobbered
     }
 }

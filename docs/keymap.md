@@ -237,6 +237,15 @@ first; the last window checks *all* buffers for unsaved changes. `:bd`/`:bd!`
 close the buffer. `:{number}` jumps to a line. `:w {path}` writes the buffer
 to a path and binds it there (how a bare-launch scratch buffer gets a home).
 
+**External changes (#80).** The editor watches the current file (about once
+a second). If something else — an agent, treefmt — changes it while the
+buffer is *clean*, the buffer **reloads itself** (undoable with `u`) and says
+so. If the buffer has unsaved edits, it's **flagged `[!]`** and warned
+instead, and a plain `:w` **refuses** rather than overwrite. Then:
+`:e` reloads from disk (refuses if you have unsaved edits), `:e!` reloads and
+drops them, `:w!` (also `:wq!` `:x!`) overwrites the disk version. There is
+no `:e {path}` — files open through the picker.
+
 ## Overlays
 
 - **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes. On a wide terminal a **preview pane** shows the selected file's head, syntax-highlighted (scroll-free — open it for more; binary/empty files are noted).

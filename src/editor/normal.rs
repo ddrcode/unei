@@ -157,7 +157,7 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
         Awaiting::ZUpper => {
             ed.pending.awaiting = Awaiting::None;
             match key {
-                Key::Char('Z') => ed.save_and_quit(true),
+                Key::Char('Z') => ed.save_and_quit(true, false),
                 Key::Char('Q') => ed.close_window_or_quit(true),
                 _ => {}
             }

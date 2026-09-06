@@ -150,14 +150,21 @@ fn execute(ed: &mut Editor, cmd: &str) {
     }
     match cmd {
         "w" => {
-            ed.save();
+            ed.save(false);
         }
+        "w!" => {
+            ed.save(true); // overwrite even if the file changed on disk (#80)
+        }
+        "e" => ed.reload_from_disk(false),
+        "e!" => ed.reload_from_disk(true),
         "q" => ed.close_window_or_quit(false),
         "q!" => ed.close_window_or_quit(true),
         "qa" | "quita" | "qall" => ed.quit(false),
         "qa!" | "quita!" | "qall!" => ed.quit(true),
-        "wq" => ed.save_and_quit(false),
-        "x" => ed.save_and_quit(true),
+        "wq" => ed.save_and_quit(false, false),
+        "wq!" => ed.save_and_quit(false, true),
+        "x" => ed.save_and_quit(true, false),
+        "x!" => ed.save_and_quit(true, true),
         _ if cmd.starts_with("w ") => ed.save_as(&cmd[2..]),
         _ if cmd.starts_with("w! ") => ed.save_as(&cmd[3..]),
         "bd" | "bdelete" => ed.close_buffer(ed.current_buffer_id(), false),

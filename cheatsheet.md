@@ -88,6 +88,9 @@ Inside: type to filter (grep = regex) · `Ctrl+I`/`Ctrl+K` or arrows ·
 ## Command line & files
 
 `:w` `:q` `:q!` `:wq` `:x` · `:qa` `:qa!` · `:w {path}` save-as · `:bd` ·
+`:e` reload from disk · `:e!` reload, drop my edits · `:w!` overwrite a file
+changed on disk (`[!]` in statusline = changed underneath you; clean buffers
+reload themselves) ·
 `:{N}` goto line · `ZZ` save+quit · `ZQ` quit! · `Ctrl+^` alternate buffer
 
 ## Leader chords (`Space` …)

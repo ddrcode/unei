@@ -56,8 +56,12 @@ indent); `Ctrl+T` / `Ctrl+D` (indent / dedent); arrows.
 the cursor, so the line keeps its length (tab-aligned trailing comments
 stay put), and `Backspace` restores what was covered.
 
-**Command line & files.** `:w` `:q` `:q!` `:wq` `:x` `:qa` `:qa!`
-`:bd` `:bd!` `:noh` `:{number}`, and `:w {path}` to name a scratch buffer.
+**Command line & files.** `:w` `:w!` `:q` `:q!` `:wq` `:wq!` `:x` `:x!`
+`:qa` `:qa!` `:bd` `:bd!` `:noh` `:{number}`, `:w {path}` to name a scratch
+buffer, and `:e` / `:e!` to reload the current file from disk. A file changed
+on disk makes `:w` refuse (vim's "file has been changed" warning, as a hard
+stop rather than a y/n prompt) until `:w!` or `:e`; a *clean* buffer reloads
+on its own, like `autoread`.
 
 **Windows, buffers, scrolling.** `Ctrl+W` splits/resizing/zoom; `Ctrl+^`
 alternate buffer; `Ctrl+D` `Ctrl+U` `Ctrl+F` `Ctrl+B`, `zz` `zt` `zb`;
