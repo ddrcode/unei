@@ -817,6 +817,11 @@ impl Editor {
     pub(crate) fn open_path(&mut self, rel: &str, split: Option<SplitDir>) {
         self.record_jump();
         let abs = self.root.join(rel);
+        // A `.prg` is a compiled 6502 image, not text — open it disassembled.
+        if abs.extension().and_then(|e| e.to_str()) == Some("prg") {
+            self.open_prg_disassembly(&abs, split);
+            return;
+        }
         let canon = std::fs::canonicalize(&abs).unwrap_or_else(|_| abs.clone());
         let existing = self.slots.iter().find_map(|slot| {
             let buffer = slot.buffer.as_ref().unwrap_or(&self.buffer);
@@ -847,6 +852,37 @@ impl Editor {
                 }
                 Err(e) => self.err(format!("{e:#}")),
             },
+        }
+    }
+
+    /// Opens a compiled `.prg` as its 65C02 disassembly (#65). The file is a
+    /// 2-byte little-endian load address followed by the code image; the
+    /// machine lens's opcode table decodes the image into a read-only ACME
+    /// listing that highlights and answers `K` like hand-written source.
+    fn open_prg_disassembly(&mut self, abs: &std::path::Path, split: Option<SplitDir>) {
+        let buffer = match Buffer::from_prg(abs) {
+            Ok(b) => b,
+            Err(e) => {
+                self.err(format!("{e:#}"));
+                return;
+            }
+        };
+        if let Some(dir) = split {
+            self.split_window(dir, false);
+        }
+        let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
+        self.slots.push(Slot {
+            id,
+            buffer: Some(buffer),
+            cursor: Cursor::default(),
+            goal: None,
+            top_line: 0,
+            left_cell: 0,
+        });
+        self.switch_to(id);
+        if let Some(name) = name {
+            self.msg(format!("disassembled {name}"));
         }
     }
 
