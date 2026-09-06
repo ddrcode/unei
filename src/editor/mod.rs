@@ -1957,6 +1957,8 @@ impl Editor {
             Some(Op::Delete) => s.push('d'),
             Some(Op::Change) => s.push('c'),
             Some(Op::Yank) => s.push('y'),
+            Some(Op::Indent) => s.push('>'),
+            Some(Op::Dedent) => s.push('<'),
             None => {}
         }
         if let Some(c) = self.pending.count2 {

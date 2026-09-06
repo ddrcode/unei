@@ -43,6 +43,7 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `s` `S` | substitute char / line |
 | `~` | toggle case |
 | `J` | join lines |
+| `>>` `<<`, `>`/`<` + motion | shift lines right / left by a shiftwidth (`3>>`, `>%`, `>G`); one undo step, dot-repeatable |
 | `p` `P` | paste the **yank** register after / before (char, line, or block) |
 | `Space p` / `Space P` | paste the **cut** register after / before (the `dd`+`p` line-move lives here) |
 | `gcc` | toggle line comment on the current line (`3gcc` for three lines) |
@@ -173,6 +174,7 @@ Motions extend the selection; `h` is a left motion here.
 | `c` / `s` | change selection (block: type once, Esc replicates to every line) |
 | `y` | yank (with flash) |
 | `gc` | toggle line comments on the selected lines |
+| `>` / `<` | shift the selected lines right / left |
 | `~` | toggle case |
 | `p` | replace selection with register — **never clobbers the register** |
 | `o` / `O` | swap ends / swap block corners |
@@ -191,6 +193,7 @@ Motions extend the selection; `h` is a left motion here.
 | `Tab` | spaces to the next 4-column stop |
 | `Backspace` / `Del` | delete back / forward (joins lines at edges) |
 | `Ctrl+W` | delete word back |
+| `Ctrl+T` / `Ctrl+D` | indent / dedent the current line |
 | `Ctrl+U` | delete to indent |
 | arrows, Home/End | movement without leaving insert |
 

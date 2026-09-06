@@ -91,6 +91,8 @@ pub fn normal_token(key: Key) -> Option<Token> {
         Key::Char('d') => Token::Op(Op::Delete),
         Key::Char('c') => Token::Op(Op::Change),
         Key::Char('y') => Token::Op(Op::Yank),
+        Key::Char('>') => Token::Op(Op::Indent),
+        Key::Char('<') => Token::Op(Op::Dedent),
 
         // simple commands
         Key::Char('x') => Token::Simple(SimpleCmd::DeleteRight),
