@@ -20,8 +20,8 @@ use super::Editor;
 const MAX_FILES: usize = 50_000;
 /// Preview reads at most this many bytes / renders at most this many lines —
 /// enough to recall what a file is; open it in the editor for more (#26).
-const PREVIEW_BYTES: usize = 64 * 1024;
-const PREVIEW_LINES: usize = 80;
+const PREVIEW_BYTES: usize = 128 * 1024;
+const PREVIEW_LINES: usize = 240;
 
 /// The selected file's head, for the picker's preview pane. Scroll-free by
 /// design: the first lines only.

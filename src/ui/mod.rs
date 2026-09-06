@@ -519,22 +519,23 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
     let Some(p) = &ed.file_picker else { return };
 
     // widen into a two-pane float (list left, preview right) when there's
-    // room and a preview to show; otherwise the list-only float (#26)
+    // room and a preview to show; otherwise the list-only float (#26). Sizes
+    // scale with the terminal — a big monitor gets a big preview.
     let show_preview = area.width >= 96 && p.preview.is_some();
-    let w = if show_preview {
-        (area.width / 3).clamp(34, 52)
+    let (w, preview_w) = if show_preview {
+        // the float spans ~80% of the width; the list takes a quarter, the
+        // preview the rest, so a wide screen pours the extra into the preview
+        let total = (area.width * 4 / 5).min(area.width.saturating_sub(4));
+        let list = (total / 4).clamp(34, 60);
+        (list, total.saturating_sub(list))
     } else {
-        (area.width.saturating_sub(10)).clamp(30, 72)
-    };
-    let preview_w = if show_preview {
-        (area.width.saturating_sub(w + 8)).clamp(30, 84)
-    } else {
-        0
+        ((area.width * 3 / 5).clamp(30, 100), 0)
     };
     let total_w = w + preview_w;
-    let h = (area.height.saturating_sub(4)).clamp(6, if show_preview { 24 } else { 16 });
+    // ~80% of the height, floored for small terminals, never past the edges
+    let h = (area.height * 4 / 5).clamp(8, area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(total_w)) / 2;
-    let y = area.height.saturating_sub(h) / 6 + 1;
+    let y = area.height.saturating_sub(h) / 3;
     let rect = Rect::new(x, y, w, h);
     let inner_w = w.saturating_sub(2) as usize;
     let list_rows = h.saturating_sub(3) as usize; // border + query line
