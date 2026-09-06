@@ -158,6 +158,8 @@ fn execute(ed: &mut Editor, cmd: &str) {
         "qa!" | "quita!" | "qall!" => ed.quit(true),
         "wq" => ed.save_and_quit(false),
         "x" => ed.save_and_quit(true),
+        _ if cmd.starts_with("w ") => ed.save_as(&cmd[2..]),
+        _ if cmd.starts_with("w! ") => ed.save_as(&cmd[3..]),
         "bd" | "bdelete" => ed.close_buffer(ed.current_buffer_id(), false),
         "bd!" | "bdelete!" => ed.close_buffer(ed.current_buffer_id(), true),
         "noh" | "nohl" | "nohlsearch" => ed.search.highlight = false,
