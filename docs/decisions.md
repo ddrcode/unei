@@ -203,6 +203,25 @@ Objects: `w`/`W`, `p` (linewise), the bracket pairs (`(` `)` `b`; `{` `}`
 `B`; `[` `]`; `<` `>`), and quotes (`"` `'` `` ` ``); on `d`/`c`/`y` and
 in visual mode.
 
+## 2026-09-06 — Syntax text objects: tree-sitter earns a second object class (ticket #78)
+
+This **amends** the #12 stance ("objects are structural, not syntactic;
+plain-scan, not tree-sitter"). That held for *lexical* objects — words,
+paragraphs, brackets, quotes — which a scanner resolves exactly and tree-
+sitter would only overcomplicate. But "select the enclosing **function** /
+**type**" is inherently syntactic: no scanner can do it, and tree-sitter —
+already the grammar authority for highlighting and the symbol picker — is the
+only honest source. So `f` (function) and `c` (class: impl/struct/enum/union/
+trait/mod) join the `a`/`n` family, resolved from a per-language `textobjects`
+query (the same registry mechanism as the symbols query, #62). This does *not*
+break the single-way rule: each object still has exactly one mechanism —
+lexical objects stay plain-scan, syntactic objects are tree-sitter — with no
+overlap or fallback between them. `af` is the whole node (linewise); `nf` its
+body, braces and surrounding whitespace trimmed. The cursor may sit anywhere
+inside the node (innermost enclosing match wins), so `daf` from deep in a
+method deletes that method, `dac` the enclosing impl. Rust first; another
+language is a `textobjects` query away.
+
 ## 2026-09-05 — Completion: LSP-only, manual, no snippets (ticket #22)
 
 Iteration one is deliberately the smallest useful thing: Rust only,

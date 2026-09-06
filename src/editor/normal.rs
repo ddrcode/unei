@@ -581,14 +581,34 @@ fn inclusive_end(ed: &Editor, target: Cursor) -> usize {
 
 /// Applies the pending operator to — or, in visual mode, selects — the text
 /// object named by `ch` (#12). `around` is the `a…` form, else `n…` (inner).
+/// Resolves a `function`/`class` text object under the cursor via tree-sitter
+/// (#78), as a `textobject::Range`. `None` when the buffer's language has no
+/// text-object query or nothing encloses the cursor.
+fn syntax_object(ed: &Editor, want: &str, around: bool) -> Option<crate::core::textobject::Range> {
+    let path = ed.buffer.path.as_deref()?;
+    let head = ed.buffer.rope.lines().map(|l| l.to_string()).take(5);
+    let lang = crate::syntax::detect_lang_for(path, head)?;
+    let (start, end, linewise) =
+        crate::syntax::text_object(&ed.buffer.rope, lang, ed.cursor, want, around)?;
+    Some(crate::core::textobject::Range {
+        start,
+        end,
+        linewise,
+    })
+}
+
 fn apply_text_object(ed: &mut Editor, around: bool, ch: char) {
     use crate::core::textobject;
-    let Some(kind) = textobject::parse(ch) else {
-        clear_pending(ed);
-        return;
-    };
     let count = ed.pending.take_count().unwrap_or(1);
-    let Some(range) = textobject::resolve(&ed.buffer.rope, ed.cursor, kind, around, count) else {
+    // `f`/`c` are syntax objects (function / class) resolved via tree-sitter
+    // (#78); the lexical objects stay plain-scan (textobject.rs)
+    let range = match ch {
+        'f' => syntax_object(ed, "function", around),
+        'c' => syntax_object(ed, "class", around),
+        _ => textobject::parse(ch)
+            .and_then(|kind| textobject::resolve(&ed.buffer.rope, ed.cursor, kind, around, count)),
+    };
+    let Some(range) = range else {
         clear_pending(ed);
         return;
     };

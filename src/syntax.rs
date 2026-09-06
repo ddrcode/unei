@@ -158,6 +158,85 @@ pub fn document_symbols(rope: &Rope, lang: &str) -> Vec<Symbol> {
     out
 }
 
+/// Resolves a syntax text object (#78): the innermost `want` node
+/// (`"function"` or `"class"`) enclosing the cursor. Returns a char range
+/// `start..end` and whether it is linewise. `around` gives the whole node
+/// (linewise); inner gives its body's content, braces and surrounding
+/// whitespace trimmed (linewise when it spans lines, else charwise). `None`
+/// when the language has no text-object query or nothing encloses the cursor.
+pub fn text_object(
+    rope: &Rope,
+    lang: &str,
+    cursor: crate::core::buffer::Cursor,
+    want: &str,
+    around: bool,
+) -> Option<(usize, usize, bool)> {
+    let config = languages::config_for(lang)?;
+    let query = config.textobjects.as_ref()?;
+    let source = rope.to_string();
+    let mut parser = Parser::new();
+    parser.set_language(&config.language).ok()?;
+    let tree = parser.parse(&source, None)?;
+    let cursor_byte = rope.char_to_byte(rope.line_to_char(cursor.line) + cursor.col);
+
+    let names = query.capture_names();
+    let around_cap = format!("{want}.around");
+    let inner_cap = format!("{want}.inner");
+    let mut best: Option<(usize, usize)> = None; // innermost enclosing @around
+    let mut inners: Vec<(usize, usize)> = Vec::new();
+    let mut qc = QueryCursor::new();
+    let mut it = qc.matches(query, tree.root_node(), source.as_bytes());
+    while let Some(m) = it.next() {
+        for cap in m.captures() {
+            let (s, e) = (cap.node.start_byte(), cap.node.end_byte());
+            if names[cap.index as usize] == around_cap {
+                if s <= cursor_byte
+                    && cursor_byte < e
+                    && best.is_none_or(|(bs, be)| e - s < be - bs)
+                {
+                    best = Some((s, e));
+                }
+            } else if names[cap.index as usize] == inner_cap {
+                inners.push((s, e));
+            }
+        }
+    }
+    let (as_, ae) = best?;
+    let (s, e) = if around {
+        (as_, ae)
+    } else {
+        // the chosen node's own body is the largest inner within its span
+        let (bs, be) = inners
+            .into_iter()
+            .filter(|&(s, e)| s >= as_ && e <= ae)
+            .max_by_key(|&(s, e)| e - s)?;
+        trim_body(&source, bs, be)?
+    };
+    let linewise = around || rope.byte_to_line(s) != rope.byte_to_line(e.saturating_sub(1));
+    Some((rope.byte_to_char(s), rope.byte_to_char(e), linewise))
+}
+
+/// Drops a body node's enclosing delimiter and surrounding whitespace, leaving
+/// its content (statements) — the inner of a `function`/`class` object.
+fn trim_body(source: &str, start: usize, end: usize) -> Option<(usize, usize)> {
+    let b = source.as_bytes();
+    let mut s = start;
+    let mut e = end;
+    if s < e && matches!(b[s], b'{' | b'(' | b'[') {
+        s += 1;
+    }
+    if e > s && matches!(b[e - 1], b'}' | b')' | b']') {
+        e -= 1;
+    }
+    while s < e && b[s].is_ascii_whitespace() {
+        s += 1;
+    }
+    while e > s && b[e - 1].is_ascii_whitespace() {
+        e -= 1;
+    }
+    (s < e).then_some((s, e))
+}
+
 /// Highlights a standalone snippet (fenced code in previews) into per-line
 /// spans, resolving the language through the registry incl. aliases.
 pub fn highlight_text(text: &str, lang: &str) -> Vec<Vec<LineSpan>> {

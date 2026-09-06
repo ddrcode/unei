@@ -33,8 +33,9 @@ cursor — decimal, `0x`/`$` hex, `0b`/`%` binary, preserving width and case);
 insert session is one unit); and `.` dot-repeat.
 
 **Text objects.** The full around/inner families — word, WORD, paragraph,
-the bracket pairs, and quotes — on `d`/`c`/`y` and in visual mode. (The prefix
-is `a`/`n`, not `a`/`i` — see *Different*.)
+the bracket pairs, and quotes — on `d`/`c`/`y` and in visual mode, plus
+**syntax-aware `f` (function) and `c` (class/type)** via tree-sitter, which
+vim needs a plugin for. (The prefix is `a`/`n`, not `a`/`i` — see *Different*.)
 
 **Marks & jumps.** `m{a-z}` set; `` `x `` / `'x`; `` `` `` / `''`;
 `Ctrl+O` / `Ctrl+I` jumplist (crossing buffers), fed by `G`/`gg`/`{`/`}`,
