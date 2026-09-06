@@ -103,6 +103,8 @@ pub enum Token {
     Scroll(ScrollCmd),
     FindStart(FindKind),
     ReplaceStart,
+    /// `R` — enter Replace (overtype) mode.
+    ReplaceMode,
     /// `m` — set a mark; awaits the mark letter.
     SetMark,
     /// `` ` `` (exact) / `'` (line) — jump to a mark; awaits the letter.

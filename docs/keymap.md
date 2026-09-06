@@ -79,6 +79,7 @@ outside this context keeps its normal meaning (append / next match).
 | `h` `H` | insert before cursor / at first non-blank |
 | `a` `A` | append after cursor / at line end |
 | `o` `O` | open line below / above |
+| `R` | Replace (overtype) mode — typed chars replace those under the cursor; `Backspace` restores what it covered |
 | `v` `V` `Ctrl+V` | visual char / line / block |
 | `:` | command line |
 

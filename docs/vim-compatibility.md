@@ -49,6 +49,10 @@ ends / block corners; `p` to replace the selection; `gv` to reselect.
 `Tab`; `Backspace` / `Del`; `Ctrl+W` (delete word); `Ctrl+U` (delete to
 indent); `Ctrl+T` / `Ctrl+D` (indent / dedent); arrows.
 
+**Replace mode.** `R` overtypes — typed characters replace the ones under
+the cursor, so the line keeps its length (tab-aligned trailing comments
+stay put), and `Backspace` restores what was covered.
+
 **Command line & files.** `:w` `:q` `:q!` `:wq` `:x` `:qa` `:qa!`
 `:bd` `:bd!` `:noh` `:{number}`, and `:w {path}` to name a scratch buffer.
 

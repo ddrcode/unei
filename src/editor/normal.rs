@@ -391,6 +391,14 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 ed.pending.awaiting = Awaiting::Replace;
             }
         }
+        Token::ReplaceMode => {
+            if ed.pending.op.is_some() {
+                clear_pending(ed);
+            } else {
+                ed.pending.take_count();
+                enter_replace(ed);
+            }
+        }
         Token::SetMark => ed.pending.awaiting = Awaiting::SetMark,
         Token::JumpMark { exact } => ed.pending.awaiting = Awaiting::JumpMark { exact },
         Token::Leader => {
@@ -897,6 +905,15 @@ fn motion_cursor_of_abs(ed: &Editor, abs: usize) -> Cursor {
     let col = col.min(max_normal_col(rope, line, OPTIONS.tabstop));
     let grs = line_graphemes(&line_content(rope, line), OPTIONS.tabstop);
     Cursor::new(line, text::snap_to_grapheme(&grs, col))
+}
+
+/// `R` — enter Replace (overtype) mode. Opens one undo transaction, like
+/// insert; `leave_insert` closes it.
+pub(crate) fn enter_replace(ed: &mut Editor) {
+    ed.goal = None;
+    ed.replace_stack.clear();
+    ed.buffer.begin_change(ed.cursor);
+    ed.mode = Mode::Replace;
 }
 
 pub(crate) fn enter_insert(ed: &mut Editor, entry: InsertEntry) {
