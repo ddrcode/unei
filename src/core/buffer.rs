@@ -28,6 +28,10 @@ struct Snapshot {
 pub struct Buffer {
     pub rope: Rope,
     pub path: Option<PathBuf>,
+    /// A view of something not meant to be edited (a binary opened as hex,
+    /// #69): mutations are inert and `save` is refused, so the source on disk
+    /// can't be clobbered.
+    pub read_only: bool,
     version: u64,
     saved_version: u64,
     undo: Vec<Snapshot>,
@@ -55,6 +59,7 @@ impl Buffer {
         Self {
             rope: normalized(text),
             path: None,
+            read_only: false,
             version: 0,
             saved_version: 0,
             undo: Vec::new(),
@@ -100,6 +105,27 @@ impl Buffer {
         Ok(buf)
     }
 
+    /// Opens any binary file as a read-only hex view (#69): a full hex dump
+    /// in a buffer that refuses edits and saves, so the file on disk can't be
+    /// clobbered. Large files are dumped up to a cap with a truncation note.
+    pub fn from_hex(path: &Path) -> Result<Buffer> {
+        const HEX_VIEW_BYTES: usize = 1 << 20; // 1 MiB — plenty for any ROM
+        let bytes = fs::read(path).with_context(|| format!("cannot open {}", path.display()))?;
+        let shown = bytes.len().min(HEX_VIEW_BYTES);
+        let mut lines = crate::core::hex::hex_dump(&bytes[..shown], usize::MAX);
+        if shown < bytes.len() {
+            lines.push(format!(
+                "… {} more bytes not shown (hex view capped at {} KiB)",
+                bytes.len() - shown,
+                HEX_VIEW_BYTES / 1024
+            ));
+        }
+        let mut buf = Self::from_text(&lines.join("\n"));
+        buf.path = Some(path.to_path_buf());
+        buf.read_only = true;
+        Ok(buf)
+    }
+
     /// Declares the current content identical to what is on disk (used
     /// after reloading an externally formatted file).
     pub(crate) fn mark_saved(&mut self) {
@@ -116,6 +142,9 @@ impl Buffer {
 
     /// Writes atomically: temp file in the same directory, then rename.
     pub fn save(&mut self) -> Result<(PathBuf, usize)> {
+        if self.read_only {
+            anyhow::bail!("read-only buffer");
+        }
         let path = self.path.clone().context("no file name")?;
         if OPTIONS.final_newline {
             let n = self.rope.len_chars();
@@ -150,7 +179,7 @@ impl Buffer {
     }
 
     pub fn insert(&mut self, char_idx: usize, text: &str) {
-        if text.is_empty() {
+        if self.read_only || text.is_empty() {
             return;
         }
         self.rope.insert(char_idx, text);
@@ -158,7 +187,7 @@ impl Buffer {
     }
 
     pub fn remove(&mut self, range: std::ops::Range<usize>) {
-        if range.is_empty() {
+        if self.read_only || range.is_empty() {
             return;
         }
         self.rope.remove(range);
@@ -169,7 +198,7 @@ impl Buffer {
     /// is pushed and redo history is dropped. Nested calls are folded into the
     /// open transaction (e.g. `cw` opens one that the insert session extends).
     pub fn begin_change(&mut self, cursor: Cursor) {
-        if self.open_change.is_some() {
+        if self.read_only || self.open_change.is_some() {
             return;
         }
         self.open_change = Some(self.version);
@@ -266,5 +295,31 @@ mod tests {
         assert_eq!(Buffer::from_text("").rope.to_string(), "\n");
         assert_eq!(Buffer::from_text("a").rope.to_string(), "a\n");
         assert_eq!(Buffer::from_text("a\n").rope.to_string(), "a\n");
+    }
+
+    #[test]
+    fn from_hex_is_read_only_and_bound_to_the_file() {
+        let dir = std::env::temp_dir().join(format!("unei-hex-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("rom.bin");
+        std::fs::write(&f, [0x01u8, 0x08, 0xA9, 0x02, 0x8D, 0x20, 0xD0]).unwrap();
+        let buf = Buffer::from_hex(&f).unwrap();
+        assert!(buf.read_only);
+        assert_eq!(buf.path.as_deref(), Some(f.as_path())); // keeps the real name
+        assert!(buf.rope.to_string().contains("00000000  01 08 a9 02"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_only_buffer_rejects_edits_and_save() {
+        let mut b = Buffer::from_text("hello");
+        b.read_only = true;
+        b.begin_change(Cursor::default());
+        b.insert(0, "X");
+        b.remove(0..1);
+        assert_eq!(b.rope.to_string(), "hello\n"); // untouched
+        assert!(!b.is_modified());
+        b.path = Some(PathBuf::from("/nonexistent/does-not-matter"));
+        assert!(b.save().is_err()); // refuses, so the source can't be clobbered
     }
 }

@@ -822,6 +822,11 @@ impl Editor {
             self.open_prg_disassembly(&abs, split);
             return;
         }
+        // Any other binary opens as a read-only hex view, not garbage (#69).
+        if crate::core::hex::file_looks_binary(&abs) {
+            self.open_hex_view(&abs, split);
+            return;
+        }
         let canon = std::fs::canonicalize(&abs).unwrap_or_else(|_| abs.clone());
         let existing = self.slots.iter().find_map(|slot| {
             let buffer = slot.buffer.as_ref().unwrap_or(&self.buffer);
@@ -883,6 +888,36 @@ impl Editor {
         self.switch_to(id);
         if let Some(name) = name {
             self.msg(format!("disassembled {name}"));
+        }
+    }
+
+    /// Opens a binary file as a read-only hex view (#69). Everything the
+    /// editor can't render as text — ROMs, `.bin`, object files — becomes a
+    /// hex dump you can scroll and search but not edit, so the file is safe.
+    fn open_hex_view(&mut self, abs: &std::path::Path, split: Option<SplitDir>) {
+        let buffer = match Buffer::from_hex(abs) {
+            Ok(b) => b,
+            Err(e) => {
+                self.err(format!("{e:#}"));
+                return;
+            }
+        };
+        if let Some(dir) = split {
+            self.split_window(dir, false);
+        }
+        let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
+        self.slots.push(Slot {
+            id,
+            buffer: Some(buffer),
+            cursor: Cursor::default(),
+            goal: None,
+            top_line: 0,
+            left_cell: 0,
+        });
+        self.switch_to(id);
+        if let Some(name) = name {
+            self.msg(format!("{name}: binary — read-only hex view"));
         }
     }
 

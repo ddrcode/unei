@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod commands;
+pub mod hex;
 pub mod motion;
 pub mod text;
 pub mod textobject;

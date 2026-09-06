@@ -26,6 +26,11 @@ fn main() -> Result<()> {
                 buffers.push(Buffer::from_prg(path)?);
                 continue;
             }
+            // any other binary opens as a read-only hex view (#69)
+            if unei::core::hex::file_looks_binary(path) {
+                buffers.push(Buffer::from_hex(path)?);
+                continue;
+            }
             let (buffer, existed) = Buffer::from_path(path)?;
             if !existed && new_file.is_none() {
                 new_file = Some(path.clone());

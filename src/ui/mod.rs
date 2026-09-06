@@ -17,6 +17,7 @@ struct WinView<'a> {
     buf_id: crate::editor::BufId,
     name: String,
     modified: bool,
+    read_only: bool,
     cursor_line: usize,
     cursor_col: usize,
     top_line: usize,
@@ -74,6 +75,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                 buf_id: ed.current_buffer_id(),
                 name: buffer_display_name(ed.buffer.path.as_deref()),
                 modified: ed.buffer.is_modified(),
+                read_only: ed.buffer.read_only,
                 cursor_line: ed.cursor.line,
                 cursor_col: ed.cursor.col,
                 top_line: ed.top_line,
@@ -91,6 +93,7 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                 buf_id: state.buf_id,
                 name: buffer_display_name(buffer.path.as_deref()),
                 modified: buffer.is_modified(),
+                read_only: buffer.read_only,
                 cursor_line: state.cursor.line.min(last),
                 cursor_col: state.cursor.col,
                 top_line: state.top_line.min(last),
@@ -1118,7 +1121,8 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
     } else {
         ""
     };
-    let left = format!(" {}{modified}{zoom}", view.name);
+    let ro = if view.read_only { " [RO]" } else { "" };
+    let left = format!(" {}{modified}{ro}{zoom}", view.name);
     let name_fg = if view.focused {
         palette::STATUSLINE_FG
     } else {
