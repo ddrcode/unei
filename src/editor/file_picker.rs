@@ -11,10 +11,20 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use crate::config::keymap::{self, Key};
+use crate::core::buffer::Cursor;
 use crate::core::commands::PickerCmd;
+use crate::core::text::first_non_blank;
 use crate::editor::windows::SplitDir;
 
 use super::Editor;
+
+/// What the picker is picking (#62): files to open, or symbols in the
+/// current buffer to jump to. The fuzzy list and rendering are shared.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum PickerKind {
+    Files,
+    Symbols,
+}
 
 /// Hard cap on the number of files walked (keeps huge trees responsive).
 const MAX_FILES: usize = 50_000;
@@ -50,6 +60,9 @@ pub struct FilePicker {
     pub preview: Option<Preview>,
     /// The path the current preview was built for (skip re-reads on typing).
     preview_for: Option<PathBuf>,
+    pub kind: PickerKind,
+    /// Symbols mode: the source line for each item, parallel to `items`.
+    targets: Vec<usize>,
 }
 
 impl FilePicker {
@@ -68,7 +81,11 @@ impl FilePicker {
     }
 
     /// Rebuilds the preview for the selected file, unless it hasn't changed.
+    /// Only files have a preview; the symbol picker is a plain list.
     fn refresh_preview(&mut self) {
+        if self.kind != PickerKind::Files {
+            return;
+        }
         let path = self.selected_path();
         if path == self.preview_for {
             return;
@@ -147,6 +164,48 @@ pub fn open(ed: &mut Editor) {
         root: ed.root().to_path_buf(),
         preview: None,
         preview_for: None,
+        kind: PickerKind::Files,
+        targets: Vec::new(),
+    };
+    picker.refilter();
+    ed.buffer_list = None;
+    ed.file_picker = Some(picker);
+}
+
+/// Opens the symbol picker (#62): the current buffer's definitions, from
+/// tree-sitter, to fuzzy-filter and jump to. Rust for now.
+pub fn open_symbols(ed: &mut Editor) {
+    let Some(path) = ed.buffer.path.as_deref() else {
+        ed.err("no symbols: unsaved buffer");
+        return;
+    };
+    let head = ed.buffer.rope.lines().map(|l| l.to_string()).take(5);
+    let Some(lang) = crate::syntax::detect_lang_for(path, head) else {
+        ed.err("no symbol support for this file type");
+        return;
+    };
+    let symbols = crate::syntax::document_symbols(&ed.buffer.rope, lang);
+    if symbols.is_empty() {
+        ed.err("no symbols found");
+        return;
+    }
+    let mut items = Vec::with_capacity(symbols.len());
+    let mut targets = Vec::with_capacity(symbols.len());
+    for s in &symbols {
+        items.push(format!("{:<6} {}", s.kind, s.name));
+        targets.push(s.line);
+    }
+    let mut picker = FilePicker {
+        query: String::new(),
+        items,
+        matches: Vec::new(),
+        selected: 0,
+        truncated: false,
+        root: ed.root().to_path_buf(),
+        preview: None,
+        preview_for: None,
+        kind: PickerKind::Symbols,
+        targets,
     };
     picker.refilter();
     ed.buffer_list = None;
@@ -191,16 +250,32 @@ fn command(ed: &mut Editor, cmd: PickerCmd) {
             let Some(m) = p.matches.get(p.selected) else {
                 return;
             };
-            let rel = p.item(m).to_string();
-            ed.file_picker = None;
-            let split = match cmd {
-                PickerCmd::OpenVsplit => Some(SplitDir::Vertical),
-                PickerCmd::OpenHsplit => Some(SplitDir::Horizontal),
-                _ => None,
-            };
-            ed.open_path(&rel, split);
+            match p.kind {
+                PickerKind::Files => {
+                    let rel = p.item(m).to_string();
+                    ed.file_picker = None;
+                    let split = match cmd {
+                        PickerCmd::OpenVsplit => Some(SplitDir::Vertical),
+                        PickerCmd::OpenHsplit => Some(SplitDir::Horizontal),
+                        _ => None,
+                    };
+                    ed.open_path(&rel, split);
+                }
+                PickerKind::Symbols => {
+                    let line = p.targets[m.item];
+                    ed.file_picker = None;
+                    ed.record_jump();
+                    ed.cursor = Cursor::new(line, first_non_blank(&ed.buffer.rope, line));
+                    ed.goal = None;
+                    ed.clamp_cursor();
+                    ed.scroll_to_cursor();
+                }
+            }
         }
         PickerCmd::CreatePath => {
+            if p.kind != PickerKind::Files {
+                return; // creating a path is meaningless in the symbol picker
+            }
             let rel = p.query.trim().to_string();
             if !valid_new_path(&rel) {
                 ed.err(format!("Invalid path: {rel}"));

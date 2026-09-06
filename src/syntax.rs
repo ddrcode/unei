@@ -114,6 +114,50 @@ pub fn detect_lang_for(
     languages::detect(Some(path))
 }
 
+/// A definition found in a buffer, for the symbol picker (#62).
+pub struct Symbol {
+    pub name: String,
+    /// The query capture that matched: `fn`, `struct`, `enum`, `impl`, …
+    pub kind: &'static str,
+    pub line: usize,
+}
+
+/// Extracts a file's definitions via its grammar's symbols query, ordered by
+/// line. Empty when the language has no symbols query (only Rust, for now).
+pub fn document_symbols(rope: &Rope, lang: &str) -> Vec<Symbol> {
+    let Some(config) = languages::config_for(lang) else {
+        return Vec::new();
+    };
+    let Some(query) = &config.symbols else {
+        return Vec::new();
+    };
+    let source = rope.to_string();
+    let mut parser = Parser::new();
+    if parser.set_language(&config.language).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return Vec::new();
+    };
+    let names = query.capture_names();
+    let mut out = Vec::new();
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(query, tree.root_node(), source.as_bytes());
+    while let Some(m) = it.next() {
+        for cap in m.captures() {
+            if let Ok(name) = cap.node.utf8_text(source.as_bytes()) {
+                out.push(Symbol {
+                    name: name.to_string(),
+                    kind: names[cap.index as usize],
+                    line: cap.node.start_position().row,
+                });
+            }
+        }
+    }
+    out.sort_by_key(|s| s.line);
+    out
+}
+
 /// Highlights a standalone snippet (fenced code in previews) into per-line
 /// spans, resolving the language through the registry incl. aliases.
 pub fn highlight_text(text: &str, lang: &str) -> Vec<Vec<LineSpan>> {
