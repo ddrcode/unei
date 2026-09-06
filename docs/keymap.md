@@ -232,7 +232,7 @@ to a path and binds it there (how a bare-launch scratch buffer gets a home).
 
 ## Overlays
 
-- **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes.
+- **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes. On a wide terminal a **preview pane** shows the selected file's head, syntax-highlighted (scroll-free — open it for more; binary/empty files are noted).
 - **Buffer list** — `i`/`k` select, `Enter` switches, `x` closes a buffer, `Esc`/`q` dismiss.
 - **Code actions** — `i`/`k` select, `Enter` applies, `Esc`/`q` dismiss.
 - **Hover float** — any key dismisses (`Esc`/`q`/`K` do nothing else).
