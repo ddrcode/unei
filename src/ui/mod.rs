@@ -566,9 +566,13 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
     for (row, m) in p.matches.iter().enumerate().skip(offset).take(list_rows) {
         let item = p.item(m);
         let selected = row == p.selected;
+        // a nerd-font file-type icon leads each row in file mode (#73)
+        let icon = (p.kind == crate::editor::file_picker::PickerKind::Files)
+            .then(|| crate::config::icons::icon_for(item));
+        let icon_w = if icon.is_some() { 2 } else { 0 };
         // left-truncate long paths, shifting match indices with the cut
         let (shown, cut) = {
-            let max = inner_w.saturating_sub(3);
+            let max = inner_w.saturating_sub(3 + icon_w);
             let n = item.chars().count();
             if n > max {
                 let cut = n - (max - 1);
@@ -592,6 +596,14 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
             if selected { " ▸ " } else { "   " },
             row_style,
         )];
+        if let Some((glyph, color)) = icon {
+            let istyle = if selected {
+                row_style
+            } else {
+                Style::default().bg(palette::FLOAT_BG).fg(color)
+            };
+            spans.push(Span::styled(format!("{glyph} "), istyle));
+        }
         for (ci, ch) in shown.chars().enumerate() {
             let orig = ci as i64 + cut;
             let hit = orig >= 0 && m.indices.contains(&(orig as u32));
@@ -600,7 +612,7 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
                 if hit { hit_style } else { row_style },
             ));
         }
-        let used: usize = 3 + shown.width();
+        let used: usize = 3 + icon_w + shown.width();
         spans.push(Span::styled(
             " ".repeat(inner_w.saturating_sub(used)),
             row_style,

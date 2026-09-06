@@ -1,6 +1,7 @@
 //! All configuration is compiled in. Changing anything here requires a rebuild —
 //! that is the point (see docs/rules.md).
 
+pub mod icons;
 pub mod keymap;
 pub mod languages;
 pub mod palette;
