@@ -2,8 +2,11 @@
 //! after the prefix `a` (around) or `n` (inner — `n` because the IJKL swap
 //! that moved `i` to insert freed it; see docs/decisions.md). Each resolver
 //! returns a char range `start..end` (end exclusive) and whether it is
-//! linewise, computed with plain text scanning (no tree-sitter; the rules
-//! mandate a single mechanism, and objects are structural, not syntactic).
+//! linewise. These are the LEXICAL objects — words, paragraphs, brackets,
+//! quotes — computed by plain text scanning, which resolves them exactly.
+//! The SYNTACTIC objects (`f` function, `c` class) can't be scanned; they
+//! live in `syntax::text_object` via tree-sitter (#78). Each object still has
+//! exactly one mechanism — no overlap, no fallback (docs/decisions.md).
 
 use ropey::Rope;
 

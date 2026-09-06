@@ -68,10 +68,14 @@ After an operator (`d` `c` `y`) or in visual mode, `a` (around) or `n`
 | `p` | paragraph (linewise) |
 | `(` `)` `b`, `{` `}` `B`, `[` `]`, `<` `>` | bracket pair — inner or including the brackets |
 | `"` `'` `` ` `` | quoted string on the line |
+| `f` | **function** — via tree-sitter (`daf` deletes it, `caf` rewrites it, `vaf` selects it); `nf` is the body |
+| `c` | **class / type** — impl, struct, enum, union, trait, mod (`dac`, `vnc`, …) |
 
 `a` is around (includes the brackets/quotes, or a word's trailing space);
 `n` is inner. Counts extend words and paragraphs (`d2nw`). A bare `a`/`n`
-outside this context keeps its normal meaning (append / next match).
+outside this context keeps its normal meaning (append / next match). `f`/`c`
+are **syntax-aware** (tree-sitter): the cursor can be anywhere inside the
+function or type. Rust for now.
 
 ### Mode changes
 
