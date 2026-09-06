@@ -526,10 +526,15 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
     // scale with the terminal — a big monitor gets a big preview.
     let show_preview = area.width >= 96 && p.preview.is_some();
     let (w, preview_w) = if show_preview {
-        // the float spans ~80% of the width; the list takes a quarter, the
+        // the float spans ~80% of the width; the list takes a quarter (grep
+        // rows are longer — path:line:text — so it gets a wider slice), the
         // preview the rest, so a wide screen pours the extra into the preview
         let total = (area.width * 4 / 5).min(area.width.saturating_sub(4));
-        let list = (total / 4).clamp(34, 60);
+        let list = if p.kind == crate::editor::file_picker::PickerKind::Grep {
+            (total * 2 / 5).clamp(48, 90)
+        } else {
+            (total / 4).clamp(34, 60)
+        };
         (list, total.saturating_sub(list))
     } else {
         ((area.width * 3 / 5).clamp(30, 100), 0)
@@ -570,18 +575,25 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
         let icon = (p.kind == crate::editor::file_picker::PickerKind::Files)
             .then(|| crate::config::icons::icon_for(item));
         let icon_w = if icon.is_some() { 2 } else { 0 };
-        // left-truncate long paths, shifting match indices with the cut
+        // truncate long rows: files/symbols keep the tail (the filename),
+        // grep keeps the head (path:line) — shift match indices with the cut
+        let grep = p.kind == crate::editor::file_picker::PickerKind::Grep;
         let (shown, cut) = {
             let max = inner_w.saturating_sub(3 + icon_w);
             let n = item.chars().count();
-            if n > max {
+            if n <= max {
+                (item.to_string(), 0)
+            } else if grep {
+                (
+                    format!("{}…", item.chars().take(max - 1).collect::<String>()),
+                    0,
+                )
+            } else {
                 let cut = n - (max - 1);
                 (
                     format!("…{}", item.chars().skip(cut).collect::<String>()),
                     cut as i64 - 1, // the ellipsis occupies one slot
                 )
-            } else {
-                (item.to_string(), 0)
             }
         };
         let (row_style, hit_style) = if selected {
@@ -633,28 +645,25 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
-                .title(
-                    if p.kind == crate::editor::file_picker::PickerKind::Symbols {
-                        " symbols "
-                    } else {
-                        " files "
-                    },
-                )
+                .title({
+                    use crate::editor::file_picker::PickerKind;
+                    match p.kind {
+                        PickerKind::Symbols => " symbols ",
+                        PickerKind::Grep => " grep ",
+                        PickerKind::Files => " files ",
+                    }
+                })
                 .title_style(Style::default().bg(palette::FLOAT_BG).fg(palette::FG))
                 .title_bottom(Line::styled(count, dim).right_aligned()),
         ),
         rect,
     );
     if show_preview {
-        let name = p
-            .matches
-            .get(p.selected)
-            .map(|m| p.item(m))
-            .unwrap_or("preview");
+        let name = p.preview_title();
         draw_picker_preview(
             f,
             p.preview.as_ref().unwrap(),
-            name,
+            &name,
             Rect::new(x + w, y, preview_w, h),
         );
     }
@@ -691,6 +700,14 @@ fn draw_picker_preview(
         .as_deref()
         .map(|lang| crate::syntax::highlight_text(&text, lang));
     for (i, raw) in preview.lines.iter().take(body_h).enumerate() {
+        // the grep match line gets a reading-line wash across the whole row
+        let focused = Some(i) == preview.focus;
+        let bg = if focused {
+            palette::PREVIEW_READING_BG
+        } else {
+            palette::FLOAT_BG
+        };
+        let base = Style::default().bg(bg).fg(palette::FG);
         let chars: Vec<char> = raw.chars().take(inner_w).collect();
         let mut out: Vec<Span> = Vec::new();
         let mut last = 0usize;
@@ -706,26 +723,26 @@ fn draw_picker_preview(
             if s > last {
                 out.push(Span::styled(
                     chars[last..s].iter().collect::<String>(),
-                    float,
+                    base,
                 ));
             }
-            let style = crate::config::theme::capture_style(*cap as usize).bg(palette::FLOAT_BG);
+            let style = crate::config::theme::capture_style(*cap as usize).bg(bg);
             out.push(Span::styled(chars[s..e].iter().collect::<String>(), style));
             last = e;
         }
         if last < chars.len() {
+            out.push(Span::styled(chars[last..].iter().collect::<String>(), base));
+        }
+        if focused {
             out.push(Span::styled(
-                chars[last..].iter().collect::<String>(),
-                float,
+                " ".repeat(inner_w.saturating_sub(chars.len())),
+                base,
             ));
         }
         rows.push(Line::from(out));
     }
 
-    let title: String = std::path::Path::new(name)
-        .file_name()
-        .map(|n| format!(" {} ", n.to_string_lossy()))
-        .unwrap_or_else(|| " preview ".to_string());
+    let title = format!(" {name} ");
     f.render_widget(Clear, rect);
     f.render_widget(
         Paragraph::new(rows).style(float).block(

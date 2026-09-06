@@ -160,6 +160,8 @@ pub enum LeaderCmd {
     DiagPrefix,
     /// `<leader>s` — symbol picker for the current buffer (#62).
     Symbols,
+    /// `<leader>g` — live grep across the project (#72).
+    Grep,
 }
 
 /// Keys inside the buffer-list overlay.
