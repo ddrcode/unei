@@ -34,6 +34,8 @@ fn modifies(token: Token) -> bool {
                 | SubstLine
                 | DeleteToEol
                 | ChangeToEol
+                | Increment
+                | Decrement
         ),
         _ => false,
     }
@@ -120,6 +122,12 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     } else {
                         ed.pending.awaiting = Awaiting::GComment;
                     }
+                }
+                Key::Char('J') => {
+                    // gJ: join without inserting a space (dot-repeatable)
+                    let count = ed.pending.take_count().unwrap_or(1);
+                    join_lines(ed, count, false);
+                    clear_pending(ed);
                 }
                 _ => clear_pending(ed),
             }
@@ -1017,7 +1025,7 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
         SimpleCmd::DeleteRight => delete_graphemes(ed, count, true),
         SimpleCmd::DeleteLeft => delete_graphemes(ed, count, false),
         SimpleCmd::ToggleCase => toggle_case(ed, count),
-        SimpleCmd::Join => join_lines(ed, count),
+        SimpleCmd::Join => join_lines(ed, count, true),
         SimpleCmd::PasteAfter => paste(ed, true, count),
         SimpleCmd::PasteBefore => paste(ed, false, count),
         SimpleCmd::Undo => {
@@ -1077,7 +1085,31 @@ fn simple(ed: &mut Editor, cmd: SimpleCmd) {
         SimpleCmd::SubstLine => {
             linewise_op(ed, Op::Change, ed.cursor.line, ed.cursor.line + count - 1)
         }
+        SimpleCmd::Increment => increment(ed, count as i64),
+        SimpleCmd::Decrement => increment(ed, -(count as i64)),
     }
+}
+
+/// `Ctrl+A` / `Ctrl+X`: add `delta` to the number under (or after) the cursor,
+/// re-rendering it in place and leaving the cursor on its last digit (#14).
+/// A line with no number is a no-op.
+fn increment(ed: &mut Editor, delta: i64) {
+    let line = ed.cursor.line;
+    let content = line_content(&ed.buffer.rope, line);
+    let Some((start, end, repl)) =
+        crate::core::numedit::number_edit(&content, ed.cursor.col, delta)
+    else {
+        return;
+    };
+    let base = ed.buffer.rope.line_to_char(line);
+    ed.buffer.begin_change(ed.cursor);
+    ed.buffer.remove(base + start..base + end);
+    ed.buffer.insert(base + start, &repl);
+    ed.cursor = Cursor::new(line, start + repl.chars().count() - 1);
+    ed.clamp_cursor();
+    let committed = ed.buffer.end_change();
+    ed.note_change_committed(committed);
+    ed.goal = None;
 }
 
 fn delete_graphemes(ed: &mut Editor, count: usize, forward: bool) {
@@ -1184,7 +1216,9 @@ fn toggle_case(ed: &mut Editor, count: usize) {
     ed.goal = None;
 }
 
-fn join_lines(ed: &mut Editor, count: usize) {
+/// `J` joins lines vim-style (one space at the seam, next line's indent
+/// stripped); `gJ` (`space` = false) joins raw, removing only the newline.
+fn join_lines(ed: &mut Editor, count: usize, space: bool) {
     let joins = count.max(2) - 1;
     ed.buffer.begin_change(ed.cursor);
     for _ in 0..joins {
@@ -1195,18 +1229,23 @@ fn join_lines(ed: &mut Editor, count: usize) {
         }
         let cur_len = line_len(rope, line);
         let nl = rope.line_to_char(line) + cur_len;
-        let next_content = line_content(rope, line + 1);
-        let lead_blanks = next_content
-            .chars()
-            .take_while(|c| *c == ' ' || *c == '\t')
-            .count();
-        let trimmed_empty = next_content.chars().count() == lead_blanks;
-        ed.buffer.remove(nl..nl + 1 + lead_blanks);
-        let needs_space = cur_len > 0
-            && !trimmed_empty
-            && !line_content(&ed.buffer.rope, line).ends_with([' ', '\t']);
-        if needs_space {
-            ed.buffer.insert(nl, " ");
+        if space {
+            let next_content = line_content(rope, line + 1);
+            let lead_blanks = next_content
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .count();
+            let trimmed_empty = next_content.chars().count() == lead_blanks;
+            ed.buffer.remove(nl..nl + 1 + lead_blanks);
+            let needs_space = cur_len > 0
+                && !trimmed_empty
+                && !line_content(&ed.buffer.rope, line).ends_with([' ', '\t']);
+            if needs_space {
+                ed.buffer.insert(nl, " ");
+            }
+        } else {
+            // gJ: drop the newline only, keeping every space as-is
+            ed.buffer.remove(nl..nl + 1);
         }
         ed.cursor = Cursor::new(line, cur_len);
     }

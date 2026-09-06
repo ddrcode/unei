@@ -108,6 +108,8 @@ pub fn normal_token(key: Key) -> Option<Token> {
         Key::Char('P') => Token::Simple(SimpleCmd::PasteBefore),
         Key::Char('u') => Token::Simple(SimpleCmd::Undo),
         Key::Ctrl('r') => Token::Simple(SimpleCmd::Redo),
+        Key::Ctrl('a') => Token::Simple(SimpleCmd::Increment),
+        Key::Ctrl('x') => Token::Simple(SimpleCmd::Decrement),
         Key::Char('.') => Token::Simple(SimpleCmd::Repeat),
         Key::Char('D') => Token::Simple(SimpleCmd::DeleteToEol),
         Key::Char('C') => Token::Simple(SimpleCmd::ChangeToEol),
