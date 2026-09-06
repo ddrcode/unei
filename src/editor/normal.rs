@@ -535,6 +535,16 @@ fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>)
     }
     let mut target = out.cursor;
 
+    // `>`/`<` are always linewise, over the lines the motion spans
+    if matches!(op, Op::Indent | Op::Dedent) {
+        let (l1, l2) = (
+            ed.cursor.line.min(target.line),
+            ed.cursor.line.max(target.line),
+        );
+        indent_lines(ed, l1, l2, op == Op::Indent);
+        return;
+    }
+
     if out.kind == MotionKind::Linewise {
         let (l1, l2) = if target.line < ed.cursor.line {
             (target.line, ed.cursor.line)
@@ -636,6 +646,7 @@ fn charwise_op(ed: &mut Editor, op: Op, start: usize, end: usize) {
             ed.note_change_committed(committed);
         }
         Op::Change => change_range(ed, start, end),
+        Op::Indent | Op::Dedent => unreachable!("indent intercepted before charwise handling"),
     }
 }
 
@@ -663,9 +674,13 @@ fn change_range(ed: &mut Editor, start: usize, end: usize) {
 }
 
 fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
-    let rope = &ed.buffer.rope;
-    let last = text_lines(rope) - 1;
+    let last = text_lines(&ed.buffer.rope) - 1;
     let (l1, l2) = (l1.min(last), l2.min(last));
+    if matches!(op, Op::Indent | Op::Dedent) {
+        indent_lines(ed, l1, l2, op == Op::Indent);
+        return;
+    }
+    let rope = &ed.buffer.rope;
     let start = rope.line_to_char(l1);
     // every line carries its newline terminator (buffer invariant)
     let end = if l2 + 1 >= rope.len_lines() {
@@ -714,6 +729,102 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
             ed.cursor = Cursor::new(l1, indent.chars().count());
             ed.mode = Mode::Insert;
         }
+        Op::Indent | Op::Dedent => unreachable!("indent intercepted at the top of linewise_op"),
+    }
+}
+
+/// `>`/`<` (and `>>`/`<<`, `>motion`, visual `>`): shift lines `l1..=l2` by
+/// one shiftwidth, preserving tabs-vs-spaces per `expandtab`, in a single
+/// undo step. Blank lines are left untouched. Cursor lands on the first
+/// non-blank of the first shifted line (vim).
+fn indent_lines(ed: &mut Editor, l1: usize, l2: usize, right: bool) {
+    ed.buffer.begin_change(ed.cursor);
+    let mut changed = false;
+    for line in l1..=l2 {
+        changed |= shift_one(ed, line, right);
+    }
+    let committed = ed.buffer.end_change();
+    if changed {
+        ed.cursor = Cursor::new(l1, first_non_blank(&ed.buffer.rope, l1));
+        ed.goal = None;
+    }
+    ed.note_change_committed(committed);
+}
+
+/// Shifts one line's leading indentation by a shiftwidth. Returns the
+/// signed change in indent character count (for insert-mode cursor
+/// tracking); leaves blank lines alone (returns 0).
+fn shift_one(ed: &mut Editor, line: usize, right: bool) -> bool {
+    let content = line_content(&ed.buffer.rope, line);
+    if content.trim().is_empty() {
+        return false;
+    }
+    let indent = line_indent(&ed.buffer.rope, line);
+    let cur_cols = indent_cols(&indent, OPTIONS.tabstop);
+    let new_cols = if right {
+        cur_cols + OPTIONS.shiftwidth
+    } else {
+        cur_cols.saturating_sub(OPTIONS.shiftwidth)
+    };
+    if new_cols == cur_cols {
+        return false;
+    }
+    let new_indent = make_indent(new_cols, OPTIONS.expandtab, OPTIONS.tabstop);
+    let base = ed.buffer.rope.line_to_char(line);
+    let old_chars = indent.chars().count();
+    ed.buffer.remove(base..base + old_chars);
+    ed.buffer.insert(base, &new_indent);
+    true
+}
+
+/// Insert-mode `Ctrl+T` / `Ctrl+D`: shift the current line one shiftwidth,
+/// keeping the cursor on the same character (folds into the insert undo).
+/// Unlike the operators, this also indents an otherwise-empty line.
+pub(crate) fn insert_shift(ed: &mut Editor, right: bool) {
+    let line = ed.cursor.line;
+    let indent = line_indent(&ed.buffer.rope, line);
+    let cur_cols = indent_cols(&indent, OPTIONS.tabstop);
+    let new_cols = if right {
+        cur_cols + OPTIONS.shiftwidth
+    } else {
+        cur_cols.saturating_sub(OPTIONS.shiftwidth)
+    };
+    if new_cols == cur_cols {
+        return;
+    }
+    let new_indent = make_indent(new_cols, OPTIONS.expandtab, OPTIONS.tabstop);
+    let base = ed.buffer.rope.line_to_char(line);
+    let old_chars = indent.chars().count();
+    let new_chars = new_indent.chars().count();
+    ed.buffer.remove(base..base + old_chars);
+    ed.buffer.insert(base, &new_indent);
+    let delta = new_chars as isize - old_chars as isize;
+    ed.cursor.col = (ed.cursor.col as isize + delta).max(0) as usize;
+    ed.goal = None;
+}
+
+/// Column width of a leading-whitespace string, expanding tabs to stops.
+fn indent_cols(indent: &str, tabstop: usize) -> usize {
+    let mut cols = 0;
+    for c in indent.chars() {
+        if c == '\t' {
+            cols += tabstop - (cols % tabstop);
+        } else {
+            cols += 1;
+        }
+    }
+    cols
+}
+
+/// Builds an indent string of the given column width: spaces under
+/// `expandtab`, otherwise tabs for whole stops plus spaces for the rest.
+fn make_indent(cols: usize, expandtab: bool, tabstop: usize) -> String {
+    if expandtab || tabstop == 0 {
+        " ".repeat(cols)
+    } else {
+        let tabs = cols / tabstop;
+        let spaces = cols % tabstop;
+        format!("{}{}", "\t".repeat(tabs), " ".repeat(spaces))
     }
 }
 
@@ -1145,6 +1256,15 @@ fn block_segment(ed: &Editor, line: usize, left: usize, right: usize) -> Option<
 fn visual_operate(ed: &mut Editor, op: Op) {
     let Mode::Visual(kind) = ed.mode else { return };
     ed.leave_visual();
+    // `>`/`<` shift the selected lines, whatever the selection kind
+    if matches!(op, Op::Indent | Op::Dedent) {
+        let (l1, l2) = (
+            ed.visual_anchor.line.min(ed.cursor.line),
+            ed.visual_anchor.line.max(ed.cursor.line),
+        );
+        indent_lines(ed, l1, l2, op == Op::Indent);
+        return;
+    }
     match kind {
         VisualKind::Char => {
             let (a, c) = (ed.visual_anchor, ed.cursor);
@@ -1225,6 +1345,7 @@ fn visual_block_operate(ed: &mut Editor, op: Op) {
                 ed.mode = Mode::Insert;
             }
         }
+        Op::Indent | Op::Dedent => indent_lines(ed, l1, l2, op == Op::Indent),
     }
     ed.clamp_cursor();
 }

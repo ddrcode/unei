@@ -7,6 +7,10 @@ pub enum Op {
     Delete,
     Change,
     Yank,
+    /// `>` — shift lines right by one shiftwidth (always linewise).
+    Indent,
+    /// `<` — shift lines left by one shiftwidth.
+    Dedent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

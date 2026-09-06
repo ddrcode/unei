@@ -57,6 +57,8 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
         Key::Delete => delete_forward(ed),
         Key::Ctrl('w') => delete_word_back(ed),
         Key::Ctrl('u') => delete_to_line_start(ed),
+        Key::Ctrl('t') => super::normal::insert_shift(ed, true),
+        Key::Ctrl('d') => super::normal::insert_shift(ed, false),
         Key::Left => {
             let grs = line_graphemes(
                 &line_content(&ed.buffer.rope, ed.cursor.line),
