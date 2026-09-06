@@ -47,6 +47,12 @@ pub enum Awaiting {
     LeaderD,
     /// `gc…` — comment chord (awaiting the second `c` of `gcc`).
     GComment,
+    /// `m` pressed — awaiting the mark letter to set.
+    SetMark,
+    /// `` ` `` / `'` pressed — awaiting the mark letter to jump to.
+    JumpMark {
+        exact: bool,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -178,6 +184,9 @@ pub struct Editor {
     pub completion: Option<analyzer::CompletionMenu>,
     /// In-flight completion request context: (line, prefix-start char col).
     completion_req: Option<(usize, usize)>,
+    /// Per-buffer marks (#14): (buffer, letter) → position. The `` ` ``
+    /// letter holds the pre-jump position for the `` `` `` / `''` toggle.
+    marks: std::collections::HashMap<(BufId, char), Cursor>,
     /// End-of-line diagnostic ghost text toggle (<leader>dh).
     pub ghost_text: bool,
     diag_views: std::collections::HashMap<std::path::PathBuf, analyzer::DiagView>,
@@ -290,6 +299,7 @@ impl Editor {
             actions_menu: None,
             completion: None,
             completion_req: None,
+            marks: std::collections::HashMap::new(),
             ghost_text: true,
             diag_views: std::collections::HashMap::new(),
             jumplist: Vec::new(),
@@ -389,7 +399,110 @@ impl Editor {
 
     /// Remembers the current position on the jumplist (vim-style: recorded
     /// at the source of a jump, before it happens).
+    /// `m{a-z}` — set a mark at the cursor in the current buffer.
+    pub(crate) fn set_mark(&mut self, ch: char) {
+        if ch.is_ascii_alphanumeric() {
+            self.marks.insert((self.current, ch), self.cursor);
+        }
+    }
+
+    /// `` `x `` (exact) / `'x` (first non-blank of the line) — jump to a
+    /// mark, recording a jumplist entry. `` ` ``/`'` mean the pre-jump spot.
+    pub(crate) fn jump_mark(&mut self, ch: char, exact: bool) {
+        let key = if ch == '`' || ch == '\'' { '`' } else { ch };
+        let Some(&target) = self.marks.get(&(self.current, key)) else {
+            self.err("E20: Mark not set");
+            return;
+        };
+        self.record_jump();
+        self.cursor = if exact {
+            target
+        } else {
+            Cursor::new(target.line, first_non_blank(&self.buffer.rope, target.line))
+        };
+        self.goal = None;
+        self.clamp_cursor();
+        self.scroll_to_cursor();
+    }
+
+    /// `gf` — open the file named under the cursor, resolved against the
+    /// current file's directory, then the project root (first existing
+    /// wins; a bare name also tries a `.rs` suffix).
+    pub(crate) fn goto_file(&mut self) {
+        let Some(token) = self.file_token_under_cursor() else {
+            self.err("E446: No file name under the cursor");
+            return;
+        };
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        let tp = std::path::Path::new(&token);
+        if tp.is_absolute() {
+            candidates.push(tp.to_path_buf());
+        }
+        let cur_dir = self
+            .buffer
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(std::path::Path::to_path_buf);
+        for base in cur_dir.iter().chain(std::iter::once(&self.root)) {
+            candidates.push(base.join(&token));
+            candidates.push(base.join(format!("{token}.rs")));
+        }
+        for c in candidates {
+            if c.is_file() {
+                let path = c.to_string_lossy().into_owned();
+                self.open_path(&path, None);
+                return;
+            }
+        }
+        self.err(format!("E447: Can't find file \"{token}\""));
+    }
+
+    /// The path-like token under the cursor (letters, digits, and `/._-~`).
+    fn file_token_under_cursor(&self) -> Option<String> {
+        let chars: Vec<char> = line_content(&self.buffer.rope, self.cursor.line)
+            .chars()
+            .collect();
+        let is_path =
+            |c: char| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~');
+        let col = self.cursor.col.min(chars.len().saturating_sub(1));
+        if chars.is_empty() || !is_path(chars[col]) {
+            return None;
+        }
+        let mut start = col;
+        while start > 0 && is_path(chars[start - 1]) {
+            start -= 1;
+        }
+        let mut end = col + 1;
+        while end < chars.len() && is_path(chars[end]) {
+            end += 1;
+        }
+        let token: String = chars[start..end].iter().collect();
+        (!token.is_empty()).then_some(token)
+    }
+
+    /// `:w {path}` — write the buffer to a path and bind it there (vim
+    /// semantics), the way a bare-launch scratch buffer gets a home.
+    pub(crate) fn save_as(&mut self, path: &str) {
+        let path = path.trim();
+        if path.is_empty() {
+            self.err("E32: No file name");
+            return;
+        }
+        let p = std::path::Path::new(path);
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        self.buffer.path = Some(abs);
+        self.syntax.invalidate(self.current); // extension may have changed
+        self.save();
+    }
+
     pub(crate) fn record_jump(&mut self) {
+        // the pre-jump position is the `` ` `` mark (powers `` `` ``/`''`)
+        self.marks.insert((self.current, '`'), self.cursor);
         let entry = (self.current, self.cursor);
         self.jumplist.truncate(self.jump_index);
         if self.jumplist.last() != Some(&entry) {
@@ -1858,6 +1971,8 @@ impl Editor {
             Awaiting::Replace => s.push('r'),
             Awaiting::G => s.push('g'),
             Awaiting::GComment => s.push_str("gc"),
+            Awaiting::SetMark => s.push('m'),
+            Awaiting::JumpMark { exact } => s.push(if exact { '`' } else { '\'' }),
             Awaiting::Z => s.push('z'),
             Awaiting::ZUpper => s.push('Z'),
             Awaiting::Leader => s.push('␣'),

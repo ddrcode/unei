@@ -34,6 +34,20 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 _ => clear_pending(ed),
             }
         }
+        Awaiting::SetMark => {
+            ed.pending.awaiting = Awaiting::None;
+            if let Key::Char(ch) = key {
+                ed.set_mark(ch);
+            }
+            clear_pending(ed);
+        }
+        Awaiting::JumpMark { exact } => {
+            ed.pending.awaiting = Awaiting::None;
+            if let Key::Char(ch) = key {
+                ed.jump_mark(ch, exact);
+            }
+            clear_pending(ed);
+        }
         Awaiting::G => {
             ed.pending.awaiting = Awaiting::None;
             match key {
@@ -56,6 +70,11 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                 Key::Char('p') => {
                     ed.drop_recording();
                     ed.toggle_preview();
+                    clear_pending(ed);
+                }
+                Key::Char('f') => {
+                    ed.drop_recording();
+                    ed.goto_file();
                     clear_pending(ed);
                 }
                 Key::Char('c') => {
@@ -354,6 +373,8 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 ed.pending.awaiting = Awaiting::Replace;
             }
         }
+        Token::SetMark => ed.pending.awaiting = Awaiting::SetMark,
+        Token::JumpMark { exact } => ed.pending.awaiting = Awaiting::JumpMark { exact },
         Token::Leader => {
             if ed.pending.op.is_some() {
                 clear_pending(ed);
@@ -434,7 +455,11 @@ fn process_motion(ed: &mut Editor, motion: Motion) {
     if op.is_none()
         && matches!(
             motion,
-            Motion::GotoFirst | Motion::GotoLast | Motion::ParaForward | Motion::ParaBack
+            Motion::GotoFirst
+                | Motion::GotoLast
+                | Motion::ParaForward
+                | Motion::ParaBack
+                | Motion::MatchPair
         )
     {
         ed.record_jump();

@@ -41,6 +41,8 @@ pub enum Motion {
     RepeatFind,
     /// `,`
     RepeatFindRev,
+    /// `%` — jump to the matching bracket.
+    MatchPair,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +81,57 @@ fn outcome(cursor: Cursor, kind: MotionKind) -> MotionOutcome {
 
 fn cls_at(rope: &Rope, i: usize, big: bool) -> CharClass {
     char_class(rope.char(i), big)
+}
+
+/// `%`: the first bracket at or after the cursor on its line, matched to
+/// its partner across the buffer by same-type nesting (plain characters,
+/// no tree-sitter — the rules mandate one mechanism). None if the line has
+/// no bracket or the match is unbalanced.
+fn match_pair(rope: &Rope, cursor: Cursor) -> Option<Cursor> {
+    const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+    let chars: Vec<char> = line_content(rope, cursor.line).chars().collect();
+    let (bcol, bch) = (cursor.col..chars.len())
+        .map(|c| (c, chars[c]))
+        .find(|(_, c)| PAIRS.iter().any(|(o, cl)| c == o || c == cl))?;
+    let abs = rope.line_to_char(cursor.line) + bcol;
+    let total = rope.len_chars();
+    let to_cursor = |i: usize| {
+        Cursor::new(
+            rope.char_to_line(i),
+            i - rope.line_to_char(rope.char_to_line(i)),
+        )
+    };
+
+    if let Some((open, close)) = PAIRS.iter().find(|(o, _)| *o == bch).copied() {
+        let mut depth = 0i32;
+        for i in abs..total {
+            let c = rope.char(i);
+            if c == open {
+                depth += 1;
+            } else if c == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(to_cursor(i));
+                }
+            }
+        }
+        None
+    } else {
+        let (open, close) = PAIRS.iter().find(|(_, cl)| *cl == bch).copied()?;
+        let mut depth = 0i32;
+        for i in (0..=abs).rev() {
+            let c = rope.char(i);
+            if c == close {
+                depth += 1;
+            } else if c == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(to_cursor(i));
+                }
+            }
+        }
+        None
+    }
 }
 
 pub fn next_word_start(rope: &Rope, abs: usize, big: bool) -> usize {
@@ -436,6 +489,7 @@ pub fn resolve(
             };
             Some(outcome(Cursor::new(cursor.line, col), k))
         }
+        Motion::MatchPair => match_pair(rope, cursor).map(|c| outcome(c, MotionKind::Inclusive)),
     }
 }
 

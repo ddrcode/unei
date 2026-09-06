@@ -30,6 +30,7 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `gg` `G` | first line, last line (count: `:N`-style goto) |
 | `{` `}` | paragraph back / forward |
 | `f`/`F`/`t`/`T` + char, `;` `,` | find on line, repeat, repeat reversed |
+| `%` | jump to the matching bracket (`()[]{}`); also an operator target (`d%`) |
 
 ### Operators & edits
 
@@ -99,6 +100,10 @@ honored).
 | `Space b` | buffer list |
 | `Ctrl+^` / `Ctrl+6` | alternate buffer |
 | `Ctrl+O` / `Ctrl+I` (`Tab`) | jumplist back / forward (crosses buffers) |
+| `m{a-z}` | set a mark at the cursor (per buffer) |
+| `` `{a-z} `` / `'{a-z}` | jump to a mark — exact position / first non-blank of its line |
+| `` `` `` / `''` | jump back to where the last jump started (toggles) |
+| `gf` | open the file named under the cursor (current dir, then root; tries `.rs`) |
 
 ### Machine lens
 
@@ -202,7 +207,8 @@ replaces the selection in visual mode — never interpreted as keystrokes.
 
 `:w` `:q` `:q!` `:wq` `:x` — with splits open, quit commands close the window
 first; the last window checks *all* buffers for unsaved changes. `:bd`/`:bd!`
-close the buffer. `:{number}` jumps to a line.
+close the buffer. `:{number}` jumps to a line. `:w {path}` writes the buffer
+to a path and binds it there (how a bare-launch scratch buffer gets a home).
 
 ## Overlays
 

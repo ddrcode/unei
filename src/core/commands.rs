@@ -99,6 +99,12 @@ pub enum Token {
     Scroll(ScrollCmd),
     FindStart(FindKind),
     ReplaceStart,
+    /// `m` — set a mark; awaits the mark letter.
+    SetMark,
+    /// `` ` `` (exact) / `'` (line) — jump to a mark; awaits the letter.
+    JumpMark {
+        exact: bool,
+    },
     PrefixG,
     PrefixZ,
     PrefixZUpper,
