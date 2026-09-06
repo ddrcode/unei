@@ -2,6 +2,7 @@ pub mod buffer;
 pub mod commands;
 pub mod motion;
 pub mod text;
+pub mod textobject;
 
 pub use buffer::{Buffer, Cursor};
 pub use commands::*;

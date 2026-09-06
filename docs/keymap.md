@@ -14,7 +14,7 @@ Uppercase `I J K L` keep their vim meanings where they had one (`J` joins,
 `K` hovers); vim's `H`/`L` screen jumps don't exist. In operator-pending and
 visual contexts `h` is a **left motion** again (`dh` deletes left), because
 the insert remap is a normal-mode affair. There are no `i`-prefixed text
-objects for the same reason; the planned inner-object prefix is `n` (#12).
+objects for the same reason — the inner-object prefix is **`n`** (#12).
 
 The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 
@@ -55,6 +55,22 @@ all are commented. The token follows the language (`//` for Rust/JS, `#`
 for YAML/TOML/Python/Nix/Bash); in assembly it comes from the file's
 `asm:` modeline leader (`; asm: …` → `;`, `# asm: …` → `#`), so an
 undeclared dialect is left alone.
+
+### Text objects
+
+After an operator (`d` `c` `y`) or in visual mode, `a` (around) or `n`
+(inner — vim's `i`, which the layout can't spare) selects an object.
+
+| Object | With `a` / `n` |
+|---|---|
+| `w` `W` | word / WORD (`daw`, `dnw`) |
+| `p` | paragraph (linewise) |
+| `(` `)` `b`, `{` `}` `B`, `[` `]`, `<` `>` | bracket pair — inner or including the brackets |
+| `"` `'` `` ` `` | quoted string on the line |
+
+`a` is around (includes the brackets/quotes, or a word's trailing space);
+`n` is inner. Counts extend words and paragraphs (`d2nw`). A bare `a`/`n`
+outside this context keeps its normal meaning (append / next match).
 
 ### Mode changes
 

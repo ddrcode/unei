@@ -48,6 +48,14 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
             }
             clear_pending(ed);
         }
+        Awaiting::TextObject { around } => {
+            ed.pending.awaiting = Awaiting::None;
+            if let Key::Char(ch) = key {
+                apply_text_object(ed, around, ch);
+            } else {
+                clear_pending(ed);
+            }
+        }
         Awaiting::G => {
             ed.pending.awaiting = Awaiting::None;
             match key {
@@ -233,6 +241,16 @@ fn dispatch(ed: &mut Editor, key: Key) {
             *slot = Some(v.saturating_mul(10) + (d as usize - '0' as usize));
             return;
         }
+    }
+
+    // text objects (#12): after an operator, or in visual mode, `a`/`n`
+    // begin an around/inner object; everywhere else they keep their normal
+    // meanings (append / search-next)
+    if (ed.pending.op.is_some() || matches!(ed.mode, Mode::Visual(_)))
+        && let Key::Char(c @ ('a' | 'n')) = key
+    {
+        ed.pending.awaiting = Awaiting::TextObject { around: c == 'a' };
+        return;
     }
 
     if ed.pending.op.is_some()
@@ -499,6 +517,45 @@ fn inclusive_end(ed: &Editor, target: Cursor) -> usize {
         Some(i) => base + grs[i].char_off + grs[i].chars,
         None => base + target.col,
     }
+}
+
+/// Applies the pending operator to — or, in visual mode, selects — the text
+/// object named by `ch` (#12). `around` is the `a…` form, else `n…` (inner).
+fn apply_text_object(ed: &mut Editor, around: bool, ch: char) {
+    use crate::core::textobject;
+    let Some(kind) = textobject::parse(ch) else {
+        clear_pending(ed);
+        return;
+    };
+    let count = ed.pending.take_count().unwrap_or(1);
+    let Some(range) = textobject::resolve(&ed.buffer.rope, ed.cursor, kind, around, count) else {
+        clear_pending(ed);
+        return;
+    };
+    if matches!(ed.mode, Mode::Visual(_)) {
+        let last = range.end.saturating_sub(1).max(range.start);
+        ed.visual_anchor = motion_cursor_of_abs(ed, range.start);
+        ed.cursor = motion_cursor_of_abs(ed, last);
+        ed.scroll_to_cursor();
+        clear_pending(ed);
+        return;
+    }
+    let Some(op) = ed.pending.op.take() else {
+        clear_pending(ed);
+        return;
+    };
+    if range.linewise {
+        let rope = &ed.buffer.rope;
+        let l1 = rope.char_to_line(range.start);
+        let l2 = rope.char_to_line(range.end.saturating_sub(1).max(range.start));
+        linewise_op(ed, op, l1, l2);
+    } else if range.end > range.start {
+        charwise_op(ed, op, range.start, range.end);
+    } else if op == Op::Change {
+        // an empty inner object (`cn(` in `()`) becomes an insert in place
+        change_range(ed, range.start, range.start);
+    }
+    clear_pending(ed);
 }
 
 fn apply_operator(ed: &mut Editor, op: Op, motion: Motion, count: Option<usize>) {

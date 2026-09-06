@@ -53,6 +53,11 @@ pub enum Awaiting {
     JumpMark {
         exact: bool,
     },
+    /// `a`/`n` pressed as an operator target or in visual mode (#12) —
+    /// awaiting the object key. `around` distinguishes `a…` from `n…`.
+    TextObject {
+        around: bool,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -1975,6 +1980,7 @@ impl Editor {
             Awaiting::GComment => s.push_str("gc"),
             Awaiting::SetMark => s.push('m'),
             Awaiting::JumpMark { exact } => s.push(if exact { '`' } else { '\'' }),
+            Awaiting::TextObject { around } => s.push(if around { 'a' } else { 'n' }),
             Awaiting::Z => s.push('z'),
             Awaiting::ZUpper => s.push('Z'),
             Awaiting::Leader => s.push('␣'),

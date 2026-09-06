@@ -167,6 +167,22 @@ mirror to the system clipboard via OSC 52 write; paste from the system
 arrives through Kitty's bracketed paste (literal in insert, charwise put
 in normal, selection-replace in visual), never as interpreted keys.
 
+## 2026-09-06 — Text objects: `a` around, `n` inner (ticket #12)
+
+The IJKL layout has no room for vim's `i`-objects: `i` is the up-motion in
+operator-pending mode, so `diw` can't exist (the author's own nvim has the
+same hole). The open question in #12 was whether inner objects get an
+alternative prefix or are dropped. **Decided: `n` is the inner prefix**
+(`dnw`, `cn(`, …) alongside the `a`-family — a natural mirror of the i→h
+swap that freed `n`, and unused in operator-pending mode. `a`/`n` only
+take on object meaning after an operator or in visual mode; a bare `a`
+still appends and a bare `n` is still search-next. Ranges are computed by
+plain text scanning, not tree-sitter (objects are structural, and the
+one-mechanism rule keeps highlighting the sole tree-sitter consumer).
+Objects: `w`/`W`, `p` (linewise), the bracket pairs (`(` `)` `b`; `{` `}`
+`B`; `[` `]`; `<` `>`), and quotes (`"` `'` `` ` ``); on `d`/`c`/`y` and
+in visual mode.
+
 ## 2026-09-05 — Completion: LSP-only, manual, no snippets (ticket #22)
 
 Iteration one is deliberately the smallest useful thing: Rust only,
