@@ -28,7 +28,6 @@ pub struct WinState {
     pub cursor: Cursor,
     pub goal: Option<usize>,
     pub top_line: usize,
-    pub left_cell: usize,
     pub alternate: Option<BufId>,
 }
 

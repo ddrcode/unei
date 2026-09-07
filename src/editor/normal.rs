@@ -1740,12 +1740,16 @@ fn scroll(ed: &mut Editor, cmd: ScrollCmd) {
     ed.top_line = ed.top_line.min(last);
 }
 
+/// `zz` / `zt` / `zb`: put the cursor's *display row* at the middle, top,
+/// or bottom of the window — rows, not lines, so a wrapped line lands where
+/// the eye expects (#9).
 fn recenter(ed: &mut Editor, cmd: ScrollCmd) {
-    let h = ed.view.height;
-    ed.top_line = match cmd {
-        ScrollCmd::CenterCursor => ed.cursor.line.saturating_sub(h / 2),
-        ScrollCmd::CursorTop => ed.cursor.line,
-        ScrollCmd::CursorBottom => (ed.cursor.line + 1).saturating_sub(h),
-        _ => ed.top_line,
+    let h = ed.view.height.max(1);
+    let rows_above = match cmd {
+        ScrollCmd::CenterCursor => h / 2,
+        ScrollCmd::CursorTop => 0,
+        ScrollCmd::CursorBottom => h - 1,
+        _ => return,
     };
+    ed.top_line = ed.top_line_fitting_rows_above(rows_above);
 }

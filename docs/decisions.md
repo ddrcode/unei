@@ -3,6 +3,30 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-07 — Soft wrap: always on, rows are the unit, horizontal scroll is gone (ticket #9)
+
+Long lines soft-wrap at word boundaries — vim's `wrap` + `linebreak`, the
+author's global nvim setting — for **every** buffer, with no toggle: the
+rules say skip configurability when in doubt, and one behaviour is simpler
+than a per-filetype default nobody has asked for. Consequently **horizontal
+scrolling no longer exists**; `left_cell` and the sideways math were removed
+rather than left as a dead second path. A pure `wrap_rows` (core/text.rs)
+turns a line's graphemes into display rows: break *after* the last blank
+that fits, hard-break a run longer than the row, and — the one subtle rule —
+when the cluster that overflows is itself a blank, the row closes right after
+it, so "alpha beta" stays together and the space is swallowed by the wrap
+(vim shows it clipped at the edge). The editor's vertical model now counts
+**display rows, not lines**: `scroll_to_cursor`, `scrolloff`, `zz`/`zt`/`zb`
+and the cursor's screen position all go through row helpers. Tops stay
+whole lines (vim without `smoothscroll`): the top of the window is always a
+line's first row, so the bottom line may be cut and — when a tall wrapped
+line won't fit above the cursor — a few rows can go blank; the alternative,
+partial top lines, buys little for prose and costs every scroll computation.
+`i`/`k` remain buffer-line motions per the ticket; display-row motion
+(`gj`/`gk`) is out of scope until it earns a key. The renderer's per-row
+primitive renders a cell *segment* and pads to width; line numbers sit on a
+line's first row, continuation rows keep the gutter blank.
+
 ## 2026-09-07 — Buffer identity and safe replacement (review #82, part 1)
 
 Two numbers now describe a buffer where one used to. **`revision`** is a
