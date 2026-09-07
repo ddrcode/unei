@@ -179,6 +179,10 @@ pub struct Editor {
     pub should_quit: bool,
     /// When the external-change poll last ran (#80); `None` = never.
     last_disk_check: Option<std::time::Instant>,
+    /// Next buffer id to hand out. Ids are never reused (closing the highest
+    /// buffer must not let its id — and any mark or cache keyed by it — be
+    /// inherited by the next one, #82).
+    next_buf_id: BufId,
     pub view: View,
     pub buffer_list: Option<BufferList>,
     pub file_picker: Option<file_picker::FilePicker>,
@@ -300,6 +304,7 @@ impl Editor {
             left_cell: 0,
             should_quit: false,
             last_disk_check: None,
+            next_buf_id: slots.len() + 1, // ids seeded 1..=n above
             view: View {
                 width: 80,
                 height: 22,
@@ -431,10 +436,15 @@ impl Editor {
             return;
         };
         self.record_jump();
+        // marks aren't adjusted as text is edited: the remembered line may no
+        // longer exist, so clamp before indexing the rope (#82 §6)
+        let line = target
+            .line
+            .min(text_lines(&self.buffer.rope).saturating_sub(1));
         self.cursor = if exact {
-            target
+            Cursor::new(line, target.col)
         } else {
-            Cursor::new(target.line, first_non_blank(&self.buffer.rope, target.line))
+            Cursor::new(line, first_non_blank(&self.buffer.rope, line))
         };
         self.goal = None;
         self.clamp_cursor();
@@ -499,7 +509,10 @@ impl Editor {
 
     /// `:w {path}` — write the buffer to a path and bind it there (vim
     /// semantics), the way a bare-launch scratch buffer gets a home.
-    pub(crate) fn save_as(&mut self, path: &str) {
+    /// `:w {path}` (`force` = `:w! {path}`). Like vim, refuses to replace a
+    /// file that already exists unless forced (E13), and only keeps the new
+    /// binding if the write succeeds (#82 §5).
+    pub(crate) fn save_as(&mut self, path: &str, force: bool) {
         let path = path.trim();
         if path.is_empty() {
             self.err("E32: No file name");
@@ -511,11 +524,21 @@ impl Editor {
         } else {
             self.root.join(path)
         };
-        self.buffer.path = Some(abs);
+        if self.buffer.path.as_deref() == Some(abs.as_path()) {
+            self.save(force); // writing to our own file: a plain :w
+            return;
+        }
+        if !force && abs.exists() {
+            self.err("E13: File exists (add ! to override)");
+            return;
+        }
+        let previous = self.buffer.binding();
+        self.buffer.rebind(abs);
         self.syntax.invalidate(self.current); // extension may have changed
-        // a fresh binding: the old file's disk stamp no longer applies
-        self.buffer.forget_disk_stamp();
-        self.save(false);
+        if !self.save(force) {
+            self.buffer.restore_binding(previous);
+            self.syntax.invalidate(self.current);
+        }
     }
 
     pub(crate) fn record_jump(&mut self) {
@@ -846,7 +869,7 @@ impl Editor {
             Some(id) => self.switch_to(id),
             None => match Buffer::from_path(&abs) {
                 Ok((buffer, existed)) => {
-                    let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+                    let id = self.alloc_buf_id();
                     self.slots.push(Slot {
                         id,
                         buffer: Some(buffer),
@@ -880,7 +903,7 @@ impl Editor {
         if let Some(dir) = split {
             self.split_window(dir, false);
         }
-        let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        let id = self.alloc_buf_id();
         let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
         self.slots.push(Slot {
             id,
@@ -910,7 +933,7 @@ impl Editor {
         if let Some(dir) = split {
             self.split_window(dir, false);
         }
-        let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        let id = self.alloc_buf_id();
         let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
         self.slots.push(Slot {
             id,
@@ -924,6 +947,13 @@ impl Editor {
         if let Some(name) = name {
             self.msg(format!("{name}: binary — read-only hex view"));
         }
+    }
+
+    /// A never-before-used buffer id.
+    fn alloc_buf_id(&mut self) -> BufId {
+        let id = self.next_buf_id;
+        self.next_buf_id += 1;
+        id
     }
 
     /// Lazily refreshes syntax highlights for a buffer (render prefetch).
@@ -1031,7 +1061,7 @@ impl Editor {
             return;
         }
         let state = if with_new_buffer {
-            let buf_id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+            let buf_id = self.alloc_buf_id();
             self.slots.push(Slot {
                 id: buf_id,
                 buffer: Some(Buffer::from_text("")),
@@ -2214,4 +2244,18 @@ fn base64(data: &[u8]) -> String {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::editor_with_buffers;
+
+    #[test]
+    fn buffer_ids_are_never_reused() {
+        // #82: allocating as max(live)+1 let a closed top id come back, and
+        // marks/caches keyed by it with it
+        let mut ed = editor_with_buffers(&[("a.rs", ""), ("b.rs", "")]);
+        ed.close_buffer(2, true);
+        assert_eq!(ed.alloc_buf_id(), 3, "closed id 2 must not be recycled");
+    }
 }

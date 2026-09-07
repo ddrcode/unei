@@ -3,6 +3,31 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-07 — Buffer identity and safe replacement (review #82, part 1)
+
+Two numbers now describe a buffer where one used to. **`revision`** is a
+monotonic change counter — insert, remove, undo and redo all bump it, it
+never runs backwards — and it is what every cache and the LSP key on.
+**`state`** identifies the *content*: a fresh id per mutation, and undo/redo
+restore the id that content had before. "Modified" means `state !=
+saved_state`. The single rewinding counter that preceded them let a
+save → undo → different edit land on the saved number again, so a
+different text reported clean, `:q` lost it, and caches keyed on the same
+number served stale spans (#82 §1). Undo transactions now nest by depth:
+only the outermost `begin_change`/`end_change` snapshots and commits, so a
+completion or LSP edit applied mid-insert can't close the session's
+transaction, and redo is dropped when a mutation actually happens rather
+than when a transaction opens (§12). Saving writes *through* a symlink to
+its referent (never replacing the link), copies the target's permission
+bits onto the replacement, and writes a temp file whose name is unique to
+this process and attempt, opened `create_new` so a pre-planted path — even
+a symlink — cannot capture the write (§2–4). `:w {path}` refuses an
+existing destination without `!` (vim's E13), commits the new binding only
+after a successful write, and a "[New File]" that appears on disk before
+its first `:w` counts as an external change (§5). Buffer ids come from a
+counter and are never recycled; a remembered mark is clamped before the
+rope is indexed (§6).
+
 ## 2026-09-06 — External changes: never overwrite, reload when safe (ticket #80)
 
 A bug, not a feature gap: the editor wrote over files that an agent or
