@@ -23,8 +23,25 @@ impl Cursor {
 struct Snapshot {
     rope: Rope,
     cursor: Cursor,
-    version: u64,
+    /// The content state this snapshot holds (see `Buffer::state`).
+    state: u64,
 }
+
+/// What the buffer knows about its file on disk (#80, #82).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DiskState {
+    /// Not bound to a real file yet (a scratch buffer): nothing to compare.
+    NoBaseline,
+    /// Bound to a path that did not exist when opened. If it appears, some
+    /// other process wrote it — that is an external change too.
+    Absent,
+    /// The file as last read or written: (mtime, size). Size rides along so
+    /// a rewrite within one mtime tick still registers.
+    Present(SystemTime, u64),
+}
+
+/// A buffer's file binding, so a failed `:w {path}` can put it back.
+pub(crate) struct Binding(Option<PathBuf>, DiskState);
 
 pub struct Buffer {
     pub rope: Rope,
@@ -33,19 +50,28 @@ pub struct Buffer {
     /// #69): mutations are inert and `save` is refused, so the source on disk
     /// can't be clobbered.
     pub read_only: bool,
-    /// The file as last read or written: (mtime, size). A mismatch with the
-    /// file now means something else changed it (#80) — `save` refuses
-    /// unless forced, and the editor's poll reloads or warns.
-    disk_stamp: Option<(SystemTime, u64)>,
+    disk: DiskState,
     /// Set by the poll when the file changed on disk while this buffer holds
     /// unsaved edits; shown in the statusline, cleared by a reload or `:w!`.
     pub disk_conflict: bool,
-    version: u64,
-    saved_version: u64,
+    /// Bumps on every change to the rope, undo and redo included, and never
+    /// runs backwards — the key every cache and the LSP synchronise on.
+    revision: u64,
+    /// Identifies the *content*: a fresh id per mutation, restored by
+    /// undo/redo to the id that content had before. Comparing it to
+    /// `saved_state` answers "is this exactly what was saved?" even across
+    /// undo branches (#82 §1 — a plain counter that undo rewound let a
+    /// different text reuse the saved number).
+    state: u64,
+    saved_state: u64,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
-    /// Version at the moment the currently open change transaction started.
+    /// State when the outermost open change transaction started.
     open_change: Option<u64>,
+    /// Nesting depth of `begin_change`/`end_change`: only the outermost pair
+    /// snapshots and commits, so a helper (completion, an LSP edit) inside an
+    /// insert session can't close the session's transaction (#82 §12).
+    change_depth: u32,
 }
 
 /// The buffer invariant mirrors vim's line model: every line has a newline
@@ -75,13 +101,15 @@ impl Buffer {
             rope: normalized(text),
             path: None,
             read_only: false,
-            disk_stamp: None,
+            disk: DiskState::NoBaseline,
             disk_conflict: false,
-            version: 0,
-            saved_version: 0,
+            revision: 0,
+            state: 0,
+            saved_state: 0,
             undo: Vec::new(),
             redo: Vec::new(),
             open_change: None,
+            change_depth: 0,
         }
     }
 
@@ -98,27 +126,44 @@ impl Buffer {
         let mut buf = Self::from_text("");
         buf.rope = rope;
         buf.path = Some(path.to_path_buf());
-        if existed {
-            buf.disk_stamp = disk_stamp_of(path);
-        }
+        buf.disk = match disk_stamp_of(path) {
+            Some((t, n)) if existed => DiskState::Present(t, n),
+            _ => DiskState::Absent,
+        };
         Ok((buf, existed))
     }
 
     /// Whether the file on disk differs from what this buffer last read or
-    /// wrote (#80): the mtime or size moved. A buffer never on disk, or a
-    /// file since deleted, reports `false`.
+    /// wrote (#80): the mtime or size moved, or a file that was absent when
+    /// opened has since appeared (#82 §5). A scratch buffer, or a file since
+    /// deleted, reports `false`.
     pub fn disk_changed(&self) -> bool {
-        match (self.path.as_deref(), self.disk_stamp) {
-            (Some(p), Some(recorded)) => disk_stamp_of(p).is_some_and(|now| now != recorded),
-            _ => false,
+        let Some(p) = self.path.as_deref() else {
+            return false;
+        };
+        match self.disk {
+            DiskState::NoBaseline => false,
+            DiskState::Absent => disk_stamp_of(p).is_some(),
+            DiskState::Present(t, n) => disk_stamp_of(p).is_some_and(|now| now != (t, n)),
         }
     }
 
-    /// Drops the recorded disk stamp — after `:w {path}` rebinds the buffer,
-    /// the previous file's identity must not veto the first write.
-    pub(crate) fn forget_disk_stamp(&mut self) {
-        self.disk_stamp = None;
+    /// The current file binding, to restore if a `:w {path}` fails.
+    pub(crate) fn binding(&self) -> Binding {
+        Binding(self.path.clone(), self.disk)
+    }
+
+    /// Rebinds to `path` for a `:w {path}`: no baseline yet — the new file's
+    /// identity is recorded by the write itself.
+    pub(crate) fn rebind(&mut self, path: PathBuf) {
+        self.path = Some(path);
+        self.disk = DiskState::NoBaseline;
         self.disk_conflict = false;
+    }
+
+    pub(crate) fn restore_binding(&mut self, b: Binding) {
+        self.path = b.0;
+        self.disk = b.1;
     }
 
     /// Reads the file's current content from disk (for a reload).
@@ -152,14 +197,23 @@ impl Buffer {
     /// in a buffer that refuses edits and saves, so the file on disk can't be
     /// clobbered. Large files are dumped up to a cap with a truncation note.
     pub fn from_hex(path: &Path) -> Result<Buffer> {
-        const HEX_VIEW_BYTES: usize = 1 << 20; // 1 MiB — plenty for any ROM
-        let bytes = fs::read(path).with_context(|| format!("cannot open {}", path.display()))?;
-        let shown = bytes.len().min(HEX_VIEW_BYTES);
-        let mut lines = crate::core::hex::hex_dump(&bytes[..shown], usize::MAX);
-        if shown < bytes.len() {
+        use std::io::Read;
+        const HEX_VIEW_BYTES: u64 = 1 << 20; // 1 MiB — plenty for any ROM
+        // read only up to the cap (#82: a multi-GB file must not be slurped
+        // just to show its first megabyte); the size comes from metadata
+        let total = fs::metadata(path)
+            .with_context(|| format!("cannot open {}", path.display()))?
+            .len();
+        let mut bytes = Vec::new();
+        fs::File::open(path)
+            .with_context(|| format!("cannot open {}", path.display()))?
+            .take(HEX_VIEW_BYTES)
+            .read_to_end(&mut bytes)?;
+        let mut lines = crate::core::hex::hex_dump(&bytes, usize::MAX);
+        if total > bytes.len() as u64 {
             lines.push(format!(
                 "… {} more bytes not shown (hex view capped at {} KiB)",
-                bytes.len() - shown,
+                total - bytes.len() as u64,
                 HEX_VIEW_BYTES / 1024
             ));
         }
@@ -173,22 +227,45 @@ impl Buffer {
     /// after reloading an externally formatted file), and re-stamps the file
     /// so that write isn't later mistaken for an external change.
     pub(crate) fn mark_saved(&mut self) {
-        self.saved_version = self.version;
-        self.disk_stamp = self.path.as_deref().and_then(disk_stamp_of);
+        self.saved_state = self.state;
+        self.disk = match self.path.as_deref().and_then(disk_stamp_of) {
+            Some((t, n)) => DiskState::Present(t, n),
+            None => DiskState::NoBaseline,
+        };
         self.disk_conflict = false;
     }
 
+    /// Whether the content differs from what was last saved or loaded. Exact
+    /// across undo: returning to the saved text reads as clean, and a fresh
+    /// edit after an undo reads as modified (#82 §1).
     pub fn is_modified(&self) -> bool {
-        self.version != self.saved_version
+        self.state != self.saved_state
     }
 
+    /// Monotonic change counter (undo/redo bump it too) — a cache key, never
+    /// an identity of content.
     pub fn version(&self) -> u64 {
-        self.version
+        self.revision
     }
 
-    /// Writes atomically: temp file in the same directory, then rename.
-    /// Refuses when the file changed on disk since it was read or written
-    /// (#80) unless `force` — an agent's or formatter's edits must never be
+    /// Every rope mutation goes through here: a new revision, a fresh
+    /// content state, and — because editing after an undo forks history —
+    /// the redo stack dropped. Dropping it *here* rather than in
+    /// `begin_change` keeps a no-op insert session from destroying redo
+    /// (#82 §12).
+    fn touch(&mut self) {
+        self.revision += 1;
+        self.state = self.revision;
+        self.redo.clear();
+    }
+
+    /// Writes atomically — a unique, exclusively created sibling temp file,
+    /// then a rename over the target — and safely (#82 §2–4): the write goes
+    /// *through* a symlink to its real target rather than replacing the link,
+    /// the target's permission bits are preserved, and the temp name can't
+    /// collide with (or be pre-planted as a symlink to) anything. Refuses
+    /// when the file changed on disk since it was read or written (#80)
+    /// unless `force` — an agent's or formatter's edits must never be
     /// silently overwritten.
     pub fn save(&mut self, force: bool) -> Result<(PathBuf, usize)> {
         if self.read_only {
@@ -202,24 +279,32 @@ impl Buffer {
             let n = self.rope.len_chars();
             if n > 0 && self.rope.char(n - 1) != '\n' {
                 self.rope.insert(n, "\n");
-                self.version += 1;
+                self.touch();
             }
         }
-        let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
-        let tmp = match dir {
-            Some(d) => d.join(format!(
-                ".{}.unei.tmp",
-                path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
-            )),
-            None => PathBuf::from(format!(".{}.unei.tmp", path.display())),
-        };
+        // the real file: an existing symlink resolves to its referent
+        let target = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let perms = fs::metadata(&target).ok().map(|m| m.permissions());
+        let dir = target
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let stem = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        let (tmp, mut file) = open_unique_tmp(&dir, stem)?;
         let write = (|| -> Result<()> {
-            let mut f = fs::File::create(&tmp)?;
             for chunk in self.rope.chunks() {
-                f.write_all(chunk.as_bytes())?;
+                file.write_all(chunk.as_bytes())?;
             }
-            f.sync_all()?;
-            fs::rename(&tmp, &path)?;
+            file.sync_all()?;
+            drop(file);
+            if let Some(p) = perms {
+                fs::set_permissions(&tmp, p)?;
+            }
+            fs::rename(&tmp, &target)?;
             Ok(())
         })();
         if write.is_err() {
@@ -235,7 +320,7 @@ impl Buffer {
             return;
         }
         self.rope.insert(char_idx, text);
-        self.version += 1;
+        self.touch();
     }
 
     pub fn remove(&mut self, range: std::ops::Range<usize>) {
@@ -243,30 +328,42 @@ impl Buffer {
             return;
         }
         self.rope.remove(range);
-        self.version += 1;
+        self.touch();
     }
 
-    /// Starts an undoable change transaction; a snapshot of the current state
-    /// is pushed and redo history is dropped. Nested calls are folded into the
-    /// open transaction (e.g. `cw` opens one that the insert session extends).
+    /// Starts an undoable change transaction. Only the outermost call
+    /// snapshots; nested calls (`cw` opening one that the insert session
+    /// extends, a completion or LSP edit applied mid-insert) just deepen it
+    /// and are closed by their own `end_change` without committing.
     pub fn begin_change(&mut self, cursor: Cursor) {
-        if self.read_only || self.open_change.is_some() {
+        if self.read_only {
             return;
         }
-        self.open_change = Some(self.version);
-        self.redo.clear();
+        self.change_depth += 1;
+        if self.change_depth > 1 {
+            return;
+        }
+        self.open_change = Some(self.state);
         self.undo.push(Snapshot {
             rope: self.rope.clone(),
             cursor,
-            version: self.version,
+            state: self.state,
         });
     }
 
-    /// Ends the open transaction. Returns true when the buffer actually
-    /// changed; otherwise the snapshot is discarded.
+    /// Ends one level of transaction. The outermost `end_change` returns
+    /// whether the buffer actually changed (discarding the snapshot if not);
+    /// an inner one returns false and leaves the transaction open.
     pub fn end_change(&mut self) -> bool {
+        if self.change_depth == 0 {
+            return false;
+        }
+        self.change_depth -= 1;
+        if self.change_depth > 0 {
+            return false;
+        }
         match self.open_change.take() {
-            Some(v0) if v0 == self.version => {
+            Some(s0) if s0 == self.state => {
                 self.undo.pop();
                 false
             }
@@ -280,9 +377,10 @@ impl Buffer {
         self.redo.push(Snapshot {
             rope: std::mem::replace(&mut self.rope, snap.rope),
             cursor,
-            version: self.version,
+            state: self.state,
         });
-        self.version = snap.version;
+        self.state = snap.state; // back to a state that existed before
+        self.revision += 1; // …but every cache must still notice
         Some(snap.cursor)
     }
 
@@ -291,11 +389,34 @@ impl Buffer {
         self.undo.push(Snapshot {
             rope: std::mem::replace(&mut self.rope, snap.rope),
             cursor,
-            version: self.version,
+            state: self.state,
         });
-        self.version = snap.version;
+        self.state = snap.state;
+        self.revision += 1;
         Some(snap.cursor)
     }
+}
+
+/// Creates a temp file next to the target that no one else can have planted:
+/// a name unique to this process and attempt, opened with `create_new`
+/// (O_EXCL — fails on anything already there, and never follows a symlink).
+fn open_unique_tmp(dir: &Path, stem: &str) -> Result<(PathBuf, fs::File)> {
+    let pid = std::process::id();
+    for attempt in 0..64u32 {
+        let tmp = dir.join(format!(".{stem}.unei.{pid}.{attempt}.tmp"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(f) => return Ok((tmp, f)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(e).with_context(|| format!("cannot create {}", tmp.display()));
+            }
+        }
+    }
+    anyhow::bail!("cannot find a free temp name in {}", dir.display())
 }
 
 #[cfg(test)]
@@ -347,6 +468,45 @@ mod tests {
         assert_eq!(Buffer::from_text("").rope.to_string(), "\n");
         assert_eq!(Buffer::from_text("a").rope.to_string(), "a\n");
         assert_eq!(Buffer::from_text("a\n").rope.to_string(), "a\n");
+    }
+
+    #[test]
+    fn nested_transactions_commit_as_one_undo_unit() {
+        // an insert session (outer) with two completions (inner pairs) inside
+        // — #82 §12b: the inner end_change must not close the session
+        let mut b = Buffer::from_text("");
+        b.begin_change(Cursor::default()); // insert session opens
+        b.begin_change(Cursor::default()); // completion #1
+        b.insert(0, "vec");
+        assert!(!b.end_change(), "inner end must not commit");
+        b.insert(3, " ");
+        b.begin_change(Cursor::default()); // completion #2
+        b.insert(4, "vec");
+        assert!(!b.end_change());
+        assert!(b.end_change(), "outer end commits the whole session");
+        assert_eq!(b.rope.to_string(), "vec vec\n");
+        b.undo(Cursor::default());
+        assert_eq!(b.rope.to_string(), "\n", "one undo restores the original");
+        assert!(b.undo(Cursor::default()).is_none());
+    }
+
+    #[test]
+    fn saved_state_survives_undo_branching() {
+        let mut b = Buffer::from_text("base");
+        b.begin_change(Cursor::default());
+        b.insert(4, "x");
+        b.end_change();
+        b.mark_saved(); // "basex" is on disk
+        b.undo(Cursor::default()); // back to "base"
+        assert!(b.is_modified(), "\"base\" was never saved");
+        b.begin_change(Cursor::default());
+        b.insert(4, "y");
+        b.end_change();
+        assert!(b.is_modified(), "\"basey\" ≠ saved \"basex\"");
+        b.undo(Cursor::default());
+        b.redo(Cursor::default());
+        assert_eq!(b.rope.to_string(), "basey\n");
+        assert!(b.is_modified());
     }
 
     #[test]
