@@ -69,6 +69,8 @@ cargo build --release
 
 Best experienced in Kitty. Under tmux, italics and instant-Esc depend on your tmux terminfo (`tmux-256color` recommended).
 
+The release binary is built for the machine that compiles it (`.cargo/config.toml` sets `target-cpu=native`), so it is not portable — install it with `cargo install --path .` from inside the repo, where Cargo can see that file. `cargo run --release --example perf_probe` times the editor's hot paths; the build profile is whatever that probe says is fastest, which on an M2 turned out to be the plain defaults (see [docs/decisions.md](docs/decisions.md)).
+
 ## Status
 
 Personal daily driver for Rust, Markdown, and 6502 assembly. Development is ticket-by-ticket in this repo's issues; the roadmap *is* the issue list.

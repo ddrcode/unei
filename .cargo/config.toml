@@ -1,0 +1,14 @@
+# Build for the machine we are on. unei is a personal editor: the binary
+# never leaves the box that compiled it, so nothing is gained by targeting
+# a lowest-common-denominator CPU (ticket #90, docs/decisions.md).
+#
+# On Apple Silicon rustc's aarch64-apple-darwin target already assumes an
+# M1, so this adds only the M2+ extras (bf16, i8mm, bti) — nothing an editor
+# executes; the measured effect is nil. On x86_64 it is the difference
+# between the 2003 baseline (SSE2) and the actual chip.
+#
+# Cargo reads this file from the working directory, so `cargo install
+# --path .` must run inside the repo for it to apply (it does not follow
+# --path). Setting RUSTFLAGS in the environment replaces it entirely.
+[build]
+rustflags = ["-C", "target-cpu=native"]
