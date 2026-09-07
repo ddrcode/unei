@@ -1322,9 +1322,35 @@ impl Editor {
         wrap_rows(&grs, self.view.width)
     }
 
+    /// How many display rows `line` takes — exact, and allocation-free for
+    /// the common case (#89). No grapheme is wider than its byte length
+    /// except a tab: `line_graphemes` gives every cluster `width().max(1)`,
+    /// a 1-byte cluster is ASCII, and nothing below U+1100 is East Asian
+    /// wide, so bytes plus the tabs' extra reach bound the cells. A line
+    /// under that bound is one row without segmenting it; only lines over
+    /// it go through the wrapper. This runs for every line between the
+    /// window top and the cursor on each keystroke.
+    fn rows_of_line(&self, line: usize) -> usize {
+        let slice = self.buffer.rope.line(line);
+        let mut bytes = slice.len_bytes();
+        if bytes > 0 && slice.char(slice.len_chars() - 1) == '\n' {
+            bytes -= 1;
+        }
+        if bytes <= self.view.width {
+            let tabs: usize = slice
+                .chunks()
+                .map(|c| c.bytes().filter(|&b| b == b'\t').count())
+                .sum();
+            if bytes + tabs * (OPTIONS.tabstop - 1) <= self.view.width {
+                return 1;
+            }
+        }
+        self.wrap_rows_of(line).len()
+    }
+
     /// Display rows occupied by the lines `from..to`.
     fn rows_between(&self, from: usize, to: usize) -> usize {
-        (from..to).map(|l| self.wrap_rows_of(l).len()).sum()
+        (from..to).map(|l| self.rows_of_line(l)).sum()
     }
 
     /// The cursor's row index within its line, and that row.
@@ -1344,7 +1370,7 @@ impl Editor {
         let mut l = self.cursor.line;
         while l > 0 && acc < rows_above {
             l -= 1;
-            acc += self.wrap_rows_of(l).len();
+            acc += self.rows_of_line(l);
         }
         l
     }
@@ -1358,7 +1384,7 @@ impl Editor {
         let mut acc = row_in_line;
         let mut l = self.cursor.line;
         while l > 0 {
-            let above = self.wrap_rows_of(l - 1).len();
+            let above = self.rows_of_line(l - 1);
             if acc + above > limit {
                 break;
             }
@@ -1376,7 +1402,7 @@ impl Editor {
         let mut l = self.cursor.line;
         while acc < limit && l < last {
             l += 1;
-            acc += self.wrap_rows_of(l).len();
+            acc += self.rows_of_line(l);
         }
         acc.min(limit)
     }
@@ -2347,5 +2373,39 @@ mod tests {
         let mut ed = editor_with_buffers(&[("a.rs", ""), ("b.rs", "")]);
         ed.close_buffer(2, true);
         assert_eq!(ed.alloc_buf_id(), 3, "closed id 2 must not be recycled");
+    }
+
+    #[test]
+    fn row_count_fast_path_agrees_with_the_wrapper() {
+        // #89: the byte bound must never claim one row for a line the
+        // wrapper would fold — sweep every width across the awkward cases
+        let lines = [
+            "",
+            "short",
+            "\tindented\twith\ttabs",
+            "a\t\t\t\tb",
+            "tab\tafter wide 日本\tmixed",
+            "日本語のテキストは広い",
+            "café naïve résumé façade",
+            "e\u{301}e\u{301}e\u{301} combining",
+            "\u{301}lone combining mark first",
+            "👨\u{200d}👩\u{200d}👧 family 🇵🇱 flag ©\u{fe0f} mark",
+            "क्षि क्षि क्षि devanagari",
+            "ctrl\u{1}chars\u{7f}here",
+            "a very long line of ordinary prose that certainly wraps",
+            "loooooooooooooooooooooooooooooooooooooooooongword",
+        ];
+        let text = lines.join("\n") + "\n";
+        let mut ed = editor_with_buffers(&[("t.md", &text)]);
+        for width in 1..=48 {
+            ed.set_view(width, 10);
+            for (l, line) in lines.iter().enumerate() {
+                assert_eq!(
+                    ed.rows_of_line(l),
+                    ed.wrap_rows_of(l).len(),
+                    "line {line:?} at width {width}"
+                );
+            }
+        }
     }
 }
