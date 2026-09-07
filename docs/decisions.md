@@ -3,6 +3,30 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-07 — Release build: native CPU, otherwise the defaults — by measurement (ticket #90)
+
+A personal editor's binary never leaves the machine that built it, so
+`.cargo/config.toml` sets `-C target-cpu=native`. Everything else about the
+release profile was decided by `examples/perf_probe` (frames with reparses,
+tree-sitter from scratch, the wrapper, live grep, the picker over 20k files,
+8k insert-mode keys, undo/`dd`, 1000 search hops; min of five runs, clean
+builds, M2 Ultra), not by folklore — and folklore lost. `target-cpu=native`
+is nil here (rustc's Apple target already assumes an M1; M2 adds bf16/i8mm/
+bti, which an editor never issues) but is the right setting in principle and
+matters on x86_64. Thin LTO: neutral. **Fat LTO + `codegen-units = 1`:
+build 16 s → 52 s, binary −13 %, runtime 0 to −6 % (slower)** — the hot
+code is monomorphized generics (ropey, unicode-segmentation, regex) already
+instantiated inside this crate, and tree-sitter's C runtime is outside
+Rust's LTO anyway; so no LTO, do not re-add it by reflex. `panic = "abort"`
+is out on principle: a panic on the LSP reader or a formatter thread kills
+that thread today and would take the editor and its unsaved buffers with
+it under abort. PGO (train on the probe, rebuild with the profile) measured
+−5 to −8 % on the Rust-heavy paths and 0 on tree-sitter; not adopted: 5 %
+of a 2 ms frame is imperceptible, and it would cost a two-stage build, an
+LLVM tool in the flake and a second way to install. The probe stays so the
+option remains one script away, and so hot-path changes get measured
+(#89 was found by it).
+
 ## 2026-09-07 — Soft wrap: always on, rows are the unit, horizontal scroll is gone (ticket #9)
 
 Long lines soft-wrap at word boundaries — vim's `wrap` + `linebreak`, the

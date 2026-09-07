@@ -51,3 +51,4 @@ Standard Cargo workflow:
 - Lint: `cargo clippy`
 - Format: `cargo fmt`
 - Mutation testing: `cargo mutants` (output in `mutants.out*/`, gitignored)
+- Hot-path timings: `cargo run --release --example perf_probe` (min of a few runs; compare before/after — measure before touching the build profile or a hot path, see docs/decisions.md under ticket #90)
