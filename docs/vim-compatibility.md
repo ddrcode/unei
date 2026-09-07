@@ -65,7 +65,8 @@ on its own, like `autoread`.
 
 **Windows, buffers, scrolling.** `Ctrl+W` splits/resizing/zoom; `Ctrl+^`
 alternate buffer; `Ctrl+D` `Ctrl+U` `Ctrl+F` `Ctrl+B`, `zz` `zt` `zb`;
-`ZZ` / `ZQ`.
+`ZZ` / `ZQ`. **Soft wrap** at word boundaries — vim's `wrap` + `linebreak`,
+always on; `zz`/`zt`/`zb` and `scrolloff` count display rows.
 
 ## Different — same idea, changed on purpose
 
@@ -81,6 +82,7 @@ alternate buffer; `Ctrl+D` `Ctrl+U` `Ctrl+F` `Ctrl+B`, `zz` `zt` `zb`;
 | **Visual paste** | never clobbers the register | replaces the register |
 | **Opening files** | the fuzzy picker (`Ctrl+P`) or `gf` — there is no `:e path` | `:e`, `:find`, netrw, … |
 | **Formatting** | external only, on save (treefmt); no `=` or `gq` | built-in `=`, `gq`, `equalprg`, … |
+| **Long lines** | always soft-wrapped at word boundaries; no horizontal scrolling, no `nowrap` | `wrap`/`nowrap`, `linebreak`, sideways scrolling |
 | **Highlighting** | tree-sitter only, always on | built-in regex syntax + options |
 | **Configuration** | compiled in; no `~/.vimrc`, no runtime `:map` | `.vimrc`, `:map`, `:set` at runtime |
 | **Terminal** | Kitty only; uses its keyboard protocol (instant `Esc`, distinct `Ctrl+I`/`Tab`) and curly underlines | any terminal |
@@ -121,6 +123,7 @@ ever misses them.
 
 ## Not yet — on the roadmap, not excluded
 
-These simply aren't built yet (see the issue tracker): soft wrap, a Colemak
-keymap variant, auto-triggered completion, and `Ctrl+E`/`Ctrl+Y` (scroll a
-line without moving the cursor).
+These simply aren't built yet (see the issue tracker): a Colemak keymap
+variant, auto-triggered completion, `Ctrl+E`/`Ctrl+Y` (scroll a line without
+moving the cursor), and display-row motions over wrapped lines (vim's
+`gj`/`gk` — `i`/`k` stay buffer-line motions).

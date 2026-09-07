@@ -14,8 +14,8 @@ use crate::config::keymap::Key;
 use crate::core::buffer::{Buffer, Cursor};
 use crate::core::commands::{FindKind, Op, Register, WinDir};
 use crate::core::text::{
-    cell_at_col, first_non_blank, gr_index_at_col, line_content, line_graphemes, line_len,
-    max_normal_col, text_lines,
+    WrapRow, cell_at_col, first_non_blank, line_content, line_graphemes, line_len, max_normal_col,
+    row_of_col, text_lines, wrap_rows,
 };
 use windows::{MIN_WIN_HEIGHT, MIN_WIN_WIDTH, Node, SplitDir, WinId, WinState};
 
@@ -114,7 +114,6 @@ struct Slot {
     cursor: Cursor,
     goal: Option<usize>,
     top_line: usize,
-    left_cell: usize,
 }
 
 /// One row of the buffer list, for rendering and tests.
@@ -175,7 +174,6 @@ pub struct Editor {
     pub cmdline: String,
     pub message: Option<Message>,
     pub top_line: usize,
-    pub left_cell: usize,
     pub should_quit: bool,
     /// When the external-change poll last ran (#80); `None` = never.
     last_disk_check: Option<std::time::Instant>,
@@ -280,7 +278,6 @@ impl Editor {
             cursor: Cursor::default(),
             goal: None,
             top_line: 0,
-            left_cell: 0,
         }];
         for (id, buffer) in (2..).zip(buffers) {
             slots.push(Slot {
@@ -289,7 +286,6 @@ impl Editor {
                 cursor: Cursor::default(),
                 goal: None,
                 top_line: 0,
-                left_cell: 0,
             });
         }
         Self {
@@ -305,7 +301,6 @@ impl Editor {
             cmdline: String::new(),
             message: None,
             top_line: 0,
-            left_cell: 0,
             should_quit: false,
             last_disk_check: None,
             next_buf_id: slots.len() + 1, // ids seeded 1..=n above
@@ -412,13 +407,11 @@ impl Editor {
             cursor: self.cursor,
             goal: self.goal,
             top_line: self.top_line,
-            left_cell: self.left_cell,
         };
         let slot = &self.slots[to];
         self.cursor = slot.cursor;
         self.goal = slot.goal;
         self.top_line = slot.top_line;
-        self.left_cell = slot.left_cell;
         self.current = id;
     }
 
@@ -723,7 +716,6 @@ impl Editor {
                 state.cursor = cursor;
                 state.top_line = top;
                 state.goal = None;
-                state.left_cell = 0;
                 state.alternate = None;
             }
         }
@@ -881,7 +873,6 @@ impl Editor {
                         cursor: Cursor::default(),
                         goal: None,
                         top_line: 0,
-                        left_cell: 0,
                     });
                     self.switch_to(id);
                     if !existed {
@@ -916,7 +907,6 @@ impl Editor {
             cursor: Cursor::default(),
             goal: None,
             top_line: 0,
-            left_cell: 0,
         });
         self.switch_to(id);
         if let Some(name) = name {
@@ -946,7 +936,6 @@ impl Editor {
             cursor: Cursor::default(),
             goal: None,
             top_line: 0,
-            left_cell: 0,
         });
         self.switch_to(id);
         if let Some(name) = name {
@@ -985,7 +974,6 @@ impl Editor {
             cursor: self.cursor,
             goal: self.goal,
             top_line: self.top_line,
-            left_cell: self.left_cell,
             alternate: self.alternate,
         }
     }
@@ -1012,7 +1000,6 @@ impl Editor {
         self.cursor = state.cursor;
         self.goal = state.goal;
         self.top_line = state.top_line;
-        self.left_cell = state.left_cell;
         self.alternate = state.alternate;
         self.focused_win = id;
         self.clamp_cursor();
@@ -1030,7 +1017,7 @@ impl Editor {
                     .find(|(id, _)| *id == self.focused_win)
                     .map(|(_, r)| r.y)
                     .unwrap_or(0);
-                top + (self.cursor.line.saturating_sub(self.top_line)) as u16
+                top + self.cursor_display_pos().0 as u16
             }
             WinDir::Up | WinDir::Down => {
                 let left = rects
@@ -1038,7 +1025,7 @@ impl Editor {
                     .find(|(id, _)| *id == self.focused_win)
                     .map(|(_, r)| r.x)
                     .unwrap_or(0);
-                left + self.cursor.col.saturating_sub(self.left_cell) as u16
+                left + self.cursor_display_pos().1 as u16
             }
         };
         match windows::neighbor(&rects, self.focused_win, dir, pref) {
@@ -1073,7 +1060,6 @@ impl Editor {
                 cursor: Cursor::default(),
                 goal: None,
                 top_line: 0,
-                left_cell: 0,
             });
             WinState {
                 buf_id,
@@ -1329,34 +1315,119 @@ impl Editor {
         }
     }
 
-    pub fn scroll_to_cursor(&mut self) {
-        let h = self.view.height;
-        let last = text_lines(&self.buffer.rope) - 1;
-        let so = OPTIONS.scrolloff.min(h.saturating_sub(1) / 2);
-        if self.cursor.line < self.top_line + so {
-            self.top_line = self.cursor.line.saturating_sub(so);
-        }
-        let bottom_so = so.min(last.saturating_sub(self.cursor.line));
-        if self.cursor.line + bottom_so >= self.top_line + h {
-            self.top_line = (self.cursor.line + bottom_so + 1).saturating_sub(h);
-        }
-        self.top_line = self.top_line.min(last);
+    /// Display rows of a buffer line at the focused window's text width —
+    /// soft wrap at word boundaries (#9).
+    fn wrap_rows_of(&self, line: usize) -> Vec<WrapRow> {
+        let grs = line_graphemes(&line_content(&self.buffer.rope, line), OPTIONS.tabstop);
+        wrap_rows(&grs, self.view.width)
+    }
 
+    /// Display rows occupied by the lines `from..to`.
+    fn rows_between(&self, from: usize, to: usize) -> usize {
+        (from..to).map(|l| self.wrap_rows_of(l).len()).sum()
+    }
+
+    /// The cursor's row index within its line, and that row.
+    fn cursor_row(&self) -> (usize, WrapRow) {
+        let rows = self.wrap_rows_of(self.cursor.line);
+        let i = row_of_col(&rows, self.cursor.col);
+        (i, rows[i])
+    }
+
+    /// The largest top line that leaves at least `rows_above` display rows
+    /// between the window's top and the cursor's row — line 0 if the buffer
+    /// runs out first. Walks back from the cursor, so it costs a window's
+    /// worth of lines, never the whole buffer.
+    pub(crate) fn top_line_with_rows_above(&self, rows_above: usize) -> usize {
+        let (row_in_line, _) = self.cursor_row();
+        let mut acc = row_in_line;
+        let mut l = self.cursor.line;
+        while l > 0 && acc < rows_above {
+            l -= 1;
+            acc += self.wrap_rows_of(l).len();
+        }
+        l
+    }
+
+    /// The smallest top line whose rows still *fit* at most `limit` display
+    /// rows above the cursor's row — as much context above as the window
+    /// allows without pushing the cursor off the bottom. Tops are whole
+    /// lines, so a wrapped line just above may leave the window short.
+    pub(crate) fn top_line_fitting_rows_above(&self, limit: usize) -> usize {
+        let (row_in_line, _) = self.cursor_row();
+        let mut acc = row_in_line;
+        let mut l = self.cursor.line;
+        while l > 0 {
+            let above = self.wrap_rows_of(l - 1).len();
+            if acc + above > limit {
+                break;
+            }
+            l -= 1;
+            acc += above;
+        }
+        l
+    }
+
+    /// Display rows below the cursor's row, counting at most `limit`.
+    fn rows_below_cursor(&self, limit: usize) -> usize {
+        let last = text_lines(&self.buffer.rope) - 1;
+        let rows = self.wrap_rows_of(self.cursor.line);
+        let mut acc = rows.len() - 1 - row_of_col(&rows, self.cursor.col);
+        let mut l = self.cursor.line;
+        while acc < limit && l < last {
+            l += 1;
+            acc += self.wrap_rows_of(l).len();
+        }
+        acc.min(limit)
+    }
+
+    /// The cursor's screen position inside the focused window's text area:
+    /// (display row below the top line, cell within that row).
+    pub fn cursor_display_pos(&self) -> (usize, usize) {
+        let (row_in_line, row) = self.cursor_row();
+        let y = if self.cursor.line < self.top_line {
+            0
+        } else {
+            self.rows_between(self.top_line, self.cursor.line) + row_in_line
+        };
         let grs = line_graphemes(
             &line_content(&self.buffer.rope, self.cursor.line),
             OPTIONS.tabstop,
         );
         let cell = cell_at_col(&grs, self.cursor.col);
-        let cur_w = gr_index_at_col(&grs, self.cursor.col)
-            .map(|i| grs[i].width)
-            .unwrap_or(1);
-        let w = self.view.width;
-        if cell < self.left_cell {
-            self.left_cell = cell;
+        (y, cell.saturating_sub(row.start_cell))
+    }
+
+    /// Keeps the cursor's display row inside the window with `scrolloff` rows
+    /// of margin, counting soft-wrapped rows (#9). Soft wrap replaced
+    /// horizontal scrolling, so there is no horizontal component.
+    pub fn scroll_to_cursor(&mut self) {
+        let h = self.view.height.max(1);
+        let last = text_lines(&self.buffer.rope) - 1;
+        let so = OPTIONS.scrolloff.min(h.saturating_sub(1) / 2);
+        if self.cursor.line < self.top_line {
+            self.top_line = self.cursor.line;
         }
-        if cell + cur_w > self.left_cell + w {
-            self.left_cell = (cell + cur_w).saturating_sub(w);
+        let (row_in_line, _) = self.cursor_row();
+        // a cursor a whole window's worth of lines below the top is off the
+        // bottom regardless of wrapping — skip counting every row in between
+        let cur_row = |ed: &Self| {
+            if ed.cursor.line >= ed.top_line + h {
+                usize::MAX / 2
+            } else {
+                ed.rows_between(ed.top_line, ed.cursor.line) + row_in_line
+            }
+        };
+        if cur_row(self) < so {
+            self.top_line = self.top_line_with_rows_above(so);
         }
+        // near the end of the buffer the margin shrinks so the last line can
+        // sit at the bottom, as in vim
+        let bottom_so = self.rows_below_cursor(so);
+        if cur_row(self) + bottom_so >= h {
+            self.top_line = self.top_line_fitting_rows_above(h - 1 - bottom_so);
+        }
+        self.top_line = self.top_line.min(last);
     }
 
     /// Vertical cursor move that clamps at the edges (used by scrolling).

@@ -85,6 +85,8 @@ pub struct Gr {
     pub cell: usize,
     /// Display width in cells.
     pub width: usize,
+    /// A space or tab — a soft-wrap break opportunity (#9).
+    pub is_blank: bool,
 }
 
 pub fn line_graphemes(line: &str, tabstop: usize) -> Vec<Gr> {
@@ -103,6 +105,7 @@ pub fn line_graphemes(line: &str, tabstop: usize) -> Vec<Gr> {
             chars,
             cell,
             width,
+            is_blank: g == " " || g == "\t",
         });
         char_off += chars;
         cell += width;
@@ -143,6 +146,85 @@ pub fn col_at_cell(grs: &[Gr], cell: usize) -> usize {
     grs.last().map(|g| g.char_off).unwrap_or(0)
 }
 
+/// One display row of a soft-wrapped line (#9): the half-open cell range
+/// `[start_cell, end_cell)` it shows and the char columns `[start_col,
+/// end_col)` those cells hold. A line always has at least one row; an empty
+/// line has one empty row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WrapRow {
+    pub start_cell: usize,
+    pub end_cell: usize,
+    pub start_col: usize,
+    pub end_col: usize,
+}
+
+/// Soft-wraps a line's graphemes into rows of at most `width` cells, breaking
+/// after whitespace when a row would overflow (vim's `wrap` + `linebreak`);
+/// a single run longer than the row is broken hard at the cell limit. The
+/// trailing space stays at the end of the row it closes, as in vim.
+pub fn wrap_rows(grs: &[Gr], width: usize) -> Vec<WrapRow> {
+    let width = width.max(1);
+    let total_cells = grs.last().map(|g| g.cell + g.width).unwrap_or(0);
+    let total_cols = grs.last().map(|g| g.char_off + g.chars).unwrap_or(0);
+    let mut rows = Vec::new();
+    let mut row_start = 0usize; // index into grs
+    let mut last_break: Option<usize> = None; // index just after a whitespace cluster
+    let mut i = 0usize;
+    while i < grs.len() {
+        let g = &grs[i];
+        let row_cell0 = grs[row_start].cell;
+        if g.cell + g.width > row_cell0 + width && i > row_start {
+            // this cluster would overflow the row. If it is itself a blank,
+            // the row closes right after it — "alpha beta" stays together and
+            // the space is swallowed by the wrap (vim shows it clipped at the
+            // edge). Otherwise close at the last blank, or hard-break here.
+            let cut = if g.is_blank {
+                i + 1
+            } else {
+                match last_break {
+                    Some(b) if b > row_start => b,
+                    _ => i,
+                }
+            };
+            let end_g = grs.get(cut);
+            rows.push(WrapRow {
+                start_cell: grs[row_start].cell,
+                end_cell: end_g.map(|e| e.cell).unwrap_or(total_cells),
+                start_col: grs[row_start].char_off,
+                end_col: end_g.map(|e| e.char_off).unwrap_or(total_cols),
+            });
+            row_start = cut;
+            last_break = None;
+            i = cut;
+            continue;
+        }
+        if g.is_blank {
+            last_break = Some(i + 1); // break *after* the space, vim-style
+        }
+        i += 1;
+    }
+    // the final row — unless a swallowed trailing blank already closed the
+    // line exactly (then there is nothing left to show)
+    if row_start < grs.len() || rows.is_empty() {
+        let start = grs.get(row_start);
+        rows.push(WrapRow {
+            start_cell: start.map(|g| g.cell).unwrap_or(total_cells),
+            end_cell: total_cells,
+            start_col: start.map(|g| g.char_off).unwrap_or(total_cols),
+            end_col: total_cols,
+        });
+    }
+    rows
+}
+
+/// Index of the row (within `rows`) that holds char column `col`; a column
+/// at or past the line's end lands on the last row.
+pub fn row_of_col(rows: &[WrapRow], col: usize) -> usize {
+    rows.iter()
+        .position(|r| col < r.end_col)
+        .unwrap_or(rows.len().saturating_sub(1))
+}
+
 /// Char column of the first non-blank character; all-blank lines yield the
 /// last column (vim's `^` behavior), empty lines 0.
 pub fn first_non_blank(rope: &Rope, line: usize) -> usize {
@@ -174,6 +256,58 @@ pub fn max_normal_col(rope: &Rope, line: usize, tabstop: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wrapped(line: &str, width: usize) -> Vec<(usize, usize)> {
+        wrap_rows(&line_graphemes(line, 4), width)
+            .into_iter()
+            .map(|r| (r.start_col, r.end_col))
+            .collect()
+    }
+    fn row_texts(line: &str, width: usize) -> Vec<String> {
+        wrapped(line, width)
+            .into_iter()
+            .map(|(s, e)| line.chars().skip(s).take(e - s).collect())
+            .collect()
+    }
+
+    #[test]
+    fn wrap_breaks_after_whitespace_like_linebreak() {
+        // 10 cells wide: "the quick " (10) | "brown fox" (9)
+        assert_eq!(
+            row_texts("the quick brown fox", 10),
+            ["the quick ", "brown fox"]
+        );
+        // the space closing a row stays on it, exactly like vim
+        assert_eq!(row_texts("aaa bbb", 4), ["aaa ", "bbb"]);
+    }
+
+    #[test]
+    fn wrap_hard_breaks_a_word_longer_than_the_row() {
+        assert_eq!(row_texts("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+        // a long word after a short one: break at the space, then hard-break
+        assert_eq!(row_texts("ab cdefghij", 4), ["ab ", "cdef", "ghij"]);
+    }
+
+    #[test]
+    fn wrap_edge_cases() {
+        assert_eq!(wrapped("", 10), [(0, 0)]); // one empty row
+        assert_eq!(row_texts("exact", 5), ["exact"]); // fits exactly: one row
+        assert_eq!(row_texts("exact!", 5), ["exact", "!"]);
+        // a tab counts by its expanded width (tabstop 4)
+        assert_eq!(row_texts("\tab", 4), ["\t", "ab"]);
+    }
+
+    #[test]
+    fn row_of_col_maps_cursor_to_its_row() {
+        let rows = wrap_rows(&line_graphemes("aaa bbb ccc", 4), 4); // "aaa ","bbb ","ccc"
+        assert_eq!(rows.len(), 3);
+        assert_eq!(row_of_col(&rows, 0), 0);
+        assert_eq!(row_of_col(&rows, 3), 0); // the closing space
+        assert_eq!(row_of_col(&rows, 4), 1);
+        assert_eq!(row_of_col(&rows, 10), 2);
+        assert_eq!(row_of_col(&rows, 11), 2); // past the end: last row
+        assert_eq!(row_of_col(&wrap_rows(&[], 4), 0), 0);
+    }
 
     #[test]
     fn text_lines_counts_like_vim() {

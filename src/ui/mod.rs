@@ -7,7 +7,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::{OPTIONS, gutter_width, palette};
-use crate::core::text::{cell_at_col, line_content, line_graphemes, text_lines};
+use crate::core::text::{cell_at_col, line_content, line_graphemes, text_lines, wrap_rows};
 use crate::editor::{Editor, Mode};
 
 /// Everything a window needs to draw itself, resolved from either the live
@@ -23,7 +23,6 @@ struct WinView<'a> {
     cursor_line: usize,
     cursor_col: usize,
     top_line: usize,
-    left_cell: usize,
     focused: bool,
 }
 
@@ -82,7 +81,6 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                 cursor_line: ed.cursor.line,
                 cursor_col: ed.cursor.col,
                 top_line: ed.top_line,
-                left_cell: ed.left_cell,
                 focused: true,
             }
         } else {
@@ -101,7 +99,6 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
                 cursor_line: state.cursor.line.min(last),
                 cursor_col: state.cursor.col,
                 top_line: state.top_line.min(last),
-                left_cell: state.left_cell,
                 focused: false,
             }
         };
@@ -152,14 +149,11 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
         _ => {
             if let Some((_, rect)) = rects.iter().find(|(id, _)| *id == focused_id) {
                 let lines_total = text_lines(&ed.buffer.rope);
-                let grs = line_graphemes(
-                    &line_content(&ed.buffer.rope, ed.cursor.line),
-                    OPTIONS.tabstop,
-                );
-                let cell = cell_at_col(&grs, ed.cursor.col);
-                let x =
-                    rect.x + gutter_width(lines_total) + cell.saturating_sub(ed.left_cell) as u16;
-                let y = rect.y + (ed.cursor.line - ed.top_line) as u16;
+                // the cursor's display row and cell within it, soft wrap
+                // included (#9)
+                let (row, xcell) = ed.cursor_display_pos();
+                let x = rect.x + gutter_width(lines_total) + xcell as u16;
+                let y = rect.y + row as u16;
                 f.set_cursor_position((
                     x.min(rect.x + rect.width - 1),
                     y.min(rect.y + rect.height.saturating_sub(2)),
@@ -766,10 +760,14 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
     let lines_total = text_lines(view.rope);
     let gutter_w = gutter_width(lines_total);
     let highlighted = ed.syntax.has_highlights(view.buf_id);
-    let mut rows: Vec<Line> = Vec::with_capacity(area.height as usize);
+    let height = area.height as usize;
+    let text_w = area.width.saturating_sub(gutter_w) as usize;
+    let mut rows: Vec<Line> = Vec::with_capacity(height);
 
-    for row in 0..area.height {
-        let line_idx = view.top_line + row as usize;
+    // one buffer line may fill several display rows (soft wrap, #9): walk
+    // lines from the top and emit their rows until the window is full
+    let mut line_idx = view.top_line;
+    while rows.len() < height {
         if line_idx >= lines_total {
             // nvim look: blank past end of buffer, no vim-style tildes
             rows.push(Line::default());
@@ -782,22 +780,14 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         } else {
             palette::BG
         };
-        let mut spans: Vec<Span> = Vec::new();
-        if gutter_w > 0 {
-            let num = format!("{:>width$} ", line_idx + 1, width = gutter_w as usize - 1);
-            let num_fg = if is_cursor_line {
-                palette::GUTTER_CURRENT_FG
-            } else if view.focused {
-                palette::GUTTER_FG
-            } else {
-                palette::dimmed(palette::GUTTER_FG)
-            };
-            spans.push(Span::styled(
-                num,
-                Style::default().bg(palette::GUTTER_BG).fg(num_fg),
-            ));
-        }
-        let text_w = area.width.saturating_sub(gutter_w) as usize;
+        let num_fg = if is_cursor_line {
+            palette::GUTTER_CURRENT_FG
+        } else if view.focused {
+            palette::GUTTER_FG
+        } else {
+            palette::dimmed(palette::GUTTER_FG)
+        };
+        let gutter_style = Style::default().bg(palette::GUTTER_BG).fg(num_fg);
         let syntax_spans = if highlighted {
             ed.syntax.line_spans(view.buf_id, line_idx)
         } else {
@@ -829,64 +819,88 @@ fn draw_text(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
         } else {
             None
         };
-        let used = styled_visible(
-            &line_content(view.rope, line_idx),
-            view.left_cell,
-            text_w,
-            &LineInks {
-                syntax: syntax_spans,
-                diags: diag_spans,
-                selection,
-                sel_bg,
-                search: &search_spans,
-                search_current,
-                line_bg,
-                focused: view.focused,
-            },
-            &mut spans,
-        );
-        // end-of-line diagnostic ghost text (<leader>dh toggles)
-        if ed.ghost_text
-            && ed.mode != Mode::Insert
-            && let Some((sev, msg)) = diag.and_then(|d| d.ghost.get(&line_idx))
-            && used + 4 < text_w
-        {
-            let room = text_w - used - 3;
-            let mut text: String = format!("● {msg}");
-            if text.width() > room {
-                text = text
-                    .chars()
-                    .take(room.saturating_sub(1))
-                    .collect::<String>()
-                    + "…";
+        let inks = LineInks {
+            syntax: syntax_spans,
+            diags: diag_spans,
+            selection,
+            sel_bg,
+            search: &search_spans,
+            search_current,
+            line_bg,
+            focused: view.focused,
+        };
+        let content = line_content(view.rope, line_idx);
+        let wrapped = wrap_rows(&line_graphemes(&content, OPTIONS.tabstop), text_w.max(1));
+        let last_row = wrapped.len() - 1;
+        for (ri, wr) in wrapped.iter().enumerate() {
+            if rows.len() >= height {
+                break; // the last line may show only its first rows
             }
-            let color = match sev {
-                crate::lsp::Severity::Error => palette::RED,
-                _ => palette::YELLOW,
-            };
-            let color = if view.focused {
-                color
-            } else {
-                palette::dimmed(color)
-            };
-            let ghost_w = text.width();
-            // replace part of the padding with the ghost
-            if let Some(last) = spans.last_mut() {
-                let pad = last.content.len();
-                let keep = 2.min(pad);
-                *last = Span::styled(" ".repeat(keep), Style::default().bg(line_bg));
-                spans.push(Span::styled(
-                    text,
-                    Style::default()
-                        .bg(line_bg)
-                        .fg(color)
-                        .add_modifier(Modifier::ITALIC),
-                ));
-                let rest = (text_w - used).saturating_sub(keep + ghost_w);
-                spans.push(Span::styled(" ".repeat(rest), Style::default().bg(line_bg)));
+            let mut spans: Vec<Span> = Vec::new();
+            if gutter_w > 0 {
+                // the number sits on the first row; continuation rows leave
+                // the gutter blank
+                let num = if ri == 0 {
+                    format!("{:>width$} ", line_idx + 1, width = gutter_w as usize - 1)
+                } else {
+                    " ".repeat(gutter_w as usize)
+                };
+                spans.push(Span::styled(num, gutter_style));
             }
+            let used = styled_visible(
+                &content,
+                wr.start_cell,
+                wr.end_cell,
+                text_w,
+                &inks,
+                &mut spans,
+            );
+            // end-of-line diagnostic ghost text (<leader>dh toggles), after
+            // the line's last row
+            if ri == last_row
+                && ed.ghost_text
+                && ed.mode != Mode::Insert
+                && let Some((sev, msg)) = diag.and_then(|d| d.ghost.get(&line_idx))
+                && used + 4 < text_w
+            {
+                let room = text_w - used - 3;
+                let mut text: String = format!("● {msg}");
+                if text.width() > room {
+                    text = text
+                        .chars()
+                        .take(room.saturating_sub(1))
+                        .collect::<String>()
+                        + "…";
+                }
+                let color = match sev {
+                    crate::lsp::Severity::Error => palette::RED,
+                    _ => palette::YELLOW,
+                };
+                let color = if view.focused {
+                    color
+                } else {
+                    palette::dimmed(color)
+                };
+                let ghost_w = text.width();
+                // replace part of the padding with the ghost
+                if let Some(last) = spans.last_mut() {
+                    let pad = last.content.len();
+                    let keep = 2.min(pad);
+                    *last = Span::styled(" ".repeat(keep), Style::default().bg(line_bg));
+                    spans.push(Span::styled(
+                        text,
+                        Style::default()
+                            .bg(line_bg)
+                            .fg(color)
+                            .add_modifier(Modifier::ITALIC),
+                    ));
+                    let rest = (text_w - used).saturating_sub(keep + ghost_w);
+                    spans.push(Span::styled(" ".repeat(rest), Style::default().bg(line_bg)));
+                }
+            }
+            rows.push(Line::from(spans).style(Style::default().bg(line_bg)));
         }
-        rows.push(Line::from(spans).style(Style::default().bg(line_bg)));
+        line_idx += 1;
     }
 
     f.render_widget(Paragraph::new(rows).style(base), area);
@@ -1006,9 +1020,12 @@ fn selection_on_line(ed: &Editor, line: usize) -> SelSpan {
     }
 }
 
+/// Renders the cells `[left, end)` of a line as styled spans — one display
+/// row of a soft-wrapped line (#9) — padded to `width`.
 fn styled_visible(
     content: &str,
     left: usize,
+    end: usize,
     width: usize,
     inks: &LineInks,
     out: &mut Vec<Span<'static>>,
@@ -1072,12 +1089,12 @@ fn styled_visible(
         if cell <= left {
             continue;
         }
-        if start >= left + width {
+        if start >= end {
             break;
         }
         let vis_from = start.max(left);
-        let vis_to = cell.min(left + width);
-        let piece: String = if g == "\t" || start < left || cell > left + width {
+        let vis_to = cell.min(end);
+        let piece: String = if g == "\t" || start < left || cell > end {
             " ".repeat(vis_to.saturating_sub(vis_from))
         } else {
             g.to_string()

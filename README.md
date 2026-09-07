@@ -36,6 +36,7 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - **Binary files** open as a **read-only hex view** (offset · bytes · ASCII gutter) instead of garbage — ROMs, `.bin`, object files; the picker previews their head the same way
 - **Clipboard**: separate yank and cut registers; yanks mirror to the system clipboard (OSC 52); bracketed paste
 - **Format on save** via treefmt (project-level `treefmt.toml`; silence otherwise)
+- **Soft wrap** at word boundaries (vim `wrap` + `linebreak`), always on — no horizontal scrolling; line numbers on the first row only
 - Jumplist (`Ctrl+O`/`Ctrl+I`), dimmed inactive panels, full-width cursorline, scrolloff 15
 
 ## Make it yours
