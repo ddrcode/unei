@@ -6,7 +6,25 @@ and one warning diagnostic; hover, definition, code actions, inlay hints
 and macro expansion return fixed data the tests assert on.
 """
 import json
+import os
 import sys
+
+# Every didOpen/didChange is appended (one JSON object per line) to the file
+# named by UNEI_FAKE_LSP_LOG, so tests can assert what text the server holds.
+LOG = os.environ.get("UNEI_FAKE_LSP_LOG")
+
+
+def log(method, params):
+    if not LOG:
+        return
+    doc = params.get("textDocument", {})
+    text = doc.get("text")
+    if text is None:
+        changes = params.get("contentChanges", [])
+        text = changes[-1].get("text") if changes else None
+    with open(LOG, "a") as f:
+        f.write(json.dumps({"method": method, "uri": doc.get("uri"),
+                            "version": doc.get("version"), "text": text}) + "\n")
 
 
 def send(msg):
@@ -42,7 +60,10 @@ while True:
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "capabilities": {"positionEncoding": "utf-8"}}})
+    elif method == "textDocument/didChange":
+        log(method, msg["params"])
     elif method == "textDocument/didOpen":
+        log(method, msg["params"])
         uri = msg["params"]["textDocument"]["uri"]
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
               "params": {"uri": uri, "diagnostics": [
@@ -69,6 +90,12 @@ while True:
                            "end": {"line": 0, "character": 2}},
                  "newText": "FIXED"}]}}},
             {"title": "do nothing"},
+            # the test document has 4 lines; line 4 is the end of the file
+            # (after the final newline) — a legal LSP position for an append
+            {"title": "append tail", "edit": {"changes": {uri: [
+                {"range": {"start": {"line": 4, "character": 0},
+                           "end": {"line": 4, "character": 0}},
+                 "newText": "// tail\n"}]}}},
         ]})
     elif method == "textDocument/inlayHint":
         send({"jsonrpc": "2.0", "id": mid, "result": [
