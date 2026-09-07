@@ -34,10 +34,16 @@ fn install_fake_treefmt() -> PathBuf {
     let bin = std::env::temp_dir().join(format!("unei-fmt-bin-{}", std::process::id()));
     let _ = fs::remove_dir_all(&bin);
     fs::create_dir_all(&bin).unwrap();
+    // ORPHAN: spawn a child that writes the file 2s later, then hang so the
+    // editor times out — only a process-group kill stops that child (#82 §7).
+    // CHATTY: flood stderr past the pipe buffer before formatting — only a
+    // concurrent drain lets the formatter proceed.
     let script = "#!/bin/sh\n\
         f=\"$5\"\n\
         if [ -n \"$UNEI_FAKE_SLOW\" ]; then sleep 5; exit 0; fi\n\
         if [ -n \"$UNEI_FAKE_FAIL\" ]; then echo boom >&2; exit 1; fi\n\
+        if [ -n \"$UNEI_FAKE_ORPHAN\" ]; then ( sleep 2; echo late > \"$f\" ) & sleep 5; exit 0; fi\n\
+        if [ -n \"$UNEI_FAKE_CHATTY\" ]; then head -c 200000 /dev/zero | tr '\\0' x >&2; fi\n\
         tr 'a-z' 'A-Z' < \"$f\" > \"$f.tmp\" && mv \"$f.tmp\" \"$f\"\n";
     let path = bin.join("treefmt");
     fs::write(&path, script).unwrap();
@@ -110,4 +116,51 @@ fn format_on_save_scenarios() {
     let msg = ed.message.as_ref().unwrap();
     assert!(msg.error && msg.text.contains("timed out"));
     assert_eq!(fs::read_to_string(dir5.join("e.txt")).unwrap(), "slow\n");
+
+    // 7. a timed-out formatter's own child must die with it (#82 §7): after
+    // the timeout we write newer content; the orphan must not overwrite it
+    unsafe { std::env::set_var("UNEI_FAKE_ORPHAN", "1") };
+    let dir6 = project("orphan", true);
+    let mut ed = editor_on(dir6.join("f.txt"), "first\n");
+    feed(&mut ed, ":w<CR>");
+    unsafe { std::env::remove_var("UNEI_FAKE_ORPHAN") };
+    assert!(ed.message.as_ref().unwrap().text.contains("timed out"));
+    fs::write(dir6.join("f.txt"), "newer\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2600));
+    assert_eq!(
+        fs::read_to_string(dir6.join("f.txt")).unwrap(),
+        "newer\n",
+        "the formatter's child kept running past the timeout and clobbered a later write"
+    );
+
+    // 8. a formatter that floods stderr must still complete (#82 §7): the
+    // pipe is drained concurrently, so it neither stalls nor times out
+    unsafe { std::env::set_var("UNEI_FAKE_CHATTY", "1") };
+    let dir7 = project("chatty", true);
+    let mut ed = editor_on(dir7.join("g.txt"), "noisy\n");
+    feed(&mut ed, ":w<CR>");
+    unsafe { std::env::remove_var("UNEI_FAKE_CHATTY") };
+    assert_eq!(
+        text(&ed),
+        "NOISY\n",
+        "stderr flood must not block formatting"
+    );
+
+    // 9. a relative launch path still finds its config and formats (#82 §10)
+    let dir8 = project("rel", true);
+    fs::create_dir_all(dir8.join("src")).unwrap();
+    let parent = dir8.parent().unwrap().to_path_buf();
+    let rel = PathBuf::from(dir8.file_name().unwrap())
+        .join("src")
+        .join("r.txt");
+    let prev_cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&parent).unwrap();
+    let mut ed = editor_on(rel, "rel\n");
+    feed(&mut ed, ":w<CR>");
+    std::env::set_current_dir(&prev_cwd).unwrap();
+    assert_eq!(
+        text(&ed),
+        "REL\n",
+        "relative path: formatter args were resolved from the wrong directory"
+    );
 }

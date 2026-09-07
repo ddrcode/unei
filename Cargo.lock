@@ -817,6 +817,7 @@ dependencies = [
  "anyhow",
  "cc",
  "ignore",
+ "libc",
  "nucleo-matcher",
  "ratatui",
  "regex",
