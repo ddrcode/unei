@@ -92,11 +92,36 @@ fn rank_completions(all: &[lsp::CompletionItem], prefix: &str) -> Vec<usize> {
     scored.into_iter().take(200).map(|(_, _, i)| i).collect()
 }
 
+/// The canonical `.rs` path of a buffer, if it is one — the document identity
+/// the server knows it by.
+fn rust_file_of(buffer: &crate::core::buffer::Buffer) -> Option<PathBuf> {
+    let path = buffer.path.as_ref()?;
+    if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+        Some(std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+    } else {
+        None
+    }
+}
+
 fn byte_to_char_col(line: &str, byte_col: usize) -> usize {
     let b = byte_col.min(line.len());
     line.get(..b)
         .map(|s| s.chars().count())
         .unwrap_or_else(|| line.chars().count())
+}
+
+/// An LSP (line, utf-8 byte column) as a char index for applying an edit.
+/// Unlike a cursor, an edit may address the *end of the document* — the
+/// empty line after the terminating newline — so that line maps to
+/// `len_chars` instead of being clamped onto the last visible line, which
+/// turned "append at EOF" into "insert at the start of the last line"
+/// (#82 §8). Anything beyond is clamped to the end.
+fn lsp_pos_to_char(rope: &ropey::Rope, line: usize, byte_col: usize) -> usize {
+    if line >= text_lines(rope) {
+        return rope.len_chars();
+    }
+    let content = line_content(rope, line);
+    (rope.line_to_char(line) + byte_to_char_col(&content, byte_col)).min(rope.len_chars())
 }
 
 fn char_to_byte_col(line: &str, char_col: usize) -> usize {
@@ -108,13 +133,7 @@ fn char_to_byte_col(line: &str, char_col: usize) -> usize {
 
 impl Editor {
     pub(crate) fn current_rust_file(&self) -> Option<PathBuf> {
-        let path = self.buffer.path.as_ref()?;
-        if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-            Some(abs)
-        } else {
-            None
-        }
+        rust_file_of(&self.buffer)
     }
 
     /// Cursor position as (line, utf-8 byte column) for requests.
@@ -162,32 +181,53 @@ impl Editor {
         }
     }
 
-    /// Opens the current document on the server and pushes debounced edits.
+    /// Opens the current document on the server, then pushes debounced edits
+    /// for *every* buffer that has some — parked ones included, so switching
+    /// away mid-debounce can't strand a change (#82 §9).
     fn lsp_sync_current(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            return;
-        };
-        let Some(client) = &mut self.lsp else { return };
-        if !file.starts_with(client.root()) {
-            return;
-        }
-        let version = self.buffer.version() as i64;
-        if !client.is_open(&file) {
+        if let Some(file) = self.current_rust_file()
+            && let Some(client) = &mut self.lsp
+            && file.starts_with(client.root())
+            && !client.is_open(&file)
+        {
+            let version = self.buffer.version() as i64;
             client.did_open(&file, &self.buffer.rope.to_string(), version);
+            self.lsp_dirty.remove(&self.current); // didOpen carried it
             return;
         }
-        let quiet = self
-            .lsp_dirty_since
-            .map(|t| t.elapsed() >= CHANGE_DEBOUNCE)
-            .unwrap_or(false);
-        if quiet {
-            client.did_change(&file, &self.buffer.rope.to_string(), version);
-            self.lsp_dirty_since = None;
+        let quiet: Vec<BufId> = self
+            .lsp_dirty
+            .iter()
+            .filter(|(_, since)| since.elapsed() >= CHANGE_DEBOUNCE)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in quiet {
+            self.lsp_dirty.remove(&id);
+            if id != self.current && self.slot_index(id).is_none() {
+                continue; // closed meanwhile
+            }
+            let buffer = self.buffer_ref(id);
+            let Some(file) = rust_file_of(buffer) else {
+                continue;
+            };
+            let (content, version) = (buffer.rope.to_string(), buffer.version() as i64);
+            if let Some(client) = &mut self.lsp
+                && client.is_open(&file)
+            {
+                client.did_change(&file, &content, version);
+            }
         }
     }
 
+    /// Records that the current buffer changed; every mutation path — keys,
+    /// paste, reload, an applied LSP edit — must land here.
     pub(crate) fn lsp_note_edit(&mut self) {
-        self.lsp_dirty_since = Some(Instant::now());
+        self.lsp_dirty.insert(self.current, Instant::now());
+    }
+
+    /// Forgets pending edits for a buffer that is going away.
+    pub(crate) fn lsp_forget_buffer(&mut self, id: BufId) {
+        self.lsp_dirty.remove(&id);
     }
 
     pub(crate) fn lsp_did_save(&mut self, path: &Path) {
@@ -697,15 +737,16 @@ impl Editor {
             ) else {
                 continue;
             };
-            let last = text_lines(&buffer.rope) - 1;
-            let (sl, el) = ((sl as usize).min(last), (el as usize).min(last));
-            let sline = line_content(&buffer.rope, sl);
-            let eline = line_content(&buffer.rope, el);
-            let start = buffer.rope.line_to_char(sl) + byte_to_char_col(&sline, sc as usize);
-            let end = buffer.rope.line_to_char(el) + byte_to_char_col(&eline, ec as usize);
-            let end = end.min(buffer.rope.len_chars()).max(start);
+            let start = lsp_pos_to_char(&buffer.rope, sl as usize, sc as usize);
+            let end = lsp_pos_to_char(&buffer.rope, el as usize, ec as usize).max(start);
             buffer.remove(start..end);
             buffer.insert(start, new_text);
+        }
+        // the edit may have removed the terminating newline (a whole-document
+        // replacement, say); restore the buffer invariant
+        let n = buffer.rope.len_chars();
+        if n == 0 || buffer.rope.char(n - 1) != '\n' {
+            buffer.insert(n, "\n");
         }
         let committed = buffer.end_change();
         if focused {

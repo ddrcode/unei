@@ -95,6 +95,15 @@ impl FilePicker {
         self.items.len()
     }
 
+    /// Appends pasted text to the query (a path, a grep pattern) as one
+    /// update — the picker owns input while it's open, paste included (#82
+    /// §11). Single-line: newlines become spaces.
+    pub(crate) fn push_query(&mut self, text: &str) {
+        let flat = text.replace('\n', " ");
+        self.query.push_str(flat.trim());
+        self.refilter();
+    }
+
     /// The preview pane's title for the current selection: `path:line` for a
     /// grep hit, otherwise the file's name.
     pub fn preview_title(&self) -> String {

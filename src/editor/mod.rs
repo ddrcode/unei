@@ -190,7 +190,11 @@ pub struct Editor {
     /// rust-analyzer session (ticket #6), started lazily.
     pub(crate) lsp: Option<crate::lsp::Client>,
     lsp_broken: bool,
-    lsp_dirty_since: Option<std::time::Instant>,
+    /// Buffers with edits the server hasn't seen yet, and when they were
+    /// last touched. Per buffer, not one global timer: an edit in A followed
+    /// by a switch to B used to let B consume the debounce and leave A stale
+    /// on the server for good (#82 §9).
+    lsp_dirty: std::collections::HashMap<BufId, std::time::Instant>,
     /// Hover / annotated-line float (any key dismisses).
     pub info_float: Option<Vec<String>>,
     pub actions_menu: Option<analyzer::ActionsMenu>,
@@ -314,7 +318,7 @@ impl Editor {
             syntax: crate::syntax::Syntax::default(),
             lsp: None,
             lsp_broken: false,
-            lsp_dirty_since: None,
+            lsp_dirty: std::collections::HashMap::new(),
             info_float: None,
             actions_menu: None,
             completion: None,
@@ -673,6 +677,7 @@ impl Editor {
         if let Some(p) = closing_path {
             self.lsp_did_close(&p);
         }
+        self.lsp_forget_buffer(id);
         if id == self.current {
             let target = self
                 .alternate
@@ -1440,6 +1445,7 @@ impl Editor {
         let committed = self.buffer.end_change();
         self.note_change_committed(committed);
         self.buffer.mark_saved();
+        self.lsp_note_edit(); // a reload changes the text the server holds too
         self.clamp_cursor();
         self.scroll_to_cursor();
     }
@@ -2088,8 +2094,21 @@ impl Editor {
             return;
         }
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        // whoever owns the keyboard owns the paste (#82 §11): an open picker
+        // takes it as query text, the buffer list and a focused preview
+        // (navigation-only) swallow it — the source buffer is never touched
+        if let Some(p) = &mut self.file_picker {
+            p.push_query(&normalized);
+            return;
+        }
+        if self.buffer_list.is_some() || self.focused_is_preview() {
+            return;
+        }
         match self.mode {
-            Mode::Insert | Mode::Replace => insert::insert_text(self, &normalized),
+            Mode::Insert | Mode::Replace => {
+                insert::insert_text(self, &normalized);
+                self.lsp_note_edit();
+            }
             Mode::Visual(_) => {
                 normal::visual_paste_with(self, Register::Char(normalized));
                 self.lsp_note_edit();

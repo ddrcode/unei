@@ -28,6 +28,31 @@ fn install_fake_rust_analyzer() {
     unsafe { std::env::set_var("PATH", format!("{}:{old}", bin.display())) };
 }
 
+/// The fake server's didOpen/didChange log: (uri, text) in arrival order.
+fn server_docs(log: &std::path::Path) -> Vec<(String, String, String)> {
+    let Ok(raw) = fs::read_to_string(log) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .map(|v| {
+            (
+                v["method"].as_str().unwrap_or("").to_string(),
+                v["uri"].as_str().unwrap_or("").to_string(),
+                v["text"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Whether the server has received a didChange for a document whose uri
+/// ends with `file` and whose text contains `needle`.
+fn server_saw_change(log: &std::path::Path, file: &str, needle: &str) -> bool {
+    server_docs(log).iter().any(|(m, uri, text)| {
+        m == "textDocument/didChange" && uri.ends_with(file) && text.contains(needle)
+    })
+}
+
 fn project() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("unei-lsp-proj-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -38,6 +63,7 @@ fn project() -> PathBuf {
         "fn main() {\nlet x = vec![1];\nfn f() {}\n}\n",
     )
     .unwrap();
+    fs::write(dir.join("src/other.rs"), "fn other() {}\n").unwrap();
     dir
 }
 
@@ -65,8 +91,11 @@ fn pump(ed: &mut Editor, mut done: impl FnMut(&Editor) -> bool) -> bool {
 fn analyzer_end_to_end_with_fake_server() {
     install_fake_rust_analyzer();
     let dir = project();
+    let log = dir.join("server.log");
+    unsafe { std::env::set_var("UNEI_FAKE_LSP_LOG", &log) }; // before the server spawns
     let file = dir.join("src/main.rs");
     let mut ed = editor_on(&file);
+    ed.set_root(dir.clone());
     let buf = ed.current_buffer_id();
 
     // diagnostics arrive after didOpen and convert to render spans
@@ -115,11 +144,64 @@ fn analyzer_end_to_end_with_fake_server() {
         pump(&mut ed, |e| e.actions_menu.is_some()),
         "no actions menu"
     );
-    assert_eq!(ed.actions_menu.as_ref().unwrap().actions.len(), 2);
+    assert_eq!(ed.actions_menu.as_ref().unwrap().actions.len(), 3);
     feed(&mut ed, "<CR>");
     assert!(text(&ed).starts_with("FIXED main()"), "edit applied");
     feed(&mut ed, "u");
     assert!(text(&ed).starts_with("fn main()"), "edit is one undo step");
+
+    // #82 §8: an edit addressed to the end of the document (the line after
+    // the final newline) appends, rather than landing at the start of the
+    // last visible line
+    feed(&mut ed, "gg ca");
+    assert!(
+        pump(&mut ed, |e| e.actions_menu.is_some()),
+        "no actions menu"
+    );
+    feed(&mut ed, "kk<CR>"); // third action: "append tail"
+    assert_eq!(
+        text(&ed),
+        "fn main() {\nlet x = vec![1];\nfn f() {}\n}\n// tail\n",
+        "EOF edit must append"
+    );
+    feed(&mut ed, "u");
+
+    // #82 §9: every mutation path reaches the server, not only keystrokes
+    // (a) insert-mode bracketed paste
+    feed(&mut ed, "gg0h");
+    ed.paste_external("PASTED");
+    feed(&mut ed, "<Esc>");
+    assert!(
+        pump(&mut ed, |_| server_saw_change(&log, "main.rs", "PASTED")),
+        "insert-mode paste never reached the server"
+    );
+    feed(&mut ed, "u");
+    // (b) a reload from disk
+    fs::write(&file, "// reloaded\nfn main() {}\n").unwrap();
+    feed(&mut ed, ":e!<CR>");
+    assert!(text(&ed).starts_with("// reloaded"));
+    assert!(
+        pump(&mut ed, |_| server_saw_change(&log, "main.rs", "reloaded")),
+        "reload never reached the server"
+    );
+    // (c) an edit followed at once by a buffer switch must still sync: the
+    // old single global debounce let the new buffer swallow it
+    feed(&mut ed, "ASTRANDED<Esc>");
+    feed(&mut ed, "<C-p>other<CR>"); // open src/other.rs via the picker
+    assert!(
+        pump(&mut ed, |e| e
+            .buffer
+            .path
+            .as_ref()
+            .is_some_and(|p| p.ends_with("other.rs"))),
+        "did not switch to other.rs"
+    );
+    assert!(
+        pump(&mut ed, |_| server_saw_change(&log, "main.rs", "STRANDED")),
+        "edit in the buffer we switched away from never reached the server"
+    );
+    feed(&mut ed, "<C-^>"); // back to main.rs for what follows
+    assert!(ed.buffer.path.as_ref().unwrap().ends_with("main.rs"));
 
     // macro expansion opens a highlighted scratch split
     feed(&mut ed, " rm");
