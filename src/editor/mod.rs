@@ -1952,14 +1952,16 @@ impl Editor {
         }
         self.preview_windows.insert(id);
         self.request_inlay_hints(self.current);
-        // start the projection at the current source position
+        // start the projection at the current source position, with the
+        // reading line on the screen row the cursor was on — the window
+        // changes what it shows, not where the eye is
         let width = self.view.width.saturating_sub(2);
         let source_line = self.cursor.line;
-        let height = self.view.height;
+        let (row, _) = self.cursor_display_pos();
         let view_line = self
             .preview_doc_for(self.current, width)
             .view_line_for_source(source_line);
-        let top = view_line.saturating_sub(height / 3);
+        let top = view_line.saturating_sub(row);
         self.preview_nav.insert(id, (view_line, top));
     }
 
@@ -2028,7 +2030,9 @@ impl Editor {
         }
         let src_line = self.cursor.line;
         let buf = self.current;
-        let height = self.view.height.max(3);
+        // the reading line sits on the same screen row as the source
+        // cursor, so side by side the eye moves straight across (#94)
+        let (row, _) = self.cursor_display_pos();
         let width = self.view.width.saturating_sub(2);
         let ids: Vec<WinId> = self
             .preview_windows
@@ -2045,12 +2049,10 @@ impl Editor {
             if !shows {
                 continue;
             }
-            let doc = self.preview_doc_for(buf, width);
-            let view_line = doc.view_line_for_source(src_line);
-            let total = doc.line_count();
-            let top = view_line
-                .saturating_sub(height / 3)
-                .min(total.saturating_sub(1));
+            let view_line = self
+                .preview_doc_for(buf, width)
+                .view_line_for_source(src_line);
+            let top = view_line.saturating_sub(row);
             self.preview_nav.insert(id, (view_line, top));
         }
     }

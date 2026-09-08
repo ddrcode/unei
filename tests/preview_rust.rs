@@ -61,6 +61,14 @@ fn the_projection_follows_the_source_window() {
     let (line, top) = ed.preview_nav_state(preview_id);
     assert_eq!(line, 61, "reading line is the last source line's row");
     assert!(top > 30, "followed to the end, top={top}");
+    // side by side, the reading line sits on the source cursor's screen
+    // row — the eye moves straight across, not up (#94 review)
+    assert_eq!(line - top, ed.cursor_display_pos().0);
+    feed(&mut ed, "30i"); // up thirty lines: the cursor lands mid-window
+    ed.sync_preview_follow();
+    let (line, top) = ed.preview_nav_state(preview_id);
+    assert_eq!(line, 31);
+    assert_eq!(line - top, ed.cursor_display_pos().0);
     feed(&mut ed, "gg");
     ed.sync_preview_follow();
     assert_eq!(ed.preview_nav_state(preview_id), (0, 0));
