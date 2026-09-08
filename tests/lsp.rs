@@ -343,5 +343,54 @@ fn analyzer_end_to_end_with_fake_server() {
     feed(&mut ed, " cn<C-u><CR>"); // emptied = cancel
     assert!(ed.message.as_ref().unwrap().text.contains("cancelled"));
 
+    // references (#98): a location list in grep's shape, sorted by path,
+    // the name accented; Enter jumps to the place
+    use unei::editor::file_picker::PickerKind;
+    feed(&mut ed, "2G0w cr");
+    assert!(
+        pump(&mut ed, |e| e.file_picker.is_some()),
+        "references never arrived"
+    );
+    {
+        let p = ed.file_picker.as_ref().unwrap();
+        assert_eq!(p.kind, PickerKind::Locations);
+        assert_eq!(p.label, " references ");
+        assert_eq!(p.matches.len(), 2);
+        assert_eq!(p.item(&p.matches[0]), "src/main.rs:2: fn entry() {}");
+        assert_eq!(p.item(&p.matches[1]), "src/other.rs:1: fn entry() {}");
+        assert_eq!(
+            p.matches[0].indices,
+            vec![18, 19, 20, 21, 22],
+            "the name is accented"
+        );
+    }
+    feed(&mut ed, "<C-k><CR>"); // second row: other.rs
+    assert!(ed.buffer.path.as_ref().unwrap().ends_with("other.rs"));
+    assert_eq!((ed.cursor.line, ed.cursor.col), (0, 3));
+    feed(&mut ed, "<C-^>");
+
+    // diagnostics (#99): every published diagnostic, errors first, with
+    // the severity accented; typing filters, Enter jumps
+    feed(&mut ed, " dd");
+    {
+        let p = ed.file_picker.as_ref().unwrap();
+        assert_eq!(p.kind, PickerKind::Locations);
+        assert_eq!(p.label, " diagnostics ");
+        assert_eq!(p.matches.len(), 4, "two files, two diagnostics each");
+        assert_eq!(p.item(&p.matches[0]), "E src/main.rs:1: bad thing");
+        assert_eq!(p.item(&p.matches[1]), "E src/other.rs:1: bad thing");
+        assert!(p.item(&p.matches[2]).starts_with("W src/main.rs:2: iffy"));
+        assert_eq!(p.matches[0].indices, vec![0]);
+    }
+    feed(&mut ed, "iffy");
+    assert_eq!(
+        ed.file_picker.as_ref().unwrap().matches.len(),
+        2,
+        "filtered to the warnings"
+    );
+    feed(&mut ed, "<CR>");
+    assert!(ed.buffer.path.as_ref().unwrap().ends_with("main.rs"));
+    assert_eq!(ed.cursor.line, 1);
+
     ed.lsp_shutdown();
 }

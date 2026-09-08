@@ -531,7 +531,7 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
         // rows are longer — path:line:text — so it gets a wider slice), the
         // preview the rest, so a wide screen pours the extra into the preview
         let total = (area.width * 4 / 5).min(area.width.saturating_sub(4));
-        let list = if p.kind == crate::editor::file_picker::PickerKind::Grep {
+        let list = if p.kind.is_location_list() {
             (total * 2 / 5).clamp(48, 90)
         } else {
             (total / 4).clamp(34, 60)
@@ -578,7 +578,7 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
         let icon_w = if icon.is_some() { 2 } else { 0 };
         // truncate long rows: files/symbols keep the tail (the filename),
         // grep keeps the head (path:line) — shift match indices with the cut
-        let grep = p.kind == crate::editor::file_picker::PickerKind::Grep;
+        let grep = p.kind.is_location_list();
         let (shown, cut) = {
             let max = inner_w.saturating_sub(3 + icon_w);
             let n = item.chars().count();
@@ -646,14 +646,7 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
-                .title({
-                    use crate::editor::file_picker::PickerKind;
-                    match p.kind {
-                        PickerKind::Symbols => " symbols ",
-                        PickerKind::Grep => " grep ",
-                        PickerKind::Files => " files ",
-                    }
-                })
+                .title(p.label)
                 .title_style(Style::default().bg(palette::FLOAT_BG).fg(palette::FG))
                 .title_bottom(Line::styled(count, dim).right_aligned()),
         ),

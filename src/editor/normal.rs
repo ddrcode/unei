@@ -212,6 +212,10 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
                     ed.drop_recording();
                     ed.analyzer_rename_prompt();
                 }
+                Key::Char('r') => {
+                    ed.drop_recording();
+                    ed.analyzer_references();
+                }
                 _ => {}
             }
             clear_pending(ed);
@@ -226,9 +230,16 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
         }
         Awaiting::LeaderD => {
             ed.pending.awaiting = Awaiting::None;
-            if key == Key::Char('h') {
-                ed.drop_recording();
-                ed.toggle_ghost_text();
+            match key {
+                Key::Char('h') => {
+                    ed.drop_recording();
+                    ed.toggle_ghost_text();
+                }
+                Key::Char('d') => {
+                    ed.drop_recording();
+                    ed.open_diagnostics_list();
+                }
+                _ => {}
             }
             clear_pending(ed);
         }

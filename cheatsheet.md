@@ -95,7 +95,7 @@ reload themselves) ·
 
 ## Leader chords (`Space` …)
 
-`Space c a` code actions · **`Space c n` rename** (prompt pre-filled; `Ctrl+U` clears; `:wa` after a multi-file one) · `Space r m` expand macro · `Space d h` toggle
+`Space c a` code actions · **`Space c r` references** (list; type to filter, Enter jumps) · **`Space d d` diagnostics list** (all files, errors first) · **`Space c n` rename** (prompt pre-filled; `Ctrl+U` clears; `:wa` after a multi-file one) · `Space r m` expand macro · `Space d h` toggle
 diagnostic ghost text · `Space b`/`s`/`g` pickers · `Space p`/`P` cut-reg paste
 
 ## Opening the unusual
