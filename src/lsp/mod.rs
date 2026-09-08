@@ -38,6 +38,18 @@ pub struct Location {
     pub col: usize,
 }
 
+/// One inlay hint, position in utf-8 columns; the label flattened from
+/// its parts and padded as the server asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlayHint {
+    pub line: usize,
+    pub col: usize,
+    pub label: String,
+    /// LSP InlayHintKind: 1 = type, 2 = parameter, absent for the rest
+    /// (chaining, closing brace, lifetime, adjustment, binding mode…).
+    pub kind: Option<i64>,
+}
+
 /// A code action offered by the server, with its (possibly lazy) edit.
 #[derive(Debug, Clone)]
 pub struct Action {
@@ -73,6 +85,12 @@ pub enum Event {
     ExpandedMacro(Option<(String, String)>),
     /// The line-scope hover: (annotated line, signature label).
     InlayLine(Option<String>, Option<String>),
+    /// Every hint of a document, for the buffer revision the request named
+    /// (the compiler's-eye view, #93).
+    InlayHints(PathBuf, u64, Vec<InlayHint>),
+    /// The server's hints changed underneath (a dependency was indexed):
+    /// documents that show them should ask again.
+    InlayRefresh,
     ApplyEdit(Box<Value>),
     Progress(Option<String>),
     ServerExited(String),
@@ -89,6 +107,7 @@ enum Pending {
     ExpandMacro,
     InlayLine { text: String },
     SignatureFor { annotated: Option<String> },
+    InlayDoc { path: PathBuf, revision: u64 },
 }
 
 pub struct Client {
@@ -184,7 +203,27 @@ impl Client {
                     "workspace": { "applyEdit": true, "workspaceEdit": { "documentChanges": true } }
                 },
                 "initializationOptions": {
-                    "checkOnSave": true
+                    "checkOnSave": true,
+                    // direnv's `.direnv/flake-profile-*` symlinks into the nix
+                    // store's shell environment; rust-analyzer's scanner
+                    // follows it and never finishes loading the workspace —
+                    // no hover, no hints, no diagnostics, silently (#93)
+                    "files": { "excludeDirs": [".direnv"] },
+                    // every hint kind the compiler's-eye view (#93) prints;
+                    // nothing is shown inline, so the breadth costs nothing
+                    "inlayHints": {
+                        "maxLength": null,
+                        "typeHints": { "enable": true, "hideClosureInitialization": false, "hideNamedConstructor": false },
+                        "parameterHints": { "enable": true },
+                        "chainingHints": { "enable": true },
+                        "closingBraceHints": { "enable": true, "minLines": 25 },
+                        "closureReturnTypeHints": { "enable": "always" },
+                        "lifetimeElisionHints": { "enable": "always", "useParameterNames": true },
+                        // not expressionAdjustmentHints: every auto-ref/deref
+                        // as `&**&x` is the MIR's eye, not the compiler's, and
+                        // "reborrow" hides almost none of them (tried, #93)
+                        "bindingModeHints": { "enable": true }
+                    }
                 }
             }),
         );
@@ -367,6 +406,26 @@ impl Client {
         );
     }
 
+    /// Every hint of a document — the compiler's-eye view (#93). `lines`
+    /// is the line count so the range covers the whole text; `revision` is
+    /// echoed back so stale answers can be told from fresh ones.
+    pub fn inlay_document(&mut self, path: &Path, lines: usize, revision: u64) {
+        self.request(
+            Pending::InlayDoc {
+                path: path.to_path_buf(),
+                revision,
+            },
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": { "uri": uri(path) },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": lines, "character": 0 }
+                }
+            }),
+        );
+    }
+
     pub fn shutdown(&mut self) {
         let _ = self
             .transport
@@ -412,10 +471,13 @@ impl Client {
                     let n = msg["params"]["items"].as_array().map_or(1, Vec::len);
                     self.respond(&id, json!(vec![Value::Null; n]));
                 }
+                "workspace/inlayHint/refresh" => {
+                    self.respond(&id, Value::Null);
+                    events.push(Event::InlayRefresh);
+                }
                 "window/workDoneProgress/create"
                 | "client/registerCapability"
-                | "workspace/semanticTokens/refresh"
-                | "workspace/inlayHint/refresh" => {
+                | "workspace/semanticTokens/refresh" => {
                     self.respond(&id, Value::Null);
                 }
                 "workspace/applyEdit" => {
@@ -524,6 +586,13 @@ impl Client {
                     }
                     None => events.push(Event::InlayLine(annotated, None)),
                 }
+            }
+            Pending::InlayDoc { path, revision } => {
+                events.push(Event::InlayHints(
+                    path,
+                    revision,
+                    parse_inlay_hints(&result),
+                ));
             }
             Pending::SignatureFor { annotated } => {
                 let signature = result["signatures"]
@@ -656,23 +725,15 @@ fn parse_definition(result: &Value) -> Option<Location> {
     })
 }
 
-/// Builds the type-annotated version of a line by splicing inlay hint labels
-/// at their utf-8 columns (the ticket's line-scope hover).
-fn splice_inlay_hints(text: &str, result: &Value) -> Option<String> {
-    let hints = result.as_array()?;
-    if hints.is_empty() {
-        return None;
-    }
-    // (col, label) sorted by col; labels may be strings or part arrays
-    let mut inserts: Vec<(usize, String)> = hints
+/// The hints in a `textDocument/inlayHint` result, labels flattened and
+/// padded, in server order.
+fn parse_inlay_hints(result: &Value) -> Vec<InlayHint> {
+    let Some(hints) = result.as_array() else {
+        return Vec::new();
+    };
+    hints
         .iter()
         .filter_map(|h| {
-            // parameter-name hints (kind 2) add noise, not information —
-            // only type hints (kind 1) belong in the annotated line
-            if h["kind"].as_i64() != Some(1) {
-                return None;
-            }
-            let col = h["position"]["character"].as_u64()? as usize;
             let label = match &h["label"] {
                 Value::String(s) => s.clone(),
                 Value::Array(parts) => parts
@@ -681,17 +742,32 @@ fn splice_inlay_hints(text: &str, result: &Value) -> Option<String> {
                     .collect::<String>(),
                 _ => return None,
             };
-            let pad_left = h["paddingLeft"].as_bool().unwrap_or(false);
-            let pad_right = h["paddingRight"].as_bool().unwrap_or(false);
             let mut label = label;
-            if pad_left {
+            if h["paddingLeft"].as_bool().unwrap_or(false) {
                 label.insert(0, ' ');
             }
-            if pad_right {
+            if h["paddingRight"].as_bool().unwrap_or(false) {
                 label.push(' ');
             }
-            Some((col, label))
+            Some(InlayHint {
+                line: h["position"]["line"].as_u64()? as usize,
+                col: h["position"]["character"].as_u64()? as usize,
+                label,
+                kind: h["kind"].as_i64(),
+            })
         })
+        .collect()
+}
+
+/// Builds the type-annotated version of a line by splicing inlay hint labels
+/// at their utf-8 columns (the ticket's line-scope hover).
+fn splice_inlay_hints(text: &str, result: &Value) -> Option<String> {
+    // parameter-name hints (kind 2) add noise, not information — only type
+    // hints (kind 1) belong in the annotated line
+    let mut inserts: Vec<(usize, String)> = parse_inlay_hints(result)
+        .into_iter()
+        .filter(|h| h.kind == Some(1))
+        .map(|h| (h.col, h.label))
         .collect();
     if inserts.is_empty() {
         return None;

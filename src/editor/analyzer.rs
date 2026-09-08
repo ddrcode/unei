@@ -193,6 +193,9 @@ impl Editor {
             let version = self.buffer.version() as i64;
             client.did_open(&file, &self.buffer.rope.to_string(), version);
             self.lsp_dirty.remove(&self.current); // didOpen carried it
+            if self.projected_buffers().contains(&self.current) {
+                self.request_inlay_hints(self.current);
+            }
             return;
         }
         let quiet: Vec<BufId> = self
@@ -215,8 +218,71 @@ impl Editor {
                 && client.is_open(&file)
             {
                 client.did_change(&file, &content, version);
+                // a projection of this buffer wants the hints for the text
+                // the server now holds (#93)
+                if self.projected_buffers().contains(&id) {
+                    self.request_inlay_hints(id);
+                }
             }
         }
+    }
+
+    /// Asks for every hint of a projected buffer (#93) — but only once the
+    /// server holds its current text: hints computed on an older text would
+    /// be filed under a revision they don't describe.
+    pub(crate) fn request_inlay_hints(&mut self, id: BufId) {
+        if self.lsp_dirty.contains_key(&id) {
+            return; // the flush that sends the text asks afterwards
+        }
+        let buffer = self.buffer_ref(id);
+        let Some(file) = rust_file_of(buffer) else {
+            return;
+        };
+        let (lines, version) = (text_lines(&buffer.rope), buffer.version());
+        if let Some(client) = &mut self.lsp
+            && client.is_open(&file)
+        {
+            client.inlay_document(&file, lines, version);
+        }
+    }
+
+    /// The hints that describe a buffer's *current* text, else none —
+    /// misplaced annotations are worse than a bare line.
+    pub(crate) fn fresh_inlay_hints(&self, id: BufId) -> Vec<lsp::InlayHint> {
+        let version = self.buffer_ref(id).version();
+        match self.inlay_hints.get(&id) {
+            Some((rev, hints)) if *rev == version => hints.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The server's diagnostics for a buffer, when they still describe its
+    /// text (the same rule the underlines follow).
+    pub(crate) fn buffer_diagnostics(&self, id: BufId) -> Vec<lsp::Diagnostic> {
+        if self.diag_view(id).is_none() {
+            return Vec::new();
+        }
+        let buffer = self.buffer_ref(id);
+        let Some(path) = buffer.path.as_ref() else {
+            return Vec::new();
+        };
+        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        self.lsp
+            .as_ref()
+            .and_then(|c| c.diagnostics.get(&canon))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// What, besides text and width, the compiler's-eye view depends on:
+    /// whether fresh hints exist and which diagnostics generation is in.
+    pub(crate) fn projection_stamp(&self, id: BufId) -> u64 {
+        let version = self.buffer_ref(id).version();
+        let fresh = self
+            .inlay_hints
+            .get(&id)
+            .is_some_and(|(rev, _)| *rev == version);
+        (fresh as u64) | (self.diag_epoch << 1)
     }
 
     /// Records that the current buffer changed; every mutation path — keys,
@@ -228,6 +294,7 @@ impl Editor {
     /// Forgets pending edits for a buffer that is going away.
     pub(crate) fn lsp_forget_buffer(&mut self, id: BufId) {
         self.lsp_dirty.remove(&id);
+        self.inlay_hints.remove(&id);
     }
 
     pub(crate) fn lsp_did_save(&mut self, path: &Path) {
@@ -489,6 +556,23 @@ impl Editor {
                     self.info_float = Some(lines);
                 }
             }
+            Event::InlayHints(path, revision, hints) => {
+                if let Some(id) = self.buffer_for_path(&path) {
+                    // answers may overtake each other; keep the newest
+                    let newer = self
+                        .inlay_hints
+                        .get(&id)
+                        .is_none_or(|(rev, _)| revision >= *rev);
+                    if newer {
+                        self.inlay_hints.insert(id, (revision, hints));
+                    }
+                }
+            }
+            Event::InlayRefresh => {
+                for id in self.projected_buffers() {
+                    self.request_inlay_hints(id);
+                }
+            }
             Event::Definition(Some(loc)) => self.jump_to(loc),
             Event::Definition(None) => self.msg("definition not found"),
             Event::Actions(actions) => {
@@ -630,6 +714,7 @@ impl Editor {
             }
         }
         self.diag_views.insert(path.to_path_buf(), view);
+        self.diag_epoch += 1;
     }
 
     /// Diagnostics for a buffer, for the renderer (None when text drifted —

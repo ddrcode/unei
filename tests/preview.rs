@@ -111,14 +111,21 @@ fn gp_toggles_and_esc_returns() {
 }
 
 #[test]
-fn gp_refuses_non_markdown() {
-    let mut b = Buffer::from_text("fn main() {}\n");
-    b.path = Some(PathBuf::from("a.rs"));
+fn gp_refuses_file_types_without_a_projection() {
+    // rust has one since #93; plain text does not
+    let mut b = Buffer::from_text("notes\n");
+    b.path = Some(PathBuf::from("a.txt"));
     let mut ed = Editor::new(b);
     ed.set_view(80, 22);
     feed(&mut ed, "gp");
     assert!(!ed.focused_is_preview());
-    assert!(ed.message.as_ref().unwrap().text.contains("markdown"));
+    assert!(
+        ed.message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("markdown and rust")
+    );
 }
 
 #[test]

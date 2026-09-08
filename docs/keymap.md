@@ -88,11 +88,11 @@ function or type. Rust for now.
 | `v` `V` `Ctrl+V` | visual char / line / block |
 | `:` | command line |
 
-### Preview (markdown)
+### Preview (markdown, Rust)
 
 | Keys | Action |
 |---|---|
-| `gp` | toggle the window between source and rendered preview |
+| `gp` | toggle the window between source and its projection: markdown as the reader sees it, Rust as the compiler sees it |
 | in preview: `i`/`k`, `Ctrl+D/U/F/B`, `g`/`G` | navigate the projection |
 | in preview: `Enter` | jump to the source at the mapped line |
 | in preview: `h` | jump to the source **and start editing** (insert mode) |
@@ -104,6 +104,17 @@ type in the source and the projection tracks you live, its reading line
 highlighted where your cursor is. `Ctrl+W v` then `gp` is the side-by-side
 writing setup. GFM tables render as aligned grids (`:---:` alignment
 honored).
+
+The **Rust projection** — the compiler's-eye view — is the file with
+everything rust-analyzer knows written into it, highlighted as Rust: every
+inferred type (`let n: usize`, closure parameters and return types), elided
+lifetimes spelled out (`fn f<'items>(items: &'items [Item])`), parameter
+names at call sites, chaining types as trailing comments, the `ref`/`&`
+binding modes match ergonomics hide, `} // fn total` on long blocks, and
+each diagnostic's full message under its line. Line numbers are the
+source's. Annotations belong to a revision: edit the source and they drop
+out until rust-analyzer has seen the new text, then return. Without a
+server (not a cargo project) the projection is the numbered source.
 
 ### Search
 

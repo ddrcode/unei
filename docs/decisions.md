@@ -3,6 +3,41 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-08 — Preview is "the source as a tool sees it"; Rust gets the compiler's eye (ticket #93, #39 phase 2)
+
+Phase 1 asked whether preview is a mode or "preview = normal". The answer
+splits by what is being previewed. A **document** has a genuinely different
+reading form, so it projects: markdown renders as the reader sees it, in a
+window that follows the source. **Code** has no other form — but it has a
+reader with more knowledge than the writer: the compiler. So `gp` on a Rust
+buffer projects the file **as rust-analyzer sees it** — every inferred type,
+elided lifetimes spelled out, parameter names, chaining types, the binding
+modes match ergonomics hide, closing-brace labels, and each diagnostic's
+full message under its line. Rust before elision. The projected text is
+highlighted *as Rust*, so annotations wear the colours they would have had
+if written by hand; it is a pure function of (buffer, hints, diagnostics,
+width) with a LineMap, exactly the markdown renderer's shape. Three
+decisions inside it. **Inline inlay hints are deliberately not built**: the
+author's nvim hides them outside Normal mode because they are in the way
+while typing; in a following panel that problem does not exist, so the
+projection is the one annotation mechanism until battle-tested (nothing was
+removed; `gK` stays). **Hints belong to a revision**: an edit makes them
+stale and the projection drops to bare source until rust-analyzer has seen
+the new text — misplaced annotations are worse than none; while typing this
+reads as "annotations pause". **Not everything the server offers is
+readable**: expression-adjustment hints turn `line_content(rope, i)` into
+`&**&line_content(…)` — the MIR's eye, not the compiler's — and
+rust-analyzer's "reborrow" setting hides almost none of them (measured: 317
+of 321 hints remain), so they are off; and there is no such thing as an
+inferred-turbofish hint (`genericParameterHints` names explicit arguments,
+`Vec<T: String>`), so that promise from the spec is withdrawn. Macro
+expansion in place is the next phase, as a toggle. Found on the way: the
+client must tell rust-analyzer to **exclude `.direnv`** — its
+`flake-profile-*` symlink leads into the nix store's shell environment, the
+scanner follows it, and the workspace never finishes loading, silently: no
+hover, no hints, no diagnostics on any direnv-managed repo, unei's own
+included.
+
 ## 2026-09-07 — Release build: native CPU, otherwise the defaults — by measurement (ticket #90)
 
 A personal editor's binary never leaves the machine that built it, so

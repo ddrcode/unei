@@ -67,6 +67,27 @@ fn main() {
         assert!(n > 0);
     });
 
+    // The compiler's-eye view (#93): the projection of a 1.7k-line file
+    // with a hint on every third line, re-rendered as it would be after
+    // each edit while a projection window is open.
+    timed("rust_projection_x20", || {
+        let rope = ropey::Rope::from_str(&big);
+        let hints: Vec<unei::lsp::InlayHint> = (0..big.lines().count())
+            .step_by(3)
+            .map(|line| unei::lsp::InlayHint {
+                line,
+                col: 4,
+                label: ": Vec<Option<usize>>".into(),
+                kind: Some(1),
+            })
+            .collect();
+        let mut n = 0;
+        for v in 0..20 {
+            n += unei::preview::rust::render(&rope, v, 160, &hints, &[], 1).line_count();
+        }
+        assert!(n > 0);
+    });
+
     // Live grep over this repo, one search per typed character.
     timed("grep_5_queries_x3", || {
         let mut ed = editor_from("x\n");

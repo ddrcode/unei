@@ -31,6 +31,7 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - **Tree-sitter highlighting**: Rust, Markdown (with fenced-code injection), TOML, YAML, JSON, JS, HTML, Bash, Nix, Python, CSS, and a bespoke **6502/ACME** assembler grammar — material oceanic theme
 - **rust-analyzer**: diagnostics with straight-red / **curly-yellow** underlines, end-of-line ghost text, hover (`K`), goto definition (`gd`), code actions, macro expansion, and a line-scope type annotator (`gK`) with no nvim equivalent
 - **Markdown preview** (`gp`): a live, side-by-side rendered view that follows the cursor as you edit — headings, tables, task lists, and syntax-highlighted code fences. Vim never came with this.
+- **Compiler's-eye view** (`gp` on Rust): the same file as rust-analyzer sees it — every inferred type, elided lifetime, parameter name and binding mode written into the text, diagnostics in full under their lines — Rust before elision, in a panel that follows your cursor while the editing window stays clean.
 - **Assembly intelligence vim never had**: on 6502/65C02, `K` shows an instruction's one-line description and the flags it sets, its opcode byte and addressing mode, and cycle counts *including the NMOS-vs-CMOS differences* — plus a cycle **sum** over a visual selection, and a number-base lens (hex / dec / bin / byte split) that works in any file
 - **6502 disassembler**: open a compiled `.prg` and read it as re-assemblable, syntax-highlighted 65C02 source — the same opcode table run backwards, so `K` then annotates the disassembly it just produced
 - **Binary files** open as a **read-only hex view** (offset · bytes · ASCII gutter) instead of garbage — ROMs, `.bin`, object files; the picker previews their head the same way
@@ -50,7 +51,7 @@ The preference surface is small and data-shaped by design. Point a Claude sessio
 - **Other keys?** The bindings are data tables in [`src/config/keymap.rs`](src/config/keymap.rs) — IJKL lives there precisely so a variant is a table edit. *"Navigate with WASD; put insert on E."*
 - **Other colors?** [`src/config/palette.rs`](src/config/palette.rs) and [`src/config/theme.rs`](src/config/theme.rs). *"Make it Gruvbox."*
 - **Other languages?** The grammar registry is [`src/config/languages.rs`](src/config/languages.rs), one entry each. *"Add Go, drop the ones I don't use."*
-- **Fewer features?** Most are self-contained modules — `lens.rs` (the assembly & number lens), `preview.rs` (markdown preview), the rust-analyzer client under `lsp/`. *"Remove the assembly support entirely."*
+- **Fewer features?** Most are self-contained modules — `lens.rs` (the assembly & number lens), `preview/` (the markdown and Rust projections), the rust-analyzer client under `lsp/`. *"Remove the assembly support entirely."*
 - **Not on Kitty?** That one is load-bearing — but ask, and find out what it costs.
 
 Tell your session to read [docs/decisions.md](docs/decisions.md) first. It records *why* each choice was made — IJKL over HJKL, tree-sitter as the only colorizer, snapshot undo — so the re-tailoring goes with the grain instead of fighting design it can't see the reason for.
