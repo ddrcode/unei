@@ -202,9 +202,17 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
         }
         Awaiting::LeaderC => {
             ed.pending.awaiting = Awaiting::None;
-            if key == Key::Char('a') {
-                ed.drop_recording();
-                ed.analyzer_code_actions();
+            match key {
+                Key::Char('a') => {
+                    ed.drop_recording();
+                    ed.analyzer_code_actions();
+                }
+                Key::Char('n') => {
+                    // rename: the prompt opens pre-filled with the name (#97)
+                    ed.drop_recording();
+                    ed.analyzer_rename_prompt();
+                }
+                _ => {}
             }
             clear_pending(ed);
         }

@@ -91,6 +91,9 @@ pub enum Event {
     /// The server's hints changed underneath (a dependency was indexed):
     /// documents that show them should ask again.
     InlayRefresh,
+    /// The workspace edit for renaming to the given name — or the server's
+    /// reason it can't ("cannot rename a builtin"), verbatim (#97).
+    Renamed(String, Result<Value, String>),
     ApplyEdit(Box<Value>),
     Progress(Option<String>),
     ServerExited(String),
@@ -108,6 +111,7 @@ enum Pending {
     InlayLine { text: String },
     SignatureFor { annotated: Option<String> },
     InlayDoc { path: PathBuf, revision: u64 },
+    Rename { new_name: String },
 }
 
 pub struct Client {
@@ -191,6 +195,7 @@ impl Client {
                             "resolveSupport": { "properties": ["edit"] }
                         },
                         "inlayHint": {},
+                        "rename": { "prepareSupport": false },
                         "definition": {},
                         "completion": {
                             "completionItem": {
@@ -406,6 +411,21 @@ impl Client {
         );
     }
 
+    /// Asks for the workspace edit that renames the symbol at a position.
+    pub fn rename(&mut self, path: &Path, line: usize, col: usize, new_name: &str) {
+        self.request(
+            Pending::Rename {
+                new_name: new_name.to_string(),
+            },
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": uri(path) },
+                "position": { "line": line, "character": col },
+                "newName": new_name
+            }),
+        );
+    }
+
     /// Every hint of a document — the compiler's-eye view (#93). `lines`
     /// is the line count so the range covers the whole text; `revision` is
     /// echoed back so stale answers can be told from fresh ones.
@@ -532,6 +552,11 @@ impl Client {
             return;
         };
         let result = msg.get("result").cloned().unwrap_or(Value::Null);
+        let error = msg
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
         match pending {
             Pending::Initialize => {
                 self.initialized = true;
@@ -586,6 +611,13 @@ impl Client {
                     }
                     None => events.push(Event::InlayLine(annotated, None)),
                 }
+            }
+            Pending::Rename { new_name } => {
+                let outcome = match error {
+                    Some(e) => Err(e),
+                    None => Ok(result),
+                };
+                events.push(Event::Renamed(new_name, outcome));
             }
             Pending::InlayDoc { path, revision } => {
                 events.push(Event::InlayHints(

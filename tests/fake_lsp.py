@@ -120,6 +120,23 @@ while True:
                  "label": ": Vec<i32>", "kind": 1},
                 {"position": {"line": 0, "character": 8},
                  "label": "noisy:", "kind": 2}]})
+    elif method == "textDocument/rename":
+        uri = msg["params"]["textDocument"]["uri"]
+        name = msg["params"]["newName"]
+        if name == "reserved":
+            send({"jsonrpc": "2.0", "id": mid, "error": {
+                "code": -32602, "message": "Cannot rename a reserved name"}})
+        else:
+            # a two-file edit: `main` on line 1 of the fixture, `other` in
+            # src/other.rs (which the editor has to open to apply)
+            other = uri.rsplit("/", 1)[0] + "/other.rs"
+            send({"jsonrpc": "2.0", "id": mid, "result": {"changes": {
+                uri: [{"range": {"start": {"line": 1, "character": 3},
+                                 "end": {"line": 1, "character": 7}},
+                       "newText": name}],
+                other: [{"range": {"start": {"line": 0, "character": 3},
+                                   "end": {"line": 0, "character": 8}},
+                         "newText": name}]}}})
     elif method == "textDocument/signatureHelp":
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "signatures": [{"label": "fn vec_of(n: usize) -> Vec<i32>"}],

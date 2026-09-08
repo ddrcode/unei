@@ -134,7 +134,14 @@ pub struct BufferList {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
     Command,
-    Search { forward: bool },
+    Search {
+        forward: bool,
+    },
+    /// `Space c n`: the new name for the symbol at this LSP position (#97).
+    Rename {
+        line: usize,
+        col: usize,
+    },
 }
 
 /// The yanked region, briefly highlighted (nvim's on_yank flash).
@@ -1561,6 +1568,80 @@ impl Editor {
         true
     }
 
+    /// `:wa` — writes every modified buffer that has a file: the current
+    /// one through `save`, parked ones in place (formatter and server
+    /// included). A modified buffer without a name is reported, not
+    /// silently skipped (#97: the companion of a multi-file rename).
+    pub(crate) fn save_all(&mut self) {
+        let modified: Vec<(BufId, bool)> = self
+            .buffer_entries()
+            .into_iter()
+            .filter(|e| e.modified)
+            .map(|e| (e.id, self.buffer_ref(e.id).path.is_some()))
+            .collect();
+        let (mut written, mut failed, mut unnamed) = (0usize, 0usize, 0usize);
+        for (id, named) in modified {
+            if !named {
+                unnamed += 1;
+                continue;
+            }
+            let ok = if id == self.current {
+                self.save(false)
+            } else {
+                self.save_parked(id)
+            };
+            if ok {
+                written += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            return; // the failing save already said why
+        }
+        let mut text = format!("{written} buffer(s) written");
+        if unnamed > 0 {
+            text.push_str(&format!(", {unnamed} unnamed buffer(s) not written"));
+        }
+        self.msg(text);
+    }
+
+    /// Saves a parked buffer where it sits: write, tell the server, run the
+    /// formatter, fold a reformat back in as one undo step, stay clean.
+    fn save_parked(&mut self, id: BufId) -> bool {
+        let Some(i) = self.slot_index(id) else {
+            return false;
+        };
+        let cursor = self.slots[i].cursor;
+        let Some(buffer) = self.slots[i].buffer.as_mut() else {
+            return false;
+        };
+        let path = match buffer.save(false) {
+            Ok((path, _)) => path,
+            Err(e) => {
+                self.err(format!("E212: {e:#}"));
+                return false;
+            }
+        };
+        self.lsp_did_save_buffer(id, &path);
+        if let crate::format::Outcome::Reformatted { text } = crate::format::format_file(&path)
+            && let Some(buffer) = self.buffer_mut_by_id(id)
+        {
+            buffer.begin_change(cursor);
+            let len = buffer.rope.len_chars();
+            buffer.remove(0..len);
+            buffer.insert(0, &text);
+            let n = buffer.rope.len_chars();
+            if n == 0 || buffer.rope.char(n - 1) != '\n' {
+                buffer.insert(n, "\n");
+            }
+            buffer.end_change();
+            buffer.mark_saved();
+            self.lsp_dirty.insert(id, std::time::Instant::now());
+        }
+        true
+    }
+
     /// Replaces the current buffer's content with externally formatted text,
     /// as a single undoable change; the buffer stays marked clean.
     fn reload_current_buffer(&mut self, text: &str) {
@@ -1677,7 +1758,12 @@ impl Editor {
         };
         let edit = action.raw.get("edit").cloned();
         match edit {
-            Some(e) if e.is_object() => self.apply_workspace_edit(&e),
+            Some(e) if e.is_object() => match self.apply_workspace_edit(&e) {
+                Some((files, edits)) => {
+                    self.msg(format!("applied {edits} edit(s) in {files} file(s)"));
+                }
+                None => self.msg("edit: nothing to apply"),
+            },
             _ => {
                 if let Some(client) = &mut self.lsp {
                     client.resolve_action(action.raw);

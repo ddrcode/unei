@@ -1235,9 +1235,10 @@ fn draw_message_line(f: &mut Frame, ed: &Editor, area: Rect) {
     let bg = Style::default().bg(palette::BG);
     let line = if ed.mode == Mode::Command {
         let prefix = match ed.prompt {
-            crate::editor::Prompt::Command => ':',
-            crate::editor::Prompt::Search { forward: true } => '/',
-            crate::editor::Prompt::Search { forward: false } => '?',
+            crate::editor::Prompt::Command => ":",
+            crate::editor::Prompt::Search { forward: true } => "/",
+            crate::editor::Prompt::Search { forward: false } => "?",
+            crate::editor::Prompt::Rename { .. } => "rename → ",
         };
         Line::styled(format!("{prefix}{}", ed.cmdline), bg.fg(palette::FG))
     } else if let Some(msg) = &ed.message {

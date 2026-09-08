@@ -23,12 +23,18 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
             ed.cmdline.push(c);
             incremental(ed);
         }
+        Key::Ctrl('u') => {
+            // vim's c_CTRL-U: wipe the line (a pre-filled rename, mostly)
+            ed.cmdline.clear();
+            incremental(ed);
+        }
         Key::Enter => {
             let cmd = std::mem::take(&mut ed.cmdline);
             ed.mode = Mode::Normal;
             match ed.prompt {
                 Prompt::Command => execute(ed, cmd.trim()),
                 Prompt::Search { forward } => accept_search(ed, &cmd, forward),
+                Prompt::Rename { line, col } => ed.analyzer_rename(line, col, cmd.trim()),
             }
         }
         _ => {}
@@ -161,6 +167,7 @@ fn execute(ed: &mut Editor, cmd: &str) {
         "q!" => ed.close_window_or_quit(true),
         "qa" | "quita" | "qall" => ed.quit(false),
         "qa!" | "quita!" | "qall!" => ed.quit(true),
+        "wa" | "wall" => ed.save_all(),
         "wq" => ed.save_and_quit(false, false),
         "wq!" => ed.save_and_quit(false, true),
         "x" => ed.save_and_quit(true, false),
