@@ -8,49 +8,8 @@ use ropey::Rope;
 use tree_sitter::{Node, Parser};
 use unicode_width::UnicodeWidthStr;
 
+use super::{Frag, PreviewDoc};
 use crate::config::palette;
-
-/// One styled fragment of a rendered line.
-pub type Frag = (String, Style);
-
-pub struct PreviewDoc {
-    /// Rendered lines as styled fragments.
-    pub lines: Vec<Vec<Frag>>,
-    /// Rendered line → source line (block start).
-    pub map: Vec<usize>,
-    version: u64,
-    width: usize,
-}
-
-impl PreviewDoc {
-    /// First rendered line at or after the given source line.
-    pub fn view_line_for_source(&self, source_line: usize) -> usize {
-        match self.map.binary_search(&source_line) {
-            Ok(mut i) => {
-                while i > 0 && self.map[i - 1] == source_line {
-                    i -= 1;
-                }
-                i
-            }
-            Err(i) => i.min(self.map.len().saturating_sub(1)),
-        }
-    }
-
-    pub fn source_line_for_view(&self, view_line: usize) -> usize {
-        self.map
-            .get(view_line.min(self.map.len().saturating_sub(1)))
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub fn is_fresh(&self, version: u64, width: usize) -> bool {
-        self.version == version && self.width == width
-    }
-
-    pub fn line_count(&self) -> usize {
-        self.lines.len()
-    }
-}
 
 // ----------------------------------------------------------------------
 // styles ("make it pretty")
@@ -753,10 +712,5 @@ pub fn render(rope: &Rope, version: u64, width: usize) -> PreviewDoc {
             .push(vec![("(empty document)".into(), dim())]);
         renderer.map.push(0);
     }
-    PreviewDoc {
-        lines: renderer.lines,
-        map: renderer.map,
-        version,
-        width,
-    }
+    PreviewDoc::new(renderer.lines, renderer.map, version, width, 0)
 }

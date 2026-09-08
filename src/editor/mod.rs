@@ -231,6 +231,12 @@ pub struct Editor {
     preview_nav: std::collections::HashMap<WinId, (usize, usize)>,
     /// Rendered documents, cached per buffer (version+width checked).
     preview_docs: std::collections::HashMap<BufId, crate::preview::PreviewDoc>,
+    /// rust-analyzer's hints for a buffer, with the revision they describe
+    /// (#93): only shown while the buffer is still at that revision.
+    inlay_hints: std::collections::HashMap<BufId, (u64, Vec<crate::lsp::InlayHint>)>,
+    /// Bumped whenever diagnostics change, so projections that print them
+    /// re-render.
+    diag_epoch: u64,
     /// What the command line is prompting for.
     pub prompt: Prompt,
     /// Position to restore when an incremental search is cancelled.
@@ -332,6 +338,8 @@ impl Editor {
             preview_windows: std::collections::HashSet::new(),
             preview_nav: std::collections::HashMap::new(),
             preview_docs: std::collections::HashMap::new(),
+            inlay_hints: std::collections::HashMap::new(),
+            diag_epoch: 0,
             prompt: Prompt::Command,
             search_origin: None,
             search_saved: None,
@@ -1926,34 +1934,88 @@ impl Editor {
             }
             return;
         }
-        if crate::config::languages::detect(self.buffer.path.as_deref()) != Some("markdown") {
-            self.msg("no preview for this file type (markdown only, for now)");
-            return;
+        match crate::config::languages::detect(self.buffer.path.as_deref()) {
+            Some("markdown") => {}
+            Some("rust") => {
+                // the compiler's-eye view (#93): annotations arrive from
+                // rust-analyzer a round-trip later; say so when it's absent
+                if self.lsp.is_none() {
+                    self.msg("compiler's-eye view — no rust-analyzer here, source only");
+                } else {
+                    self.msg("compiler's-eye view");
+                }
+            }
+            _ => {
+                self.msg("no preview for this file type (markdown and rust)");
+                return;
+            }
         }
         self.preview_windows.insert(id);
-        // start the projection at the current source position
+        self.request_inlay_hints(self.current);
+        // start the projection at the current source position, with the
+        // reading line on the screen row the cursor was on — the window
+        // changes what it shows, not where the eye is
         let width = self.view.width.saturating_sub(2);
         let source_line = self.cursor.line;
-        let height = self.view.height;
+        let (row, _) = self.cursor_display_pos();
         let view_line = self
             .preview_doc_for(self.current, width)
             .view_line_for_source(source_line);
-        let top = view_line.saturating_sub(height / 3);
+        let top = view_line.saturating_sub(row);
         self.preview_nav.insert(id, (view_line, top));
     }
 
-    /// The cached rendered document for a buffer, rebuilt when stale.
+    /// The cached rendered document for a buffer, rebuilt when stale:
+    /// markdown as the reader sees it, Rust as the compiler sees it (#93).
     pub fn preview_doc_for(&mut self, buf: BufId, width: usize) -> &crate::preview::PreviewDoc {
         let version = self.buffer_ref(buf).version();
+        let rust =
+            crate::config::languages::detect(self.buffer_ref(buf).path.as_deref()) == Some("rust");
+        let (width, stamp) = if rust {
+            (width.max(20), self.projection_stamp(buf))
+        } else {
+            (width.clamp(20, 100), 0) // prose width
+        };
         let fresh = self
             .preview_docs
             .get(&buf)
-            .is_some_and(|d| d.is_fresh(version, width.clamp(20, 100)));
+            .is_some_and(|d| d.is_fresh(version, width, stamp));
         if !fresh {
-            let doc = crate::preview::render(&self.buffer_ref(buf).rope, version, width);
+            let doc = if rust {
+                let hints = self.fresh_inlay_hints(buf);
+                let diags = self.buffer_diagnostics(buf);
+                crate::preview::rust::render(
+                    &self.buffer_ref(buf).rope,
+                    version,
+                    width,
+                    &hints,
+                    &diags,
+                    stamp,
+                )
+            } else {
+                crate::preview::markdown::render(&self.buffer_ref(buf).rope, version, width)
+            };
             self.preview_docs.insert(buf, doc);
         }
         self.preview_docs.get(&buf).expect("just inserted")
+    }
+
+    /// Buffers some window is currently projecting.
+    pub(crate) fn projected_buffers(&self) -> Vec<BufId> {
+        let mut out: Vec<BufId> = self
+            .preview_windows
+            .iter()
+            .filter_map(|&id| {
+                if id == self.focused_win {
+                    Some(self.current)
+                } else {
+                    self.parked_window(id).map(|s| s.buf_id)
+                }
+            })
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     pub fn preview_nav_state(&self, id: WinId) -> (usize, usize) {
@@ -1968,7 +2030,9 @@ impl Editor {
         }
         let src_line = self.cursor.line;
         let buf = self.current;
-        let height = self.view.height.max(3);
+        // the reading line sits on the same screen row as the source
+        // cursor, so side by side the eye moves straight across (#94)
+        let (row, _) = self.cursor_display_pos();
         let width = self.view.width.saturating_sub(2);
         let ids: Vec<WinId> = self
             .preview_windows
@@ -1985,12 +2049,10 @@ impl Editor {
             if !shows {
                 continue;
             }
-            let doc = self.preview_doc_for(buf, width);
-            let view_line = doc.view_line_for_source(src_line);
-            let total = doc.line_count();
-            let top = view_line
-                .saturating_sub(height / 3)
-                .min(total.saturating_sub(1));
+            let view_line = self
+                .preview_doc_for(buf, width)
+                .view_line_for_source(src_line);
+            let top = view_line.saturating_sub(row);
             self.preview_nav.insert(id, (view_line, top));
         }
     }

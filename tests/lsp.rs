@@ -75,7 +75,7 @@ fn editor_on(path: &std::path::Path) -> Editor {
 }
 
 /// Pumps lsp_tick until `done` or the deadline.
-fn pump(ed: &mut Editor, mut done: impl FnMut(&Editor) -> bool) -> bool {
+fn pump(ed: &mut Editor, mut done: impl FnMut(&mut Editor) -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         ed.lsp_tick();
@@ -112,6 +112,48 @@ fn analyzer_end_to_end_with_fake_server() {
         assert_eq!(l1[0], (0, 4, Severity::Warning));
         assert!(d.ghost[&0].1.contains("bad thing"));
     }
+
+    // the compiler's-eye view (#93): a split projecting the same buffer,
+    // annotated once the document-wide hints arrive — a lifetime, a type
+    // hint in parts, a parameter name, a chaining type folded into a
+    // trailing comment, a closing-brace label
+    feed(&mut ed, "<C-w>v");
+    feed(&mut ed, "gp");
+    assert!(ed.focused_is_preview());
+    let rows = |e: &mut Editor| -> Vec<String> {
+        let doc = e.preview_doc_for(buf, 70);
+        (0..doc.line_count()).map(|i| doc.plain(i)).collect()
+    };
+    let annotated = |e: &mut Editor| rows(e).iter().any(|r| r.contains(": Vec<i32>"));
+    assert!(pump(&mut ed, annotated), "document hints never arrived");
+    assert_eq!(
+        rows(&mut ed),
+        vec![
+            "1 fn main<'a>() {",
+            "    ↳ bad thing", // the diagnostics published on didOpen, in full
+            "2 let x: Vec<i32> = vec![n: 1];  // Vec<i32>",
+            "    ↳ iffy thing",
+            "3 fn f() {}",
+            "4 }  // fn main",
+        ]
+    );
+    // an edit in the source window makes the hints stale at once — the
+    // projection drops back to bare source rather than misplace them —
+    // and the next flush brings a fresh set
+    feed(&mut ed, "<C-w><C-w>");
+    assert!(!ed.focused_is_preview());
+    feed(&mut ed, "x");
+    assert!(!annotated(&mut ed), "stale hints must not be shown");
+    assert!(
+        pump(&mut ed, annotated),
+        "hints for the edited text never arrived"
+    );
+    feed(&mut ed, "u");
+    feed(&mut ed, "<C-w><C-w>");
+    assert!(ed.focused_is_preview());
+    feed(&mut ed, "<C-w>q"); // close the projection window
+    assert_eq!(ed.window_count(), 1);
+    assert!(!ed.focused_is_preview());
 
     // hover opens the info float; any key dismisses it
     feed(&mut ed, "K");

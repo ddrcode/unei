@@ -98,11 +98,28 @@ while True:
                  "newText": "// tail\n"}]}}},
         ]})
     elif method == "textDocument/inlayHint":
-        send({"jsonrpc": "2.0", "id": mid, "result": [
-            {"position": {"line": 0, "character": 5},
-             "label": ": Vec<i32>", "kind": 1},
-            {"position": {"line": 0, "character": 8},
-             "label": "noisy:", "kind": 2}]})
+        rng = msg["params"]["range"]
+        if rng["end"]["line"] > rng["start"]["line"]:
+            # the document-wide request of the compiler's-eye view (#93):
+            # one hint of every shape over the 4-line fixture
+            send({"jsonrpc": "2.0", "id": mid, "result": [
+                {"position": {"line": 0, "character": 7},
+                 "label": "<'a>"},                                  # lifetime
+                {"position": {"line": 1, "character": 5},
+                 "label": [{"value": ": Vec<"}, {"value": "i32"}, {"value": ">"}],
+                 "kind": 1},                                         # type, in parts
+                {"position": {"line": 1, "character": 13},
+                 "label": "n:", "kind": 2, "paddingRight": True},    # parameter
+                {"position": {"line": 1, "character": 16},
+                 "label": "Vec<i32>", "paddingLeft": True},          # chaining, at EOL
+                {"position": {"line": 3, "character": 1},
+                 "label": "fn main", "paddingLeft": True}]})         # closing brace
+        else:
+            send({"jsonrpc": "2.0", "id": mid, "result": [
+                {"position": {"line": 0, "character": 5},
+                 "label": ": Vec<i32>", "kind": 1},
+                {"position": {"line": 0, "character": 8},
+                 "label": "noisy:", "kind": 2}]})
     elif method == "textDocument/signatureHelp":
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "signatures": [{"label": "fn vec_of(n: usize) -> Vec<i32>"}],

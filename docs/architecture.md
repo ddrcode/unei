@@ -10,6 +10,8 @@ src/
 ├── core/         text model: rope buffer, motions, shared command enums
 ├── editor/       the modal state machine (headless)
 ├── syntax.rs     tree-sitter highlight cache
+├── preview/      projections: markdown as the reader sees it, Rust as the
+│                 compiler sees it — pure functions of the buffer (+ hints)
 ├── lsp/          rust-analyzer client (transport + protocol)
 ├── format.rs     treefmt-on-save
 ├── launch.rs     CLI → working folder + buffers rules
