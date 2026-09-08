@@ -178,7 +178,7 @@ out in a `6502` file.
 |---|---|
 | `i` `k` `j` `l`, arrows | focus window in that direction |
 | `Ctrl+W` | cycle to next window |
-| `Alt+i/k/j/l` | resize, tmux-style (push the border) |
+| `Alt+i/k/j/l` | resize, tmux-style (push the border) — on macOS Kitty needs `macos_option_as_alt left` in kitty.conf, or Option composes characters and no Alt chord exists |
 | `s` / `x` | horizontal split |
 | `v` | vertical split |
 | `S` / `X`, `V` | the same splits, **staying** in the current window |
