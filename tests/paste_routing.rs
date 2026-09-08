@@ -16,12 +16,15 @@ fn paste_into_an_open_picker_edits_the_query_not_the_buffer() {
 }
 
 #[test]
-fn paste_with_the_buffer_list_open_is_swallowed() {
+fn paste_with_the_buffer_picker_open_filters_it() {
+    // the buffer list is a picker now (#102): a paste narrows the list,
+    // like any picker, and never reaches the source
     let mut ed = editor_from("source\n");
-    feed(&mut ed, " b"); // Space b: buffer list
-    assert!(ed.buffer_list.is_some());
+    feed(&mut ed, " b"); // Space b: buffers picker
+    assert!(ed.file_picker.is_some());
     ed.paste_external("junk");
     assert_eq!(text(&ed), "source\n");
+    assert_eq!(ed.file_picker.as_ref().unwrap().query, "junk");
 }
 
 #[test]

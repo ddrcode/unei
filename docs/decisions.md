@@ -3,6 +3,18 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-08 — The buffer list is a picker (ticket #102)
+
+The buffer list predated the picker and had become the one list in the
+editor that wasn't one: no preview, no filtering, no open-into-a-split,
+its own key table. Practice noticed. It is now the picker's fifth kind,
+`Buffers`: `:ls`-style rows, a preview built from each buffer's *own*
+text (a modified buffer previews as it is, not as its file on disk),
+fuzzy filtering, `Enter`/`Ctrl+V`/`Ctrl+X` like every other kind, and
+`Ctrl+D` to close the selected buffer with the list staying open. The
+overlay, its command enum and its renderer are deleted rather than kept
+beside the picker — one list mechanism, per the single-way rule.
+
 ## 2026-09-08 — Location lists: the picker's fourth kind serves every static source (tickets #98, #99)
 
 The grep entry (#72) deferred a source abstraction until a third source

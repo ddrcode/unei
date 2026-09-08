@@ -21,7 +21,7 @@ fn wa_writes_current_and_parked_buffers() {
     let mut ed = Editor::with_buffers(vec![ba, bb]);
     ed.set_view(80, 20);
     feed(&mut ed, "A one<Esc>"); // edit a (current)
-    feed(&mut ed, " bk<CR>"); // buffer list: down to b, select
+    feed(&mut ed, " b<C-k><CR>"); // buffers picker: down to b, select
     assert!(ed.buffer.path.as_ref().unwrap().ends_with("b.txt"));
     feed(&mut ed, "A two<Esc>");
     feed(&mut ed, "<C-^>"); // back to a: b is parked and modified

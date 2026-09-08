@@ -53,7 +53,7 @@ Editing code therefore borrows disjoint fields (`&ed.buffer.rope` next to
 `&mut ed.cursor`) with zero refactoring cost as buffers and splits were
 added. Switching = swapping state in and out.
 
-Overlays (file picker, buffer list, code actions, hover float) intercept
+Overlays (the picker, code actions, hover float) intercept
 keys before the modal dispatch. `analyzer.rs` is the LSP glue and owns
 byte↔char conversion.
 

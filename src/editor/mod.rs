@@ -1,5 +1,4 @@
 pub mod analyzer;
-mod buffer_list;
 mod cmdline;
 pub mod file_picker;
 mod insert;
@@ -126,10 +125,6 @@ pub struct BufEntry {
 }
 
 /// State of the buffer-list overlay.
-pub struct BufferList {
-    pub selected: usize,
-}
-
 /// What the command line is currently for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
@@ -206,7 +201,6 @@ pub struct Editor {
     /// inherited by the next one, #82).
     next_buf_id: BufId,
     pub view: View,
-    pub buffer_list: Option<BufferList>,
     pub file_picker: Option<file_picker::FilePicker>,
     pub syntax: crate::syntax::Syntax,
     /// rust-analyzer session (ticket #6), started lazily.
@@ -339,7 +333,6 @@ impl Editor {
                 width: 80,
                 height: 22,
             },
-            buffer_list: None,
             file_picker: None,
             syntax: crate::syntax::Syntax::default(),
             lsp: None,
@@ -1260,12 +1253,6 @@ impl Editor {
         }
         if self.file_picker.is_some() {
             file_picker::handle_key(self, key);
-            self.clamp_cursor();
-            self.scroll_to_cursor();
-            return;
-        }
-        if self.buffer_list.is_some() {
-            buffer_list::handle_key(self, key);
             self.clamp_cursor();
             self.scroll_to_cursor();
             return;
@@ -2425,7 +2412,7 @@ impl Editor {
             p.push_query(&normalized);
             return;
         }
-        if self.buffer_list.is_some() || self.focused_is_preview() {
+        if self.focused_is_preview() {
             return;
         }
         match self.mode {

@@ -168,7 +168,7 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
             match keymap::leader_token(key) {
                 Some(LeaderCmd::BufferList) => {
                     ed.drop_recording();
-                    super::buffer_list::open(ed);
+                    super::file_picker::open_buffers(ed);
                     clear_pending(ed);
                 }
                 Some(LeaderCmd::Symbols) => {
