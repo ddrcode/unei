@@ -29,6 +29,12 @@ pub enum Key {
     Down,
     Left,
     Right,
+    /// Alt+arrows: the one Alt combination macOS delivers without any
+    /// terminal configuration (arrows have no character to compose).
+    AltUp,
+    AltDown,
+    AltLeft,
+    AltRight,
     Home,
     End,
     PageUp,
@@ -187,11 +193,11 @@ pub fn window_token(key: Key) -> Option<WinCmd> {
         Key::Char('j') | Key::Left => WinCmd::Focus(WinDir::Left),
         Key::Char('l') | Key::Right => WinCmd::Focus(WinDir::Right),
 
-        // resize: left-Alt + navigation, tmux style
-        Key::Alt('i') => WinCmd::Resize(WinDir::Up),
-        Key::Alt('k') => WinCmd::Resize(WinDir::Down),
-        Key::Alt('j') => WinCmd::Resize(WinDir::Left),
-        Key::Alt('l') => WinCmd::Resize(WinDir::Right),
+        // resize: left-Alt + navigation, tmux style (its M-Arrow binding)
+        Key::Alt('i') | Key::AltUp => WinCmd::Resize(WinDir::Up),
+        Key::Alt('k') | Key::AltDown => WinCmd::Resize(WinDir::Down),
+        Key::Alt('j') | Key::AltLeft => WinCmd::Resize(WinDir::Left),
+        Key::Alt('l') | Key::AltRight => WinCmd::Resize(WinDir::Right),
 
         Key::Char('=') => WinCmd::Equalize,
         Key::Char('r') => WinCmd::Rotate,

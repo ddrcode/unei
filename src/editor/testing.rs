@@ -59,6 +59,10 @@ pub fn keys(spec: &str) -> Vec<Key> {
             "End" => Key::End,
             "PgUp" => Key::PageUp,
             "PgDn" => Key::PageDown,
+            "A-Up" => Key::AltUp,
+            "A-Down" => Key::AltDown,
+            "A-Left" => Key::AltLeft,
+            "A-Right" => Key::AltRight,
             "lt" => Key::Char('<'),
             s if s.starts_with("C-") && s.chars().count() == 3 => {
                 Key::Ctrl(s.chars().nth(2).unwrap())
