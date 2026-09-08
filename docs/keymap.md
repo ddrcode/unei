@@ -101,8 +101,9 @@ function or type. Rust for now.
 
 A preview window **follows** the window editing the same buffer — scroll or
 type in the source and the projection tracks you live, its reading line
-highlighted where your cursor is. `Ctrl+W v` then `gp` is the side-by-side
-writing setup. GFM tables render as aligned grids (`:---:` alignment
+highlighted where your cursor is, on the same screen row as the cursor.
+`Ctrl+W Alt+v` is the side-by-side writing setup in one chord (split,
+project, stay); `Ctrl+W v` then `gp` gets there by hand. GFM tables render as aligned grids (`:---:` alignment
 honored).
 
 The **Rust projection** — the compiler's-eye view — is the file with
@@ -180,6 +181,8 @@ out in a `6502` file.
 | `Alt+i/k/j/l` | resize, tmux-style (push the border) |
 | `s` / `x` | horizontal split |
 | `v` | vertical split |
+| `S` / `X`, `V` | the same splits, **staying** in the current window |
+| `Alt+s` / `Alt+x`, `Alt+v` | split, **project** the new window (as `gp` would), and stay — the side-by-side setup in one chord |
 | `n` | horizontal split with a new empty buffer |
 | `q` | close window (last one quits) |
 | `o` | only — close all others |

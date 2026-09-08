@@ -3,6 +3,21 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-08 — Window chord modifiers: Shift stays, Alt stays and projects (ticket #95)
+
+The side-by-side setup was three steps — split, `gp`, focus back — for
+something done every time a projection is wanted. Rather than a new verb,
+the split keys gain modifier meanings: `Ctrl+W V`/`X`/`S` split and **stay**
+(vim has no "open a window without going there"), `Ctrl+W Alt+v`/`x`/`s`
+split, **project** the new window as `gp` would, and stay. Alt already
+carries the resize keys in this chord, so the convention is one more use of
+a modifier the hand already knows there, not a new key to learn. The
+preview split is refused where `gp` is (no projection for the file type)
+and opens nothing. Follow now positions each projection at *its own*
+window's width and height — looking the document up at the source window's
+width re-rendered it twice a frame whenever the halves differed by a
+column.
+
 ## 2026-09-08 — Preview is "the source as a tool sees it"; Rust gets the compiler's eye (ticket #93, #39 phase 2)
 
 Phase 1 asked whether preview is a mode or "preview = normal". The answer

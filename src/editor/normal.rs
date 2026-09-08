@@ -248,6 +248,10 @@ fn window_cmd(ed: &mut Editor, cmd: WinCmd) {
         WinCmd::SplitH => ed.split_window(SplitDir::Horizontal, false),
         WinCmd::SplitV => ed.split_window(SplitDir::Vertical, false),
         WinCmd::SplitNew => ed.split_window(SplitDir::Horizontal, true),
+        WinCmd::SplitStay(dir) => {
+            ed.split_window_into(dir, false);
+        }
+        WinCmd::SplitPreview(dir) => ed.preview_split(dir),
         WinCmd::CloseWindow => ed.close_window(false),
         WinCmd::OnlyWindow => ed.only_window(),
     }

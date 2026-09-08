@@ -202,6 +202,15 @@ pub enum WinDir {
     Right,
 }
 
+/// How a window splits (the layout tree in editor/windows.rs re-exports it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitDir {
+    /// vim `:split` — children stacked top to bottom.
+    Horizontal,
+    /// vim `:vsplit` — children side by side, 1-column separator between.
+    Vertical,
+}
+
 /// Second key of a window chord (`Ctrl+w …` / `<leader>w …`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WinCmd {
@@ -224,6 +233,11 @@ pub enum WinCmd {
     SplitV,
     /// `n` — horizontal split with a fresh empty buffer.
     SplitNew,
+    /// `S`/`X`/`V` — split, but stay: focus remains where it is.
+    SplitStay(SplitDir),
+    /// `Alt+s`/`Alt+x`/`Alt+v` — split, project the new window (`gp`),
+    /// and stay: the side-by-side editing setup in one chord.
+    SplitPreview(SplitDir),
     /// `q` — close the focused window (last window quits the editor).
     CloseWindow,
     /// `o` — close every other window.
