@@ -1045,6 +1045,19 @@ impl Editor {
     /// `Ctrl+w s/v/n` — splits the focused window. `with_new_buffer` creates
     /// an empty buffer for the new window (vim `Ctrl+w n`).
     pub(crate) fn split_window(&mut self, dir: SplitDir, with_new_buffer: bool) {
+        if let Some(id) = self.split_window_into(dir, with_new_buffer) {
+            self.focus_window(id);
+        }
+    }
+
+    /// Splits the focused window and returns the new one *without* moving
+    /// focus (`Ctrl+w V`/`X`): it shows the same buffer at the same
+    /// position, parked.
+    pub(crate) fn split_window_into(
+        &mut self,
+        dir: SplitDir,
+        with_new_buffer: bool,
+    ) -> Option<WinId> {
         self.zoomed = false;
         let rect = self
             .window_rects()
@@ -1058,7 +1071,7 @@ impl Editor {
         };
         if !fits {
             self.err("E36: Not enough room");
-            return;
+            return None;
         }
         let state = if with_new_buffer {
             let buf_id = self.alloc_buf_id();
@@ -1083,7 +1096,21 @@ impl Editor {
         self.next_win_id += 1;
         self.win_root
             .split(self.focused_win, dir, Node::leaf(id, Some(state)));
-        self.focus_window(id);
+        Some(id)
+    }
+
+    /// Text area of a window: (width, rows) as the renderer will lay it out.
+    fn window_text_size(&self, id: WinId) -> (usize, usize) {
+        self.window_rects()
+            .into_iter()
+            .find(|(w, _)| *w == id)
+            .map(|(_, r)| {
+                (
+                    (r.width as usize).saturating_sub(2),
+                    (r.height as usize).saturating_sub(1).max(1),
+                )
+            })
+            .unwrap_or((self.view.width.saturating_sub(2), self.view.height.max(1)))
     }
 
     /// `Ctrl+w q` — closes the focused window; the last one quits the editor.
@@ -1934,8 +1961,17 @@ impl Editor {
             }
             return;
         }
+        if !self.announce_projection() {
+            return;
+        }
+        self.project_window(id);
+    }
+
+    /// Whether the current buffer has a projection (`gp` and the preview
+    /// splits share the gate); says why not otherwise.
+    fn announce_projection(&mut self) -> bool {
         match crate::config::languages::detect(self.buffer.path.as_deref()) {
-            Some("markdown") => {}
+            Some("markdown") => true,
             Some("rust") => {
                 // the compiler's-eye view (#93): annotations arrive from
                 // rust-analyzer a round-trip later; say so when it's absent
@@ -1944,25 +1980,40 @@ impl Editor {
                 } else {
                     self.msg("compiler's-eye view");
                 }
+                true
             }
             _ => {
                 self.msg("no preview for this file type (markdown and rust)");
-                return;
+                false
             }
         }
+    }
+
+    /// Turns window `id` (showing the current buffer) into its projection,
+    /// reading line on the screen row the source cursor is on — the window
+    /// changes what it shows, not where the eye is.
+    fn project_window(&mut self, id: WinId) {
         self.preview_windows.insert(id);
         self.request_inlay_hints(self.current);
-        // start the projection at the current source position, with the
-        // reading line on the screen row the cursor was on — the window
-        // changes what it shows, not where the eye is
-        let width = self.view.width.saturating_sub(2);
+        let (width, rows) = self.window_text_size(id);
         let source_line = self.cursor.line;
-        let (row, _) = self.cursor_display_pos();
+        let row = self.cursor_display_pos().0.min(rows - 1);
         let view_line = self
             .preview_doc_for(self.current, width)
             .view_line_for_source(source_line);
         let top = view_line.saturating_sub(row);
         self.preview_nav.insert(id, (view_line, top));
+    }
+
+    /// `Ctrl+w Alt+v` / `Alt+x`: split, project the new window, stay — the
+    /// side-by-side editing setup in one chord.
+    pub(crate) fn preview_split(&mut self, dir: SplitDir) {
+        if !self.announce_projection() {
+            return;
+        }
+        if let Some(id) = self.split_window_into(dir, false) {
+            self.project_window(id);
+        }
     }
 
     /// The cached rendered document for a buffer, rebuilt when stale:
@@ -2033,7 +2084,6 @@ impl Editor {
         // the reading line sits on the same screen row as the source
         // cursor, so side by side the eye moves straight across (#94)
         let (row, _) = self.cursor_display_pos();
-        let width = self.view.width.saturating_sub(2);
         let ids: Vec<WinId> = self
             .preview_windows
             .iter()
@@ -2049,10 +2099,14 @@ impl Editor {
             if !shows {
                 continue;
             }
+            // the projection at *that* window's width — looking it up at
+            // the source window's would re-render it every frame whenever
+            // the two differ by a column
+            let (width, rows) = self.window_text_size(id);
             let view_line = self
                 .preview_doc_for(buf, width)
                 .view_line_for_source(src_line);
-            let top = view_line.saturating_sub(row);
+            let top = view_line.saturating_sub(row.min(rows - 1));
             self.preview_nav.insert(id, (view_line, top));
         }
     }

@@ -31,13 +31,7 @@ pub struct WinState {
     pub alternate: Option<BufId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitDir {
-    /// vim `:split` — children stacked top to bottom.
-    Horizontal,
-    /// vim `:vsplit` — children side by side, 1-column separator between.
-    Vertical,
-}
+pub use crate::core::commands::SplitDir;
 
 pub enum Node {
     Leaf {

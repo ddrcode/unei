@@ -6,8 +6,8 @@
 //! so `dh` still deletes left, exactly like the author's nvim.
 
 use crate::core::commands::{
-    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, Token,
-    VisualKind, WinCmd, WinDir,
+    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, SplitDir,
+    Token, VisualKind, WinCmd, WinDir,
 };
 use crate::core::motion::Motion;
 
@@ -29,6 +29,12 @@ pub enum Key {
     Down,
     Left,
     Right,
+    /// Alt+arrows: the one Alt combination macOS delivers without any
+    /// terminal configuration (arrows have no character to compose).
+    AltUp,
+    AltDown,
+    AltLeft,
+    AltRight,
     Home,
     End,
     PageUp,
@@ -187,11 +193,11 @@ pub fn window_token(key: Key) -> Option<WinCmd> {
         Key::Char('j') | Key::Left => WinCmd::Focus(WinDir::Left),
         Key::Char('l') | Key::Right => WinCmd::Focus(WinDir::Right),
 
-        // resize: left-Alt + navigation, tmux style
-        Key::Alt('i') => WinCmd::Resize(WinDir::Up),
-        Key::Alt('k') => WinCmd::Resize(WinDir::Down),
-        Key::Alt('j') => WinCmd::Resize(WinDir::Left),
-        Key::Alt('l') => WinCmd::Resize(WinDir::Right),
+        // resize: left-Alt + navigation, tmux style (its M-Arrow binding)
+        Key::Alt('i') | Key::AltUp => WinCmd::Resize(WinDir::Up),
+        Key::Alt('k') | Key::AltDown => WinCmd::Resize(WinDir::Down),
+        Key::Alt('j') | Key::AltLeft => WinCmd::Resize(WinDir::Left),
+        Key::Alt('l') | Key::AltRight => WinCmd::Resize(WinDir::Right),
 
         Key::Char('=') => WinCmd::Equalize,
         Key::Char('r') => WinCmd::Rotate,
@@ -200,6 +206,13 @@ pub fn window_token(key: Key) -> Option<WinCmd> {
         Key::Char('s') | Key::Char('x') => WinCmd::SplitH,
         Key::Char('v') => WinCmd::SplitV,
         Key::Char('n') => WinCmd::SplitNew,
+        // the same splits with Shift stay put; with Alt they also project
+        // the new window — the side-by-side setup (`Ctrl+w v`, `gp`,
+        // `Ctrl+w j`) in one chord
+        Key::Char('S') | Key::Char('X') => WinCmd::SplitStay(SplitDir::Horizontal),
+        Key::Char('V') => WinCmd::SplitStay(SplitDir::Vertical),
+        Key::Alt('s') | Key::Alt('x') => WinCmd::SplitPreview(SplitDir::Horizontal),
+        Key::Alt('v') => WinCmd::SplitPreview(SplitDir::Vertical),
         Key::Char('q') => WinCmd::CloseWindow,
         Key::Char('o') => WinCmd::OnlyWindow,
         _ => return None,

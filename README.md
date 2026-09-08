@@ -68,7 +68,7 @@ cargo build --release
 ./target/release/unei foo.rs bar.md
 ```
 
-Best experienced in Kitty. Under tmux, italics and instant-Esc depend on your tmux terminfo (`tmux-256color` recommended).
+Best experienced in Kitty. On macOS add `macos_option_as_alt left` to kitty.conf, otherwise Option+letter composes a character and the `Alt`+letter chords (resize, split-and-project) never reach the editor; `Alt`+arrows work either way. Under tmux, italics and instant-Esc depend on your tmux terminfo (`tmux-256color` recommended).
 
 The release binary is built for the machine that compiles it (`.cargo/config.toml` sets `target-cpu=native`), so it is not portable — install it with `cargo install --path .` from inside the repo, where Cargo can see that file. `cargo run --release --example perf_probe` times the editor's hot paths; the build profile is whatever that probe says is fastest, which on an M2 turned out to be the plain defaults (see [docs/decisions.md](docs/decisions.md)).
 

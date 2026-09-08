@@ -196,6 +196,24 @@ fn resize_moves_border_tmux_style() {
 }
 
 #[test]
+fn alt_arrows_resize_like_the_letters() {
+    // tmux's M-Arrow binding, and the one Alt combination macOS delivers
+    // without any terminal configuration (arrows have nothing to compose)
+    let mut ed = editor_from("a\n");
+    feed(&mut ed, "<C-w>v");
+    let right = ed.focused_window_id();
+    let before = rect_of(&ed, right).width;
+    feed(&mut ed, "<C-w><A-Left>");
+    assert_eq!(rect_of(&ed, right).width, before + 5);
+    feed(&mut ed, "<C-w><A-Right>");
+    assert_eq!(rect_of(&ed, right).width, before);
+    // a plain arrow in the chord still means focus, not resize
+    feed(&mut ed, "<C-w><Left>");
+    assert_ne!(ed.focused_window_id(), right, "focus moved left");
+    assert_eq!(rect_of(&ed, right).width, before, "nothing resized");
+}
+
+#[test]
 fn resize_respects_minimum_width() {
     let mut ed = editor_from("a\n");
     feed(&mut ed, "<C-w>v");
