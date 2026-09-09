@@ -6,8 +6,8 @@
 //! so `dh` still deletes left, exactly like the author's nvim.
 
 use crate::core::commands::{
-    FindKind, InsertEntry, LeaderCmd, ListCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, SplitDir,
-    Token, VisualKind, WinCmd, WinDir,
+    FindKind, InsertEntry, LeaderCmd, Op, PickerCmd, ScrollCmd, SimpleCmd, SplitDir, Token,
+    VisualKind, WinCmd, WinDir,
 };
 use crate::core::motion::Motion;
 
@@ -219,19 +219,6 @@ pub fn window_token(key: Key) -> Option<WinCmd> {
     })
 }
 
-/// Keys inside the buffer-list overlay: IJKL navigation, Enter picks,
-/// `x` closes the selected buffer, Esc or `q` dismisses.
-pub fn list_token(key: Key) -> Option<ListCmd> {
-    Some(match key {
-        Key::Char('i') | Key::Up => ListCmd::Up,
-        Key::Char('k') | Key::Down => ListCmd::Down,
-        Key::Enter => ListCmd::Select,
-        Key::Char('x') => ListCmd::CloseBuffer,
-        Key::Esc | Key::Char('q') | Key::Ctrl('c') => ListCmd::Dismiss,
-        _ => return None,
-    })
-}
-
 /// Keys inside the file-picker overlay. Plain chars edit the query, so all
 /// commands sit on control keys; navigation is Ctrl+i/Ctrl+k (IJKL, distinct
 /// from Tab/Enter under the Kitty keyboard protocol) plus the arrows.
@@ -244,6 +231,7 @@ pub fn picker_token(key: Key) -> Option<PickerCmd> {
         Key::Ctrl('x') => PickerCmd::OpenHsplit,
         Key::CtrlEnter => PickerCmd::CreatePath,
         Key::Ctrl('u') => PickerCmd::ClearQuery,
+        Key::Ctrl('d') => PickerCmd::CloseEntry,
         Key::Backspace => PickerCmd::DeleteChar,
         Key::Esc | Key::Ctrl('c') => PickerCmd::Dismiss,
         _ => return None,

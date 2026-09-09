@@ -128,10 +128,6 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
         draw_file_picker(f, ed, windows_area);
         return; // the picker positions its own query cursor
     }
-    if ed.buffer_list.is_some() {
-        draw_buffer_list(f, ed, windows_area);
-        return; // the overlay owns the focus; no text cursor
-    }
 
     match ed.mode {
         Mode::Command => {
@@ -449,70 +445,6 @@ fn draw_window(f: &mut Frame, ed: &Editor, view: &WinView, rect: Rect) {
     let status_rect = Rect::new(rect.x, rect.y + rect.height - 1, rect.width, 1);
     draw_text(f, ed, view, text_rect);
     draw_statusline(f, ed, view, status_rect);
-}
-
-/// Centered floating buffer list, material-style: rounded border, contrast
-/// background. `%`/`#` mark current/alternate like vim's :ls, `[+]` modified.
-fn draw_buffer_list(f: &mut Frame, ed: &Editor, area: Rect) {
-    use ratatui::widgets::{Block, BorderType, Borders, Clear};
-
-    let Some(list) = &ed.buffer_list else { return };
-    let entries = ed.buffer_entries();
-
-    let rows: Vec<String> = entries
-        .iter()
-        .map(|e| {
-            let flag = if e.current {
-                '%'
-            } else if e.alternate {
-                '#'
-            } else {
-                ' '
-            };
-            let modified = if e.modified { " [+]" } else { "" };
-            format!(" {:>2} {} {}{} ", e.id, flag, e.name, modified)
-        })
-        .collect();
-
-    let content_w = rows.iter().map(|r| r.width()).max().unwrap_or(0).max(16) as u16;
-    let w = (content_w + 2).min(area.width.saturating_sub(2));
-    let h = (entries.len() as u16 + 2).min(area.height);
-    let x = area.width.saturating_sub(w) / 2;
-    let y = area.height.saturating_sub(h) / 3;
-    let rect = Rect::new(x, y, w, h);
-
-    let float = Style::default().bg(palette::FLOAT_BG).fg(palette::FG);
-    let lines: Vec<Line> = rows
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let style = if i == list.selected {
-                Style::default()
-                    .bg(palette::MODE_NORMAL)
-                    .fg(palette::MODE_LABEL_FG)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                float
-            };
-            Line::styled(
-                format!("{r:<width$}", width = w.saturating_sub(2) as usize),
-                style,
-            )
-        })
-        .collect();
-
-    f.render_widget(Clear, rect);
-    f.render_widget(
-        Paragraph::new(lines).style(float).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().bg(palette::FLOAT_BG).fg(palette::COMMENT))
-                .title(" buffers ")
-                .title_style(Style::default().bg(palette::FLOAT_BG).fg(palette::FG)),
-        ),
-        rect,
-    );
 }
 
 /// The fuzzy file picker: query line on top, ranked matches below, matched

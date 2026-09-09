@@ -164,16 +164,6 @@ pub enum LeaderCmd {
     Grep,
 }
 
-/// Keys inside the buffer-list overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListCmd {
-    Up,
-    Down,
-    Select,
-    CloseBuffer,
-    Dismiss,
-}
-
 /// Keys inside the file-picker overlay (typed chars edit the query and are
 /// handled before this table).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +180,8 @@ pub enum PickerCmd {
     CreatePath,
     /// `Ctrl+u` — clear the query.
     ClearQuery,
+    /// `Ctrl+D` — close the selected buffer (the buffers picker).
+    CloseEntry,
     DeleteChar,
     Dismiss,
 }

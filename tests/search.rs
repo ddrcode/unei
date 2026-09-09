@@ -185,7 +185,7 @@ fn search_state_is_per_editor_not_per_buffer_content() {
     let mut ed = editor_with_buffers(&[("a.txt", "hit\n"), ("b.txt", "hit hit\n")]);
     feed(&mut ed, "/hit<CR>");
     assert_eq!(ed.search.count(), 1);
-    feed(&mut ed, " bk<CR>"); // switch buffer; pattern survives
+    feed(&mut ed, " b<C-k><CR>"); // switch buffer; pattern survives
     ed.search_ensure_current();
     assert_eq!(ed.search.count(), 2);
     feed(&mut ed, "n");

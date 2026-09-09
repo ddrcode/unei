@@ -47,7 +47,7 @@ fn ctrl_o_crosses_buffers() {
     // the reported wish: get back to the previous buffer
     let mut ed = editor_with_buffers(&[("a.txt", "aaa\nbbb\n"), ("b.txt", "xxx\n")]);
     feed(&mut ed, "k"); // line 1 in a.txt
-    feed(&mut ed, " bk<CR>"); // switch to b.txt (records the jump)
+    feed(&mut ed, " b<C-k><CR>"); // switch to b.txt (records the jump)
     assert_eq!(text(&ed), "xxx\n");
     feed(&mut ed, "<C-o>");
     assert_eq!(text(&ed), "aaa\nbbb\n", "back in the previous buffer");
@@ -59,7 +59,7 @@ fn ctrl_o_crosses_buffers() {
 #[test]
 fn stale_buffer_entries_are_dropped() {
     let mut ed = editor_with_buffers(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
-    feed(&mut ed, " bk<CR>"); // to b.txt, jump recorded from a.txt
+    feed(&mut ed, " b<C-k><CR>"); // to b.txt, jump recorded from a.txt
     feed(&mut ed, ":bd!<CR>"); // hmm: closes b.txt, back in a.txt
     assert_eq!(text(&ed), "a\n");
     feed(&mut ed, "<C-o><C-o>"); // history may reference either; never panics

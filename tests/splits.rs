@@ -302,7 +302,7 @@ fn nested_splits_layout_and_navigation() {
 fn windows_can_show_different_buffers() {
     let mut ed = editor_with_buffers(&[("a.txt", "aaa\n"), ("b.txt", "bbb\n")]);
     feed(&mut ed, "<C-w>v"); // both windows show a.txt
-    feed(&mut ed, " bk<CR>"); // focused window switches to b.txt
+    feed(&mut ed, " b<C-k><CR>"); // focused window switches to b.txt
     assert_eq!(text(&ed), "bbb\n");
     feed(&mut ed, "<C-w>j");
     assert_eq!(text(&ed), "aaa\n"); // other window kept a.txt
@@ -312,9 +312,9 @@ fn windows_can_show_different_buffers() {
 #[test]
 fn alternate_is_per_window() {
     let mut ed = editor_with_buffers(&[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n")]);
-    feed(&mut ed, " bk<CR>"); // window 1: b.txt (alternate a)
+    feed(&mut ed, " b<C-k><CR>"); // window 1: b.txt (alternate a)
     feed(&mut ed, "<C-w>v"); // window 2: b.txt, no alternate of its own
-    feed(&mut ed, " bkk<CR>"); // window 2: c.txt (alternate b)
+    feed(&mut ed, " b<C-k><C-k><CR>"); // window 2: c.txt (alternate b)
     feed(&mut ed, "<C-^>");
     assert_eq!(text(&ed), "b\n"); // window 2's alternate
     feed(&mut ed, "<C-w>j<C-^>");
@@ -325,7 +325,7 @@ fn alternate_is_per_window() {
 fn closing_buffer_shown_in_another_window_reassigns_it() {
     let mut ed = editor_with_buffers(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
     feed(&mut ed, "<C-w>v"); // both show a.txt
-    feed(&mut ed, " bk<CR>"); // focused: b.txt
+    feed(&mut ed, " b<C-k><CR>"); // focused: b.txt
     feed(&mut ed, "<C-w>j"); // focus window 1 (a.txt)
     feed(&mut ed, ":bd<CR>"); // close a.txt
     assert_eq!(ed.buffer_count(), 1);
@@ -379,7 +379,7 @@ fn focus_switch_preserves_scroll_position() {
     feed(&mut ed, "<C-w>v"); // right column, focused
     render_pass(&mut ed);
     let right = ed.focused_window_id();
-    feed(&mut ed, " bk<CR>"); // open the long file there
+    feed(&mut ed, " b<C-k><CR>"); // open the long file there
     feed(&mut ed, "30G"); // scroll somewhere below the top
     render_pass(&mut ed);
     let (line, top) = (ed.cursor.line, ed.top_line);

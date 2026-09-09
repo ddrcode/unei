@@ -73,7 +73,7 @@ number lens works in **any** file. Asm needs a modeline in the first 5 lines:
 
 ## Pickers
 
-`Ctrl+P` files · `Space b` buffers · `Space s` symbols · **`Space g` grep** ·
+`Ctrl+P` files · `Space b` buffers (`Ctrl+D` closes one) · `Space s` symbols · **`Space g` grep** ·
 `gp` preview toggle: markdown rendered · **Rust = compiler's-eye view** (types, lifetimes, param names, full diagnostics) · **`Ctrl+w Alt+v`** = split + project + stay (side-by-side in one go) · `Ctrl+w V`/`X` = split and stay
 Inside: type to filter (grep = regex) · `Ctrl+I`/`Ctrl+K` or arrows ·
 `Enter` open · `Ctrl+V`/`Ctrl+X` v/h split · `Ctrl+Enter` create path ·

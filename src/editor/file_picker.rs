@@ -31,6 +31,9 @@ pub enum PickerKind {
     /// grep's row shape, preview and jump, but fuzzy-filtered like the
     /// other static lists rather than re-searched per keystroke.
     Locations,
+    /// The open buffers (#102): `:ls`-style rows, a preview of each
+    /// buffer's own text, Enter switches, Ctrl+D closes.
+    Buffers,
 }
 
 impl PickerKind {
@@ -71,6 +74,7 @@ const PREVIEW_LINES: usize = 240;
 
 /// The selected file's head, for the picker's preview pane. Scroll-free by
 /// design: the first lines only.
+#[derive(Clone)]
 pub struct Preview {
     pub lines: Vec<String>,
     /// Registry language for highlighting, if detected (never for a hex dump).
@@ -106,6 +110,9 @@ pub struct FilePicker {
     grep_hits: Vec<GrepHit>,
     /// Locations: the accent of each row when the query is empty.
     accents: Vec<Vec<u32>>,
+    /// Buffers: the buffer behind each row, and its preview (built from
+    /// the buffer's text, which may differ from the file on disk).
+    buffers: Vec<(super::BufId, Preview)>,
     /// The frame title.
     pub label: &'static str,
 }
@@ -178,6 +185,14 @@ impl FilePicker {
                     .get(self.selected)
                     .map(|m| &self.grep_hits[m.item])
                     .map(|hit| build_preview_at(&self.root.join(&hit.path), hit.line));
+                self.preview_for = None;
+            }
+            PickerKind::Buffers => {
+                self.preview = self
+                    .matches
+                    .get(self.selected)
+                    .and_then(|m| self.buffers.get(m.item))
+                    .map(|(_, p)| p.clone());
                 self.preview_for = None;
             }
             PickerKind::Symbols => {}
@@ -322,10 +337,10 @@ pub fn open(ed: &mut Editor) {
         targets: Vec::new(),
         grep_hits: Vec::new(),
         accents: Vec::new(),
+        buffers: Vec::new(),
         label: " files ",
     };
     picker.refilter();
-    ed.buffer_list = None;
     ed.file_picker = Some(picker);
 }
 
@@ -345,10 +360,10 @@ pub fn open_grep(ed: &mut Editor) {
         targets: Vec::new(),
         grep_hits: Vec::new(),
         accents: Vec::new(),
+        buffers: Vec::new(),
         label: " grep ",
     };
     picker.refilter();
-    ed.buffer_list = None;
     ed.file_picker = Some(picker);
 }
 
@@ -388,10 +403,10 @@ pub fn open_symbols(ed: &mut Editor) {
         targets,
         grep_hits: Vec::new(),
         accents: Vec::new(),
+        buffers: Vec::new(),
         label: " symbols ",
     };
     picker.refilter();
-    ed.buffer_list = None;
     ed.file_picker = Some(picker);
 }
 
@@ -420,11 +435,77 @@ pub fn open_locations(ed: &mut Editor, label: &'static str, rows: Vec<LocationRo
         targets: Vec::new(),
         grep_hits,
         accents,
+        buffers: Vec::new(),
         label,
     };
     picker.refilter();
-    ed.buffer_list = None;
     ed.file_picker = Some(picker);
+}
+
+/// `Space b` (#102): the open buffers as a picker — `:ls`-style rows
+/// (`%` current, `#` alternate, `[+]` modified), a preview of each buffer's
+/// own text, fuzzy-filtered; Enter switches, Ctrl+V/Ctrl+X open in a
+/// split, Ctrl+D closes the selected buffer. Opens on the current buffer.
+pub fn open_buffers(ed: &mut Editor) {
+    let entries = ed.buffer_entries();
+    let mut items = Vec::with_capacity(entries.len());
+    let mut buffers = Vec::with_capacity(entries.len());
+    let mut current = 0;
+    for (i, e) in entries.iter().enumerate() {
+        let flag = if e.current {
+            '%'
+        } else if e.alternate {
+            '#'
+        } else {
+            ' '
+        };
+        let modified = if e.modified { " [+]" } else { "" };
+        items.push(format!("{:>2} {} {}{}", e.id, flag, e.name, modified));
+        buffers.push((e.id, buffer_preview(ed, e.id)));
+        if e.current {
+            current = i;
+        }
+    }
+    let mut picker = FilePicker {
+        query: String::new(),
+        items,
+        matches: Vec::new(),
+        selected: 0,
+        truncated: false,
+        root: ed.root().to_path_buf(),
+        preview: None,
+        preview_for: None,
+        kind: PickerKind::Buffers,
+        targets: Vec::new(),
+        grep_hits: Vec::new(),
+        accents: Vec::new(),
+        buffers,
+        label: " buffers ",
+    };
+    picker.refilter();
+    picker.selected = current;
+    picker.refresh_preview();
+    ed.file_picker = Some(picker);
+}
+
+/// A buffer's head as the picker previews it: its own text (unsaved edits
+/// included), highlighted by its path's language.
+fn buffer_preview(ed: &Editor, id: super::BufId) -> Preview {
+    let buffer = ed.buffer_ref(id);
+    let n = crate::core::text::text_lines(&buffer.rope).min(PREVIEW_LINES);
+    let lines: Vec<String> = (0..n)
+        .map(|l| crate::core::text::line_content(&buffer.rope, l))
+        .collect();
+    let lang = buffer.path.as_deref().and_then(|p| {
+        crate::syntax::detect_lang_for(p, lines.iter().take(5).cloned()).map(str::to_string)
+    });
+    let blank = lines.iter().all(|l| l.trim().is_empty());
+    Preview {
+        note: blank.then(|| "empty".to_string()),
+        lines: if blank { Vec::new() } else { lines },
+        lang,
+        focus: None,
+    }
 }
 
 /// A location's row in grep's shape — `path:line: text` with the range
@@ -497,6 +578,16 @@ fn command(ed: &mut Editor, cmd: PickerCmd) {
                     ed.clamp_cursor();
                     ed.scroll_to_cursor();
                 }
+                PickerKind::Buffers => {
+                    let id = p.buffers[m.item].0;
+                    ed.file_picker = None;
+                    match cmd {
+                        PickerCmd::OpenVsplit => ed.split_window(SplitDir::Vertical, false),
+                        PickerCmd::OpenHsplit => ed.split_window(SplitDir::Horizontal, false),
+                        _ => {}
+                    }
+                    ed.switch_to(id);
+                }
                 PickerKind::Grep | PickerKind::Locations => {
                     let hit = &p.grep_hits[m.item];
                     let (path, line, col) = (hit.path.clone(), hit.line, hit.col);
@@ -512,6 +603,31 @@ fn command(ed: &mut Editor, cmd: PickerCmd) {
                     ed.clamp_cursor();
                     ed.scroll_to_cursor();
                 }
+            }
+        }
+        PickerCmd::CloseEntry => {
+            // Ctrl+D in the buffer picker: close the selected buffer and
+            // rebuild the list (a refused close — unsaved changes — leaves
+            // the list as it was, the error already on the message line)
+            if p.kind != PickerKind::Buffers {
+                return;
+            }
+            let Some(m) = p.matches.get(p.selected) else {
+                return;
+            };
+            let id = p.buffers[m.item].0;
+            let (query, selected) = (p.query.clone(), p.selected);
+            let before = ed.buffer_count();
+            ed.close_buffer(id, false);
+            if ed.buffer_count() == before {
+                return;
+            }
+            open_buffers(ed);
+            if let Some(p) = &mut ed.file_picker {
+                p.query = query;
+                p.refilter();
+                p.selected = selected.min(p.matches.len().saturating_sub(1));
+                p.refresh_preview();
             }
         }
         PickerCmd::CreatePath => {
