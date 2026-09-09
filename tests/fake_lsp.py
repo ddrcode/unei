@@ -120,6 +120,15 @@ while True:
                  "label": ": Vec<i32>", "kind": 1},
                 {"position": {"line": 0, "character": 8},
                  "label": "noisy:", "kind": 2}]})
+    elif method == "textDocument/references":
+        uri = msg["params"]["textDocument"]["uri"]
+        other = uri.rsplit("/", 1)[0] + "/other.rs"
+        # the name on line 1 of the fixture plus its twin in src/other.rs
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"uri": other, "range": {"start": {"line": 0, "character": 3},
+                                     "end": {"line": 0, "character": 8}}},
+            {"uri": uri, "range": {"start": {"line": 1, "character": 3},
+                                   "end": {"line": 1, "character": 8}}}]})
     elif method == "textDocument/rename":
         uri = msg["params"]["textDocument"]["uri"]
         name = msg["params"]["newName"]

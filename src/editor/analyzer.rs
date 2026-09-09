@@ -10,7 +10,7 @@ use crate::core::text::{line_content, text_lines};
 use crate::editor::windows::SplitDir;
 use crate::lsp::{self, Event, Severity};
 
-use super::{BufId, Cursor, Editor};
+use super::{BufId, Cursor, Editor, file_picker};
 
 /// didChange debounce: sent once the buffer has been quiet this long.
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -494,6 +494,158 @@ impl Editor {
         }
     }
 
+    /// The folder a location list shows paths relative to: the server's
+    /// project root (a file argument makes its own folder the working
+    /// folder, and references live all over the crate), canonical as the
+    /// server spells it. Rows still jump by absolute path.
+    fn display_root(&self) -> PathBuf {
+        let root = self
+            .lsp
+            .as_ref()
+            .map(|c| c.root().to_path_buf())
+            .unwrap_or_else(|| self.root().to_path_buf());
+        std::fs::canonicalize(&root).unwrap_or(root)
+    }
+
+    /// `Space c r`: every reference to the symbol under the cursor, as a
+    /// location list once the server answers (#98).
+    pub(crate) fn analyzer_references(&mut self) {
+        let Some(file) = self.current_rust_file() else {
+            self.err("references: not a rust buffer");
+            return;
+        };
+        let (line, col) = self.cursor_lsp_pos();
+        match &mut self.lsp {
+            Some(client) => {
+                client.references(&file, line, col);
+                self.msg("finding references…");
+            }
+            None => self.err("references: rust-analyzer is not running"),
+        }
+    }
+
+    /// The server's references as rows: `path:line: text` with the name
+    /// accented, in path then line order; the line text comes from the
+    /// open buffer when there is one, from disk otherwise.
+    fn on_references(&mut self, mut locs: Vec<lsp::Location>) {
+        if locs.is_empty() {
+            self.msg("no references");
+            return;
+        }
+        locs.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
+        let root = self.display_root();
+        let mut rows = Vec::with_capacity(locs.len());
+        let mut cache: Vec<(PathBuf, Vec<String>)> = Vec::new();
+        for loc in locs {
+            let lines = match cache.iter().position(|(p, _)| *p == loc.path) {
+                Some(i) => &cache[i].1,
+                None => {
+                    let lines = match self.buffer_for_path(&loc.path) {
+                        Some(id) => {
+                            let rope = &self.buffer_ref(id).rope;
+                            (0..text_lines(rope))
+                                .map(|l| line_content(rope, l))
+                                .collect()
+                        }
+                        None => std::fs::read_to_string(&loc.path)
+                            .map(|s| s.lines().map(str::to_string).collect())
+                            .unwrap_or_default(),
+                    };
+                    cache.push((loc.path.clone(), lines));
+                    &cache.last().unwrap().1
+                }
+            };
+            let Some(text) = lines.get(loc.line) else {
+                continue;
+            };
+            let rel = loc
+                .path
+                .strip_prefix(&root)
+                .unwrap_or(&loc.path)
+                .to_string_lossy()
+                .into_owned();
+            let (display, accent) =
+                file_picker::location_row(&rel, loc.line, text, loc.col, loc.end_col);
+            rows.push(file_picker::LocationRow {
+                display,
+                accent,
+                hit: file_picker::GrepHit {
+                    path: loc.path.to_string_lossy().into_owned(),
+                    line: loc.line,
+                    col: byte_to_char_col(text, loc.col),
+                },
+            });
+        }
+        let n = rows.len();
+        file_picker::open_locations(self, " references ", rows);
+        self.msg(format!("{n} reference(s)"));
+    }
+
+    /// `Space d d`: every diagnostic the server has published, all files,
+    /// errors first, as a location list (#99).
+    pub(crate) fn open_diagnostics_list(&mut self) {
+        let Some(client) = &self.lsp else {
+            self.err("diagnostics: rust-analyzer is not running");
+            return;
+        };
+        let root = self.display_root();
+        let mut all: Vec<(u8, PathBuf, lsp::Diagnostic)> = client
+            .diagnostics
+            .iter()
+            .flat_map(|(path, ds)| {
+                ds.iter().map(move |d| {
+                    let rank = match d.severity {
+                        Severity::Error => 0,
+                        Severity::Warning => 1,
+                        Severity::Info => 2,
+                    };
+                    (rank, path.clone(), d.clone())
+                })
+            })
+            .collect();
+        if all.is_empty() {
+            self.msg("no diagnostics");
+            return;
+        }
+        all.sort_by(|a, b| (a.0, &a.1, a.2.line, a.2.col).cmp(&(b.0, &b.1, b.2.line, b.2.col)));
+        let rows = all
+            .into_iter()
+            .map(|(_, path, d)| {
+                let glyph = match d.severity {
+                    Severity::Error => 'E',
+                    Severity::Warning => 'W',
+                    Severity::Info => 'I',
+                };
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned();
+                let headline = d.message.lines().next().unwrap_or("").trim();
+                let col = self
+                    .buffer_for_path(&path)
+                    .map(|id| {
+                        let rope = &self.buffer_ref(id).rope;
+                        let line = d.line.min(text_lines(rope) - 1);
+                        byte_to_char_col(&line_content(rope, line), d.col)
+                    })
+                    .unwrap_or(d.col);
+                file_picker::LocationRow {
+                    display: format!("{glyph} {rel}:{}: {headline}", d.line + 1),
+                    accent: vec![0],
+                    hit: file_picker::GrepHit {
+                        path: path.to_string_lossy().into_owned(),
+                        line: d.line,
+                        col,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let n = rows.len();
+        file_picker::open_locations(self, " diagnostics ", rows);
+        self.msg(format!("{n} diagnostic(s)"));
+    }
+
     pub(crate) fn toggle_ghost_text(&mut self) {
         self.ghost_text = !self.ghost_text;
         self.msg(if self.ghost_text {
@@ -681,6 +833,7 @@ impl Editor {
                     self.request_inlay_hints(id);
                 }
             }
+            Event::References(locs) => self.on_references(locs),
             Event::Definition(Some(loc)) => self.jump_to(loc),
             Event::Definition(None) => self.msg("definition not found"),
             Event::Actions(actions) => {

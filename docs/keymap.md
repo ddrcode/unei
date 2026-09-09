@@ -169,6 +169,8 @@ out in a `6502` file.
 | `gd` | goto definition |
 | `gK` | line-scope hover: the line with all types spliced in, plus the call signature |
 | `Space c a` | code actions menu |
+| `Space c r` | references to the symbol under the cursor, as a **location list**: `path:line: text` rows with the name accented, project-relative, fuzzy-filterable, previewed on the line; `Enter` jumps (records the jumplist), `Ctrl+V`/`Ctrl+X` open in a split |
+| `Space d d` | every diagnostic rust-analyzer has published, all files, errors first — the same location list with the severity (`E`/`W`/`I`) accented |
 | `Space c n` | rename the symbol under the cursor: the prompt opens pre-filled with its name (`Ctrl+U` clears it), `Enter` applies rust-analyzer's edit across every file — opening buffers as needed, one undo step per file — and reports the count; `:wa` then writes them all |
 | `Space r m` | expand macro (into a split) |
 | `Space d h` | toggle end-of-line diagnostic text |

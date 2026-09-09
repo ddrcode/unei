@@ -22,19 +22,39 @@ use super::Editor;
 /// What the picker is picking: files to open (#26), symbols in the current
 /// buffer (#62), or lines matching a regex across the project (grep, #72).
 /// The list, preview and rendering are shared; only the source differs.
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum PickerKind {
     Files,
     Symbols,
     Grep,
+    /// A static list of places — references, diagnostics (#98, #99) — with
+    /// grep's row shape, preview and jump, but fuzzy-filtered like the
+    /// other static lists rather than re-searched per keystroke.
+    Locations,
+}
+
+impl PickerKind {
+    /// Rows are `path:line: text` and Enter jumps to a position.
+    pub fn is_location_list(self) -> bool {
+        matches!(self, PickerKind::Grep | PickerKind::Locations)
+    }
+}
+
+/// One row of a location list: its display text, the char positions to
+/// accent when nothing is typed (the referenced name, the severity), and
+/// where it jumps.
+pub struct LocationRow {
+    pub display: String,
+    pub accent: Vec<u32>,
+    pub hit: GrepHit,
 }
 
 /// One grep result: where to jump when it's chosen (path relative to root,
 /// 0-based line and char column of the match).
 pub struct GrepHit {
-    path: String,
-    line: usize,
-    col: usize,
+    pub path: String,
+    pub line: usize,
+    pub col: usize,
 }
 
 /// Live-grep caps: stop after this many matches, and never read a file bigger
@@ -82,8 +102,12 @@ pub struct FilePicker {
     pub kind: PickerKind,
     /// Symbols mode: the source line for each item, parallel to `items`.
     targets: Vec<usize>,
-    /// Grep mode: where each result jumps to, parallel to `items`.
+    /// Grep and locations: where each result jumps to, parallel to `items`.
     grep_hits: Vec<GrepHit>,
+    /// Locations: the accent of each row when the query is empty.
+    accents: Vec<Vec<u32>>,
+    /// The frame title.
+    pub label: &'static str,
 }
 
 impl FilePicker {
@@ -115,6 +139,13 @@ impl FilePicker {
                 let h = &self.grep_hits[m.item];
                 format!("{}:{}", h.path, h.line + 1)
             }
+            PickerKind::Locations => {
+                // the row's own `path:line:` head — hits carry absolute paths
+                let row = self.item(m);
+                let head = row.split(": ").next().unwrap_or(row);
+                head.trim_start_matches(|c: char| c.is_ascii_uppercase() || c == ' ')
+                    .to_string()
+            }
             _ => Path::new(self.item(m))
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -140,7 +171,7 @@ impl FilePicker {
                 self.preview = path.as_deref().map(build_preview);
                 self.preview_for = path;
             }
-            PickerKind::Grep => {
+            PickerKind::Grep | PickerKind::Locations => {
                 // rebuild on every move: the line, not just the file, frames it
                 self.preview = self
                     .matches
@@ -224,7 +255,7 @@ impl FilePicker {
                 .map(|item| Match {
                     item,
                     score: 0,
-                    indices: Vec::new(),
+                    indices: self.accents.get(item).cloned().unwrap_or_default(),
                 })
                 .collect();
             self.refresh_preview();
@@ -290,6 +321,8 @@ pub fn open(ed: &mut Editor) {
         kind: PickerKind::Files,
         targets: Vec::new(),
         grep_hits: Vec::new(),
+        accents: Vec::new(),
+        label: " files ",
     };
     picker.refilter();
     ed.buffer_list = None;
@@ -311,6 +344,8 @@ pub fn open_grep(ed: &mut Editor) {
         kind: PickerKind::Grep,
         targets: Vec::new(),
         grep_hits: Vec::new(),
+        accents: Vec::new(),
+        label: " grep ",
     };
     picker.refilter();
     ed.buffer_list = None;
@@ -352,10 +387,56 @@ pub fn open_symbols(ed: &mut Editor) {
         kind: PickerKind::Symbols,
         targets,
         grep_hits: Vec::new(),
+        accents: Vec::new(),
+        label: " symbols ",
     };
     picker.refilter();
     ed.buffer_list = None;
     ed.file_picker = Some(picker);
+}
+
+/// Opens a location list (#98, #99): rows already formatted by the source
+/// — references, diagnostics — in the order the source chose, to
+/// fuzzy-filter, preview on the line, and jump to.
+pub fn open_locations(ed: &mut Editor, label: &'static str, rows: Vec<LocationRow>) {
+    let mut items = Vec::with_capacity(rows.len());
+    let mut accents = Vec::with_capacity(rows.len());
+    let mut grep_hits = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(row.display);
+        accents.push(row.accent);
+        grep_hits.push(row.hit);
+    }
+    let mut picker = FilePicker {
+        query: String::new(),
+        items,
+        matches: Vec::new(),
+        selected: 0,
+        truncated: false,
+        root: ed.root().to_path_buf(),
+        preview: None,
+        preview_for: None,
+        kind: PickerKind::Locations,
+        targets: Vec::new(),
+        grep_hits,
+        accents,
+        label,
+    };
+    picker.refilter();
+    ed.buffer_list = None;
+    ed.file_picker = Some(picker);
+}
+
+/// A location's row in grep's shape — `path:line: text` with the range
+/// accented — for a source that already has the line's text (#98).
+pub fn location_row(
+    rel: &str,
+    line_idx: usize,
+    line: &str,
+    mb0: usize,
+    mb1: usize,
+) -> (String, Vec<u32>) {
+    grep_row(rel, line_idx, line, mb0, mb1)
 }
 
 pub fn handle_key(ed: &mut Editor, key: Key) {
@@ -416,7 +497,7 @@ fn command(ed: &mut Editor, cmd: PickerCmd) {
                     ed.clamp_cursor();
                     ed.scroll_to_cursor();
                 }
-                PickerKind::Grep => {
+                PickerKind::Grep | PickerKind::Locations => {
                     let hit = &p.grep_hits[m.item];
                     let (path, line, col) = (hit.path.clone(), hit.line, hit.col);
                     ed.file_picker = None;

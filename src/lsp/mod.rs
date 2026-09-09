@@ -36,6 +36,9 @@ pub struct Location {
     pub path: PathBuf,
     pub line: usize,
     pub col: usize,
+    /// End column on the same line (the start column when the range spans
+    /// lines), so a list can accent the referenced name.
+    pub end_col: usize,
 }
 
 /// One inlay hint, position in utf-8 columns; the label flattened from
@@ -79,6 +82,8 @@ pub enum Event {
     DiagnosticsUpdated(PathBuf),
     Hover(Option<String>),
     Definition(Option<Location>),
+    /// Every reference to the symbol asked about (#98).
+    References(Vec<Location>),
     Actions(Vec<Action>),
     ActionResolved(Box<Value>),
     Completion(Vec<CompletionItem>),
@@ -104,6 +109,7 @@ enum Pending {
     Initialize,
     Hover,
     Definition,
+    References,
     Actions,
     Completion,
     ResolveAction,
@@ -195,6 +201,7 @@ impl Client {
                             "resolveSupport": { "properties": ["edit"] }
                         },
                         "inlayHint": {},
+                        "references": {},
                         "rename": { "prepareSupport": false },
                         "definition": {},
                         "completion": {
@@ -345,6 +352,18 @@ impl Client {
             Pending::Definition,
             "textDocument/definition",
             Self::doc_pos(path, line, col),
+        );
+    }
+
+    pub fn references(&mut self, path: &Path, line: usize, col: usize) {
+        self.request(
+            Pending::References,
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri(path) },
+                "position": { "line": line, "character": col },
+                "context": { "includeDeclaration": true }
+            }),
         );
     }
 
@@ -569,6 +588,13 @@ impl Client {
             }
             Pending::Hover => events.push(Event::Hover(parse_hover(&result))),
             Pending::Definition => events.push(Event::Definition(parse_definition(&result))),
+            Pending::References => {
+                let locs = result
+                    .as_array()
+                    .map(|a| a.iter().filter_map(parse_location).collect())
+                    .unwrap_or_default();
+                events.push(Event::References(locs));
+            }
             Pending::Actions => {
                 let actions = result
                     .as_array()
@@ -744,16 +770,30 @@ fn parse_definition(result: &Value) -> Option<Location> {
     } else {
         result
     };
-    // Location or LocationLink
+    parse_location(loc)
+}
+
+/// A Location or LocationLink as a typed location.
+fn parse_location(loc: &Value) -> Option<Location> {
     let (uri_v, range) = if loc.get("targetUri").is_some() {
         (&loc["targetUri"], &loc["targetSelectionRange"])
     } else {
         (&loc["uri"], &loc["range"])
     };
+    let line = range["start"]["line"].as_u64()? as usize;
+    let col = range["start"]["character"].as_u64()? as usize;
+    let end_col = match (
+        range["end"]["line"].as_u64(),
+        range["end"]["character"].as_u64(),
+    ) {
+        (Some(l), Some(c)) if l as usize == line => (c as usize).max(col),
+        _ => col,
+    };
     Some(Location {
         path: uri_to_path(uri_v.as_str()?)?,
-        line: range["start"]["line"].as_u64()? as usize,
-        col: range["start"]["character"].as_u64()? as usize,
+        line,
+        col,
+        end_col,
     })
 }
 

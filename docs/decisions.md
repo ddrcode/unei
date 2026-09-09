@@ -3,6 +3,24 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-08 — Location lists: the picker's fourth kind serves every static source (tickets #98, #99)
+
+The grep entry (#72) deferred a source abstraction until a third source
+proved the shape. References and diagnostics are that proof, and what
+they share is not "a source trait" but a *row*: `path:line: text` with
+something accented, a preview framed on the line, `Enter` jumping to a
+position. So the picker gains one kind, `Locations`, holding rows already
+formatted by whoever produced them — the server's references with the
+name accented, its diagnostics with the severity — fuzzy-filtered like
+the static lists (files, symbols) rather than re-searched like grep. The
+picker never learns what a reference or a diagnostic is; a future source
+(asm labels across `.include` chains, #46) is a row builder away. Rows
+display paths relative to the *project* root (a file argument makes its
+own folder the working folder, and references live all over the crate)
+and jump by absolute path. Diagnostics list everything the server has
+published, all files, errors first: the quickfix habit (`setqflist`) the
+author had in nvim, not next/previous hops.
+
 ## 2026-09-08 — Window chord modifiers: Shift stays, Alt stays and projects (ticket #95)
 
 The side-by-side setup was three steps — split, `gp`, focus back — for
