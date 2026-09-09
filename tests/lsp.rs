@@ -267,5 +267,81 @@ fn analyzer_end_to_end_with_fake_server() {
     feed(&mut ed, " dh");
     assert!(!ed.ghost_text);
 
+    // rename (#97): the prompt opens pre-filled with the identifier under
+    // the cursor; the server's edit spans two files, the second of which
+    // is not open yet; each file is one undo step; :wa writes them all
+    feed(&mut ed, "2G0w"); // onto `main` in `fn main() {}`
+    assert_eq!(ed.cursor.line, 1);
+    feed(&mut ed, " cn");
+    assert!(matches!(ed.prompt, unei::editor::Prompt::Rename { .. }));
+    assert_eq!(
+        ed.cmdline, "main",
+        "pre-filled with the name under the cursor"
+    );
+    assert_eq!(
+        ed.cmdline_cursor, 4,
+        "cursor at the end of the pre-filled name"
+    );
+    feed(&mut ed, "<Home>my_"); // and the name is editable, not append-only
+    assert_eq!((ed.cmdline.as_str(), ed.cmdline_cursor), ("my_main", 3));
+    feed(&mut ed, "<End><C-u>entry<CR>");
+    assert!(
+        pump(&mut ed, |e| text(e).contains("fn entry() {}")),
+        "rename never applied to the current buffer"
+    );
+    let msg = ed.message.as_ref().unwrap().text.clone();
+    assert!(msg.contains("2 places in 2 files"), "{msg}");
+    assert!(msg.contains(":wa"), "{msg}");
+    let other_id = ed
+        .buffer_entries()
+        .into_iter()
+        .find(|e| e.name.ends_with("other.rs"))
+        .expect("other.rs was opened to take the edit");
+    assert!(other_id.modified, "edited, not yet written");
+    assert!(
+        ed.buffer_ref(other_id.id)
+            .rope
+            .to_string()
+            .contains("fn entry() {}")
+    );
+    feed(&mut ed, "u");
+    assert!(text(&ed).contains("fn main() {}"), "one undo step per file");
+    feed(&mut ed, "<C-r>");
+    feed(&mut ed, ":wa<CR>");
+    assert!(
+        ed.message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("2 buffer(s) written")
+    );
+    assert!(fs::read_to_string(&file).unwrap().contains("fn entry() {}"));
+    assert!(
+        fs::read_to_string(dir.join("src/other.rs"))
+            .unwrap()
+            .contains("fn entry() {}")
+    );
+    // the server's refusal reaches the message line verbatim
+    feed(&mut ed, "2G0w cn<C-u>reserved<CR>");
+    assert!(
+        pump(&mut ed, |e| e.message.as_ref().is_some_and(|m| m
+            .text
+            .contains("Cannot rename a reserved name"))),
+        "server error not shown"
+    );
+    // local validation never bothers the server
+    feed(&mut ed, " cn<C-u>1bad<CR>");
+    assert!(
+        ed.message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("not an identifier")
+    );
+    feed(&mut ed, " cn<CR>"); // unchanged name
+    assert!(ed.message.as_ref().unwrap().text.contains("same name"));
+    feed(&mut ed, " cn<C-u><CR>"); // emptied = cancel
+    assert!(ed.message.as_ref().unwrap().text.contains("cancelled"));
+
     ed.lsp_shutdown();
 }

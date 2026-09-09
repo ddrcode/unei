@@ -135,8 +135,11 @@ pub fn render(f: &mut Frame, ed: &mut Editor) {
 
     match ed.mode {
         Mode::Command => {
-            let x = (1 + ed.cmdline.width() as u16).min(area.width - 1);
-            f.set_cursor_position((x, area.height - 1));
+            // after the prompt's prefix (wider than one cell for a rename)
+            // and the text left of the insertion point
+            let typed: String = ed.cmdline.chars().take(ed.cmdline_cursor).collect();
+            let x = (ed.prompt.prefix().width() + typed.width()) as u16;
+            f.set_cursor_position((x.min(area.width - 1), area.height - 1));
         }
         _ if ed.focused_is_preview() => {
             if let Some((_, rect)) = rects.iter().find(|(id, _)| *id == focused_id) {
@@ -1234,12 +1237,10 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
 fn draw_message_line(f: &mut Frame, ed: &Editor, area: Rect) {
     let bg = Style::default().bg(palette::BG);
     let line = if ed.mode == Mode::Command {
-        let prefix = match ed.prompt {
-            crate::editor::Prompt::Command => ':',
-            crate::editor::Prompt::Search { forward: true } => '/',
-            crate::editor::Prompt::Search { forward: false } => '?',
-        };
-        Line::styled(format!("{prefix}{}", ed.cmdline), bg.fg(palette::FG))
+        Line::styled(
+            format!("{}{}", ed.prompt.prefix(), ed.cmdline),
+            bg.fg(palette::FG),
+        )
     } else if let Some(msg) = &ed.message {
         let style = if msg.error {
             bg.fg(palette::ERROR_FG).add_modifier(Modifier::BOLD)

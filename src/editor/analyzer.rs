@@ -124,6 +124,41 @@ fn lsp_pos_to_char(rope: &ropey::Rope, line: usize, byte_col: usize) -> usize {
     (rope.line_to_char(line) + byte_to_char_col(&content, byte_col)).min(rope.len_chars())
 }
 
+/// The identifier under (or just before) a char column: char range
+/// `start..end`, or None on blank or punctuation.
+fn identifier_at(line: &str, col: usize) -> Option<(usize, usize)> {
+    use crate::core::text::{CharClass, char_class};
+    let chars: Vec<char> = line.chars().collect();
+    let is_word = |i: usize| {
+        chars
+            .get(i)
+            .is_some_and(|&c| char_class(c, false) == CharClass::Word)
+    };
+    let mut at = col.min(chars.len().saturating_sub(1));
+    if !is_word(at) {
+        if at > 0 && is_word(at - 1) {
+            at -= 1; // cursor just past the name (append position)
+        } else {
+            return None;
+        }
+    }
+    let mut start = at;
+    while start > 0 && is_word(start - 1) {
+        start -= 1;
+    }
+    let mut end = at + 1;
+    while is_word(end) {
+        end += 1;
+    }
+    Some((start, end))
+}
+
+fn is_plain_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c == '_' || c.is_alphabetic())
+        && chars.all(|c| c == '_' || c.is_alphanumeric())
+}
+
 fn char_to_byte_col(line: &str, char_col: usize) -> usize {
     line.char_indices()
         .nth(char_col)
@@ -309,6 +344,23 @@ impl Editor {
         }
     }
 
+    /// `didSave` for a parked buffer: the server sees that buffer's text
+    /// first (never the current one's).
+    pub(crate) fn lsp_did_save_buffer(&mut self, id: BufId, path: &Path) {
+        let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let (content, version) = {
+            let b = self.buffer_ref(id);
+            (b.rope.to_string(), b.version() as i64)
+        };
+        self.lsp_dirty.remove(&id);
+        if let Some(client) = &mut self.lsp {
+            if client.is_open(&abs) {
+                client.did_change(&abs, &content, version);
+            }
+            client.did_save(&abs);
+        }
+    }
+
     pub(crate) fn lsp_did_close(&mut self, path: &Path) {
         let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if let Some(client) = &mut self.lsp {
@@ -383,6 +435,62 @@ impl Editor {
         let len = text.len();
         if let Some(client) = &mut self.lsp {
             client.inlay_line(&file, line, col, text, len);
+        }
+    }
+
+    /// `Space c n`: open the rename prompt pre-filled with the identifier
+    /// under the cursor — edit the name, don't retype it (#97).
+    pub(crate) fn analyzer_rename_prompt(&mut self) {
+        if self.current_rust_file().is_none() {
+            self.err("rename: not a rust buffer");
+            return;
+        }
+        if self.lsp.is_none() {
+            self.err("rename: rust-analyzer is not running");
+            return;
+        }
+        let line = line_content(&self.buffer.rope, self.cursor.line);
+        let Some((start, end)) = identifier_at(&line, self.cursor.col) else {
+            self.err("rename: no identifier under the cursor");
+            return;
+        };
+        let name: String = line.chars().skip(start).take(end - start).collect();
+        let (lsp_line, lsp_col) = (self.cursor.line, char_to_byte_col(&line, start));
+        self.open_prompt(
+            super::Prompt::Rename {
+                line: lsp_line,
+                col: lsp_col,
+            },
+            name,
+        );
+    }
+
+    /// Enter on the rename prompt: validate and ask the server (#97).
+    pub(crate) fn analyzer_rename(&mut self, line: usize, col: usize, new_name: &str) {
+        let Some(file) = self.current_rust_file() else {
+            return;
+        };
+        if new_name.is_empty() {
+            self.msg("rename cancelled");
+            return;
+        }
+        if !is_plain_identifier(new_name) {
+            self.err(format!("rename: `{new_name}` is not an identifier"));
+            return;
+        }
+        let current = line_content(
+            &self.buffer.rope,
+            line.min(text_lines(&self.buffer.rope) - 1),
+        );
+        let old = identifier_at(&current, byte_to_char_col(&current, col))
+            .map(|(s, e)| current.chars().skip(s).take(e - s).collect::<String>());
+        if old.as_deref() == Some(new_name) {
+            self.msg("rename: same name");
+            return;
+        }
+        if let Some(client) = &mut self.lsp {
+            client.rename(&file, line, col, new_name);
+            self.msg(format!("renaming to `{new_name}`…"));
         }
     }
 
@@ -587,13 +695,33 @@ impl Editor {
             }
             Event::ActionResolved(v) => {
                 let edit = v.get("edit").cloned().unwrap_or(serde_json::Value::Null);
-                if edit.is_object() {
-                    self.apply_workspace_edit(&edit);
-                } else {
+                if !edit.is_object() {
                     self.msg("action has no edit");
+                } else if let Some((files, edits)) = self.apply_workspace_edit(&edit) {
+                    self.msg(format!("applied {edits} edit(s) in {files} file(s)"));
+                } else {
+                    self.msg("edit: nothing to apply");
                 }
             }
-            Event::ApplyEdit(edit) => self.apply_workspace_edit(&edit),
+            Event::ApplyEdit(edit) => {
+                if let Some((files, edits)) = self.apply_workspace_edit(&edit) {
+                    self.msg(format!("applied {edits} edit(s) in {files} file(s)"));
+                } else {
+                    self.msg("edit: nothing to apply");
+                }
+            }
+            Event::Renamed(name, Err(reason)) => {
+                self.err(format!("rename to `{name}`: {reason}"));
+            }
+            Event::Renamed(name, Ok(edit)) => match self.apply_workspace_edit(&edit) {
+                Some((files, edits)) if files > 1 => self.msg(format!(
+                    "renamed to `{name}`: {edits} places in {files} files — :wa writes them all"
+                )),
+                Some((_, edits)) => {
+                    self.msg(format!("renamed to `{name}`: {edits} place(s)"));
+                }
+                None => self.msg(format!("rename to `{name}`: nothing to rename here")),
+            },
             Event::ExpandedMacro(Some((name, text))) => {
                 self.open_expansion(&name, &text);
             }
@@ -731,7 +859,13 @@ impl Editor {
     // workspace edits
     // ------------------------------------------------------------------
 
-    pub(crate) fn apply_workspace_edit(&mut self, edit: &serde_json::Value) {
+    /// Applies a WorkspaceEdit (`changes` or `documentChanges`), opening
+    /// files into buffers as needed; one undo step per file. Returns
+    /// (files, edits) applied, None when there was nothing to apply.
+    pub(crate) fn apply_workspace_edit(
+        &mut self,
+        edit: &serde_json::Value,
+    ) -> Option<(usize, usize)> {
         let mut per_file: Vec<(PathBuf, Vec<serde_json::Value>)> = Vec::new();
         if let Some(changes) = edit.get("changes").and_then(|c| c.as_object()) {
             for (uri, edits) in changes {
@@ -757,17 +891,18 @@ impl Editor {
             }
         }
         if per_file.is_empty() {
-            self.msg("edit: nothing to apply");
-            return;
+            return None;
         }
-        let mut applied = 0;
-        for (path, edits) in per_file {
-            if self.apply_edits_to_file(&path, edits) {
-                applied += 1;
+        let (mut files, mut edits) = (0usize, 0usize);
+        for (path, list) in per_file {
+            let n = list.len();
+            if self.apply_edits_to_file(&path, list) {
+                files += 1;
+                edits += n;
             }
         }
-        self.msg(format!("applied edits to {applied} file(s)"));
         self.lsp_note_edit();
+        (files > 0).then_some((files, edits))
     }
 
     fn apply_edits_to_file(&mut self, path: &Path, mut edits: Vec<serde_json::Value>) -> bool {
@@ -840,5 +975,38 @@ impl Editor {
             self.scroll_to_cursor();
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifier_under_or_just_before_the_cursor() {
+        let line = "let total_sum = foo(bar);";
+        assert_eq!(identifier_at(line, 0), Some((0, 3)), "on `let`");
+        assert_eq!(identifier_at(line, 6), Some((4, 13)), "inside total_sum");
+        assert_eq!(
+            identifier_at(line, 13),
+            Some((4, 13)),
+            "just past it (append)"
+        );
+        assert_eq!(identifier_at(line, 14), None, "on `=`… nothing before it");
+        assert_eq!(identifier_at(line, 20), Some((20, 23)), "bar");
+        assert_eq!(identifier_at(line, 24), None, "on `;` after `)`: nothing");
+        assert_eq!(identifier_at("", 0), None);
+        assert_eq!(identifier_at("   ", 1), None);
+    }
+
+    #[test]
+    fn plain_identifiers_only() {
+        assert!(is_plain_identifier("foo_bar2"));
+        assert!(is_plain_identifier("_x"));
+        assert!(is_plain_identifier("größe"));
+        assert!(!is_plain_identifier("2fast"));
+        assert!(!is_plain_identifier("with space"));
+        assert!(!is_plain_identifier("a-b"));
+        assert!(!is_plain_identifier(""));
     }
 }

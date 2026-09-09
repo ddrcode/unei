@@ -134,7 +134,27 @@ pub struct BufferList {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
     Command,
-    Search { forward: bool },
+    Search {
+        forward: bool,
+    },
+    /// `Space c n`: the new name for the symbol at this LSP position (#97).
+    Rename {
+        line: usize,
+        col: usize,
+    },
+}
+
+impl Prompt {
+    /// What the message line shows before the typed text — and what the
+    /// cursor sits after (a prefix wider than one cell, since #97).
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Prompt::Command => ":",
+            Prompt::Search { forward: true } => "/",
+            Prompt::Search { forward: false } => "?",
+            Prompt::Rename { .. } => "rename → ",
+        }
+    }
 }
 
 /// The yanked region, briefly highlighted (nvim's on_yank flash).
@@ -172,6 +192,10 @@ pub struct Editor {
     pub last_clipboard: Option<String>,
     pub last_find: Option<(FindKind, char)>,
     pub cmdline: String,
+    /// Insertion point in `cmdline`, in chars: the command line is an
+    /// editable line, not an append-only buffer (#97 — a pre-filled rename
+    /// is useless without a cursor).
+    pub cmdline_cursor: usize,
     pub message: Option<Message>,
     pub top_line: usize,
     pub should_quit: bool,
@@ -305,6 +329,7 @@ impl Editor {
             last_clipboard: None,
             last_find: None,
             cmdline: String::new(),
+            cmdline_cursor: 0,
             message: None,
             top_line: 0,
             should_quit: false,
@@ -630,6 +655,15 @@ impl Editor {
         self.clamp_cursor();
         self.refresh_focused_view();
         self.msg(Self::buffer_name(&self.buffer));
+    }
+
+    /// Opens the command line for `prompt`, pre-filled with `text` and the
+    /// cursor at its end. The one way in: every prompt gets a valid cursor.
+    pub(crate) fn open_prompt(&mut self, prompt: Prompt, text: String) {
+        self.cmdline_cursor = text.chars().count();
+        self.cmdline = text;
+        self.prompt = prompt;
+        self.mode = Mode::Command;
     }
 
     /// `Ctrl+^` — the previously displayed buffer.
@@ -1561,6 +1595,80 @@ impl Editor {
         true
     }
 
+    /// `:wa` — writes every modified buffer that has a file: the current
+    /// one through `save`, parked ones in place (formatter and server
+    /// included). A modified buffer without a name is reported, not
+    /// silently skipped (#97: the companion of a multi-file rename).
+    pub(crate) fn save_all(&mut self) {
+        let modified: Vec<(BufId, bool)> = self
+            .buffer_entries()
+            .into_iter()
+            .filter(|e| e.modified)
+            .map(|e| (e.id, self.buffer_ref(e.id).path.is_some()))
+            .collect();
+        let (mut written, mut failed, mut unnamed) = (0usize, 0usize, 0usize);
+        for (id, named) in modified {
+            if !named {
+                unnamed += 1;
+                continue;
+            }
+            let ok = if id == self.current {
+                self.save(false)
+            } else {
+                self.save_parked(id)
+            };
+            if ok {
+                written += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            return; // the failing save already said why
+        }
+        let mut text = format!("{written} buffer(s) written");
+        if unnamed > 0 {
+            text.push_str(&format!(", {unnamed} unnamed buffer(s) not written"));
+        }
+        self.msg(text);
+    }
+
+    /// Saves a parked buffer where it sits: write, tell the server, run the
+    /// formatter, fold a reformat back in as one undo step, stay clean.
+    fn save_parked(&mut self, id: BufId) -> bool {
+        let Some(i) = self.slot_index(id) else {
+            return false;
+        };
+        let cursor = self.slots[i].cursor;
+        let Some(buffer) = self.slots[i].buffer.as_mut() else {
+            return false;
+        };
+        let path = match buffer.save(false) {
+            Ok((path, _)) => path,
+            Err(e) => {
+                self.err(format!("E212: {e:#}"));
+                return false;
+            }
+        };
+        self.lsp_did_save_buffer(id, &path);
+        if let crate::format::Outcome::Reformatted { text } = crate::format::format_file(&path)
+            && let Some(buffer) = self.buffer_mut_by_id(id)
+        {
+            buffer.begin_change(cursor);
+            let len = buffer.rope.len_chars();
+            buffer.remove(0..len);
+            buffer.insert(0, &text);
+            let n = buffer.rope.len_chars();
+            if n == 0 || buffer.rope.char(n - 1) != '\n' {
+                buffer.insert(n, "\n");
+            }
+            buffer.end_change();
+            buffer.mark_saved();
+            self.lsp_dirty.insert(id, std::time::Instant::now());
+        }
+        true
+    }
+
     /// Replaces the current buffer's content with externally formatted text,
     /// as a single undoable change; the buffer stays marked clean.
     fn reload_current_buffer(&mut self, text: &str) {
@@ -1677,7 +1785,12 @@ impl Editor {
         };
         let edit = action.raw.get("edit").cloned();
         match edit {
-            Some(e) if e.is_object() => self.apply_workspace_edit(&e),
+            Some(e) if e.is_object() => match self.apply_workspace_edit(&e) {
+                Some((files, edits)) => {
+                    self.msg(format!("applied {edits} edit(s) in {files} file(s)"));
+                }
+                None => self.msg("edit: nothing to apply"),
+            },
             _ => {
                 if let Some(client) = &mut self.lsp {
                     client.resolve_action(action.raw);
@@ -2271,9 +2384,7 @@ impl Editor {
             }
             K::Char(':') => {
                 // the command line works from a preview (`:q` closes the panel)
-                self.cmdline.clear();
-                self.prompt = Prompt::Command;
-                self.mode = Mode::Command;
+                self.open_prompt(Prompt::Command, String::new());
                 return;
             }
             K::Char('p') | K::Esc => {
@@ -2352,9 +2463,12 @@ impl Editor {
                 self.lsp_note_edit();
             }
             Mode::Command => {
-                // paste into the prompt (single-line: newlines become spaces)
+                // paste into the prompt at the cursor (single-line)
                 let flat = normalized.replace('\n', " ");
-                self.cmdline.push_str(flat.trim_end());
+                let flat = flat.trim_end();
+                let at = cmdline::byte_at(&self.cmdline, self.cmdline_cursor);
+                self.cmdline.insert_str(at, flat);
+                self.cmdline_cursor += flat.chars().count();
             }
         }
     }

@@ -4,31 +4,96 @@ use crate::search::Direction;
 
 use super::{Editor, Mode, Prompt};
 
+/// Byte offset of char index `at` in `s` (its end when past the last char).
+pub(crate) fn byte_at(s: &str, at: usize) -> usize {
+    s.char_indices().nth(at).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+/// The command line is an editable line: text is inserted at the cursor,
+/// which moves with the arrows and Home/End, so a pre-filled prompt (the
+/// rename of #97) can be edited rather than only appended to.
 pub fn handle_key(ed: &mut Editor, key: Key) {
+    let len = ed.cmdline.chars().count();
     match key {
         Key::Esc | Key::Ctrl('c') | Key::Ctrl('[') => {
             ed.cmdline.clear();
+            ed.cmdline_cursor = 0;
             ed.mode = Mode::Normal;
             cancel_search_prompt(ed);
         }
         Key::Backspace => {
-            if ed.cmdline.pop().is_none() {
+            if ed.cmdline.is_empty() {
+                // backspacing off the start of an empty line leaves the
+                // prompt, vim-style
                 ed.mode = Mode::Normal;
                 cancel_search_prompt(ed);
-            } else {
+            } else if ed.cmdline_cursor > 0 {
+                let at = byte_at(&ed.cmdline, ed.cmdline_cursor - 1);
+                ed.cmdline.remove(at);
+                ed.cmdline_cursor -= 1;
                 incremental(ed);
             }
         }
+        Key::Delete => {
+            if ed.cmdline_cursor < len {
+                let at = byte_at(&ed.cmdline, ed.cmdline_cursor);
+                ed.cmdline.remove(at);
+                incremental(ed);
+            }
+        }
+        Key::Left => ed.cmdline_cursor = ed.cmdline_cursor.saturating_sub(1),
+        Key::Right => ed.cmdline_cursor = (ed.cmdline_cursor + 1).min(len),
+        Key::Home => ed.cmdline_cursor = 0,
+        Key::End => ed.cmdline_cursor = len,
         Key::Char(c) => {
-            ed.cmdline.push(c);
+            let at = byte_at(&ed.cmdline, ed.cmdline_cursor);
+            ed.cmdline.insert(at, c);
+            ed.cmdline_cursor += 1;
+            incremental(ed);
+        }
+        Key::Ctrl('u') => {
+            // vim's c_CTRL-U: wipe what precedes the cursor
+            let at = byte_at(&ed.cmdline, ed.cmdline_cursor);
+            ed.cmdline.replace_range(..at, "");
+            ed.cmdline_cursor = 0;
+            incremental(ed);
+        }
+        Key::Ctrl('w') => {
+            // vim's c_CTRL-W: wipe the word before the cursor
+            let chars: Vec<char> = ed.cmdline.chars().collect();
+            let mut start = ed.cmdline_cursor;
+            while start > 0 && chars[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            let word = start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_');
+            while start > 0 {
+                let c = chars[start - 1];
+                let keep = if word {
+                    c.is_alphanumeric() || c == '_'
+                } else {
+                    !c.is_whitespace() && !c.is_alphanumeric() && c != '_'
+                };
+                if !keep {
+                    break;
+                }
+                start -= 1;
+            }
+            let (from, to) = (
+                byte_at(&ed.cmdline, start),
+                byte_at(&ed.cmdline, ed.cmdline_cursor),
+            );
+            ed.cmdline.replace_range(from..to, "");
+            ed.cmdline_cursor = start;
             incremental(ed);
         }
         Key::Enter => {
             let cmd = std::mem::take(&mut ed.cmdline);
+            ed.cmdline_cursor = 0;
             ed.mode = Mode::Normal;
             match ed.prompt {
                 Prompt::Command => execute(ed, cmd.trim()),
                 Prompt::Search { forward } => accept_search(ed, &cmd, forward),
+                Prompt::Rename { line, col } => ed.analyzer_rename(line, col, cmd.trim()),
             }
         }
         _ => {}
@@ -161,6 +226,7 @@ fn execute(ed: &mut Editor, cmd: &str) {
         "q!" => ed.close_window_or_quit(true),
         "qa" | "quita" | "qall" => ed.quit(false),
         "qa!" | "quita!" | "qall!" => ed.quit(true),
+        "wa" | "wall" => ed.save_all(),
         "wq" => ed.save_and_quit(false, false),
         "wq!" => ed.save_and_quit(false, true),
         "x" => ed.save_and_quit(true, false),

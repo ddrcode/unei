@@ -87,7 +87,7 @@ Inside: type to filter (grep = regex) · `Ctrl+I`/`Ctrl+K` or arrows ·
 
 ## Command line & files
 
-`:w` `:q` `:q!` `:wq` `:x` · `:qa` `:qa!` · `:w {path}` save-as · `:bd` ·
+`:w` `:q` `:q!` `:wq` `:x` · `:wa` write all · `:qa` `:qa!` · `:w {path}` save-as · `:bd` ·
 `:e` reload from disk · `:e!` reload, drop my edits · `:w!` overwrite a file
 changed on disk (`[!]` in statusline = changed underneath you; clean buffers
 reload themselves) ·
@@ -95,7 +95,7 @@ reload themselves) ·
 
 ## Leader chords (`Space` …)
 
-`Space c a` code actions · `Space r m` expand macro · `Space d h` toggle
+`Space c a` code actions · **`Space c n` rename** (prompt pre-filled; `Ctrl+U` clears; `:wa` after a multi-file one) · `Space r m` expand macro · `Space d h` toggle
 diagnostic ghost text · `Space b`/`s`/`g` pickers · `Space p`/`P` cut-reg paste
 
 ## Opening the unusual

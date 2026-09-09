@@ -169,6 +169,7 @@ out in a `6502` file.
 | `gd` | goto definition |
 | `gK` | line-scope hover: the line with all types spliced in, plus the call signature |
 | `Space c a` | code actions menu |
+| `Space c n` | rename the symbol under the cursor: the prompt opens pre-filled with its name (`Ctrl+U` clears it), `Enter` applies rust-analyzer's edit across every file — opening buffers as needed, one undo step per file — and reports the count; `:wa` then writes them all |
 | `Space r m` | expand macro (into a split) |
 | `Space d h` | toggle end-of-line diagnostic text |
 
@@ -246,7 +247,7 @@ replaces the selection in visual mode — never interpreted as keystrokes.
 
 ## Command line
 
-`:w` `:q` `:q!` `:wq` `:x` — with splits open, quit commands close the window
+`:w` `:q` `:q!` `:wq` `:x` `:wa` — with splits open, quit commands close the window
 first; the last window checks *all* buffers for unsaved changes. `:bd`/`:bd!`
 close the buffer. `:{number}` jumps to a line. `:w {path}` writes the buffer
 to a path and binds it there (how a bare-launch scratch buffer gets a home).
