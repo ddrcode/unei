@@ -144,6 +144,19 @@ pub enum Prompt {
     },
 }
 
+impl Prompt {
+    /// What the message line shows before the typed text — and what the
+    /// cursor sits after (a prefix wider than one cell, since #97).
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Prompt::Command => ":",
+            Prompt::Search { forward: true } => "/",
+            Prompt::Search { forward: false } => "?",
+            Prompt::Rename { .. } => "rename → ",
+        }
+    }
+}
+
 /// The yanked region, briefly highlighted (nvim's on_yank flash).
 #[derive(Clone, Copy)]
 pub enum FlashRegion {
@@ -179,6 +192,10 @@ pub struct Editor {
     pub last_clipboard: Option<String>,
     pub last_find: Option<(FindKind, char)>,
     pub cmdline: String,
+    /// Insertion point in `cmdline`, in chars: the command line is an
+    /// editable line, not an append-only buffer (#97 — a pre-filled rename
+    /// is useless without a cursor).
+    pub cmdline_cursor: usize,
     pub message: Option<Message>,
     pub top_line: usize,
     pub should_quit: bool,
@@ -312,6 +329,7 @@ impl Editor {
             last_clipboard: None,
             last_find: None,
             cmdline: String::new(),
+            cmdline_cursor: 0,
             message: None,
             top_line: 0,
             should_quit: false,
@@ -637,6 +655,15 @@ impl Editor {
         self.clamp_cursor();
         self.refresh_focused_view();
         self.msg(Self::buffer_name(&self.buffer));
+    }
+
+    /// Opens the command line for `prompt`, pre-filled with `text` and the
+    /// cursor at its end. The one way in: every prompt gets a valid cursor.
+    pub(crate) fn open_prompt(&mut self, prompt: Prompt, text: String) {
+        self.cmdline_cursor = text.chars().count();
+        self.cmdline = text;
+        self.prompt = prompt;
+        self.mode = Mode::Command;
     }
 
     /// `Ctrl+^` — the previously displayed buffer.
@@ -2357,9 +2384,7 @@ impl Editor {
             }
             K::Char(':') => {
                 // the command line works from a preview (`:q` closes the panel)
-                self.cmdline.clear();
-                self.prompt = Prompt::Command;
-                self.mode = Mode::Command;
+                self.open_prompt(Prompt::Command, String::new());
                 return;
             }
             K::Char('p') | K::Esc => {
@@ -2438,9 +2463,12 @@ impl Editor {
                 self.lsp_note_edit();
             }
             Mode::Command => {
-                // paste into the prompt (single-line: newlines become spaces)
+                // paste into the prompt at the cursor (single-line)
                 let flat = normalized.replace('\n', " ");
-                self.cmdline.push_str(flat.trim_end());
+                let flat = flat.trim_end();
+                let at = cmdline::byte_at(&self.cmdline, self.cmdline_cursor);
+                self.cmdline.insert_str(at, flat);
+                self.cmdline_cursor += flat.chars().count();
             }
         }
     }

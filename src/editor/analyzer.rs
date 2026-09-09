@@ -456,12 +456,13 @@ impl Editor {
         };
         let name: String = line.chars().skip(start).take(end - start).collect();
         let (lsp_line, lsp_col) = (self.cursor.line, char_to_byte_col(&line, start));
-        self.cmdline = name;
-        self.prompt = super::Prompt::Rename {
-            line: lsp_line,
-            col: lsp_col,
-        };
-        self.mode = super::Mode::Command;
+        self.open_prompt(
+            super::Prompt::Rename {
+                line: lsp_line,
+                col: lsp_col,
+            },
+            name,
+        );
     }
 
     /// Enter on the rename prompt: validate and ask the server (#97).

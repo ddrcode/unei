@@ -278,7 +278,13 @@ fn analyzer_end_to_end_with_fake_server() {
         ed.cmdline, "main",
         "pre-filled with the name under the cursor"
     );
-    feed(&mut ed, "<C-u>entry<CR>");
+    assert_eq!(
+        ed.cmdline_cursor, 4,
+        "cursor at the end of the pre-filled name"
+    );
+    feed(&mut ed, "<Home>my_"); // and the name is editable, not append-only
+    assert_eq!((ed.cmdline.as_str(), ed.cmdline_cursor), ("my_main", 3));
+    feed(&mut ed, "<End><C-u>entry<CR>");
     assert!(
         pump(&mut ed, |e| text(e).contains("fn entry() {}")),
         "rename never applied to the current buffer"

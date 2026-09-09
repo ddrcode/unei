@@ -391,9 +391,7 @@ fn dispatch(ed: &mut Editor, key: Key) {
                 ed.leave_visual();
                 clear_pending(ed);
                 ed.drop_recording();
-                ed.cmdline.clear();
-                ed.prompt = super::Prompt::Command;
-                ed.mode = Mode::Command;
+                ed.open_prompt(super::Prompt::Command, String::new());
                 return;
             }
             // motions, counts, find, scroll fall through to normal handling
@@ -517,18 +515,14 @@ fn dispatch(ed: &mut Editor, key: Key) {
         Token::CmdLine => {
             clear_pending(ed);
             ed.drop_recording();
-            ed.cmdline.clear();
             ed.cmd_selection = None;
-            ed.prompt = super::Prompt::Command;
-            ed.mode = Mode::Command;
+            ed.open_prompt(super::Prompt::Command, String::new());
         }
         Token::SearchPrompt(forward) => {
             clear_pending(ed);
             ed.drop_recording();
-            ed.cmdline.clear();
-            ed.prompt = super::Prompt::Search { forward };
             ed.search_origin = Some((ed.cursor, ed.top_line));
-            ed.mode = Mode::Command;
+            ed.open_prompt(super::Prompt::Search { forward }, String::new());
         }
     }
 }
