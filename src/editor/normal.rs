@@ -846,11 +846,18 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    if op == Op::Yank {
-        ed.mirror_yank_to_clipboard(&text);
-        ed.yank_reg = Some(Register::Line(text));
-    } else {
-        ed.cut_reg = Some(Register::Line(text));
+    match op {
+        Op::Yank => {
+            ed.mirror_yank_to_clipboard(&text);
+            ed.yank_reg = Some(Register::Line(text));
+        }
+        // a linewise delete is a cut, not a discard — `dd` then `p` moves
+        // the line (#105); the clipboard still mirrors yanks only
+        Op::Delete => {
+            ed.cut_reg = Some(Register::Line(text.clone()));
+            ed.yank_reg = Some(Register::Line(text));
+        }
+        _ => ed.cut_reg = Some(Register::Line(text)),
     }
     ed.goal = None;
 

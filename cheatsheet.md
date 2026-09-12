@@ -35,7 +35,7 @@ Personal quick-ref. Terse on purpose. Reminder: **navigation is IJKL**, and
 | `>>` `<<` · `>`/`<` +motion | indent / dedent (`3>>`, `>%`, visual `>`) |
 | `Ctrl+A` `Ctrl+X` | number +/- (dec, `$`/`0x` hex, `%`/`0b` bin; count multiplies) |
 | `p` `P` | paste **yank** reg after / before |
-| `Space p` `Space P` | paste **cut** reg (the `dd`+`p` move) |
+| `Space p` `Space P` | paste **cut** reg (last delete of any shape) · `dd`+`p` just works: linewise deletes reach `p` too |
 | `u` `Ctrl+R` · `.` | undo / redo · repeat last change |
 | `gcc` · `N gcc` · `gc`(visual) | toggle comment: line / N lines / selection |
 

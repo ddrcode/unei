@@ -46,7 +46,7 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `Ctrl+A` / `Ctrl+X` | increment / decrement the number under (or after) the cursor — decimal, `0x`/`$` hex, `0b`/`%` binary; keeps width and case, counts multiply (`5 Ctrl+A`) |
 | `>>` `<<`, `>`/`<` + motion | shift lines right / left by a shiftwidth (`3>>`, `>%`, `>G`); one undo step, dot-repeatable |
 | `p` `P` | paste the **yank** register after / before (char, line, or block) |
-| `Space p` / `Space P` | paste the **cut** register after / before (the `dd`+`p` line-move lives here) |
+| `Space p` / `Space P` | paste the **cut** register after / before — the last delete of any shape |
 | `gcc` | toggle line comment on the current line (`3gcc` for three lines) |
 | `u` / `Ctrl+R` | undo / redo (insert session = one unit) |
 | `.` | repeat last change (`3.` replaces the count) |
@@ -241,9 +241,12 @@ Motions extend the selection; `h` is a left motion here.
 ## Registers & system clipboard
 
 Yanks (`y`) and cuts (`d`/`c`/`x`/`s`) live in **separate registers** — a
-delete never overwrites what you copied (#10). `p` pastes the yank,
-`Space p` pastes the cut. Every yank also mirrors to the **system
-clipboard** (OSC 52); deletes never do. Terminal paste (Cmd+V, bracketed)
+charwise delete never overwrites what you copied (#10). `p` pastes the
+yank, `Space p` pastes the cut. The exception is by shape (#105): a
+**linewise** delete — `dd`, `3dd`, `dj`, `d}`, `V…d` — is a cut, not a
+discard, so it lands in *both*; `dd` then `p` moves the line, as your
+hands expect. `cc`/`S` (a change) stays cut-only. Every yank also mirrors
+to the **system clipboard** (OSC 52); deletes never do. Terminal paste (Cmd+V, bracketed)
 inserts literally in insert mode, puts charwise in normal mode, and
 replaces the selection in visual mode — never interpreted as keystrokes.
 
