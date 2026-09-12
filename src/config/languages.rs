@@ -21,6 +21,23 @@ unsafe extern "C" {
 pub const ASM6502_LANGUAGE: tree_sitter_language::LanguageFn =
     unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_asm6502) };
 
+unsafe extern "C" {
+    fn tree_sitter_just() -> *const ();
+}
+/// The justfile grammar (#108), vendored under `grammars/just` and compiled
+/// by build.rs — the published crate pins a tree-sitter unei can't link.
+pub const JUST_LANGUAGE: tree_sitter_language::LanguageFn =
+    unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_just) };
+const JUST_HIGHLIGHTS: &str = include_str!("../../grammars/just/queries/highlights.scm");
+const JUST_INJECTIONS: &str = include_str!("../../grammars/just/queries/injections.scm");
+/// Symbols of a justfile: recipes, variables, aliases, modules.
+const JUST_SYMBOLS: &str = r#"
+(recipe_header name: (identifier) @recipe)
+(assignment left: (identifier) @var)
+(alias left: (identifier) @alias)
+(module name: (identifier) @mod)
+"#;
+
 struct LangSpec {
     /// Registry name; also the key injections resolve (markdown fences name
     /// languages like `rust`, and the block grammar injects `markdown_inline`).
@@ -105,7 +122,7 @@ pub struct LangConfig {
     pub extra_pattern_start: usize,
 }
 
-static LANGUAGES: [LangSpec; 13] = [
+static LANGUAGES: [LangSpec; 14] = [
     LangSpec {
         name: "asm6502",
         aliases: &["6502", "acme"],
@@ -252,6 +269,19 @@ static LANGUAGES: [LangSpec; 13] = [
         cell: OnceLock::new(),
     },
     LangSpec {
+        name: "just",
+        aliases: &["justfile"],
+        extensions: &["just"],
+        filenames: &["justfile", "Justfile", "JUSTFILE", ".justfile", ".Justfile"],
+        language: || JUST_LANGUAGE.into(),
+        highlights_extra: "",
+        highlights: JUST_HIGHLIGHTS,
+        injections: JUST_INJECTIONS,
+        symbols: JUST_SYMBOLS,
+        textobjects: "",
+        cell: OnceLock::new(),
+    },
+    LangSpec {
         name: "python",
         aliases: &["py"],
         extensions: &["py", "pyi"],
@@ -363,6 +393,11 @@ mod tests {
         assert_eq!(p("script.sh"), Some("bash"));
         assert_eq!(p("deploy.yml"), Some("yaml"));
         assert_eq!(p("flake.nix"), Some("nix"));
+        // justfiles are found by name (any case) and by the .just extension
+        assert_eq!(p("justfile"), Some("just"));
+        assert_eq!(p("Justfile"), Some("just"));
+        assert_eq!(p(".justfile"), Some("just"));
+        assert_eq!(p("build.just"), Some("just"));
         assert_eq!(p("script.lua"), None);
         assert_eq!(p("Makefile"), None);
         assert_eq!(detect(None), None);

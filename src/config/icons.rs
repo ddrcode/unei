@@ -30,6 +30,7 @@ fn by_name(name: &str) -> Option<(char, Color)> {
         "Cargo.toml" | "Cargo.lock" => ('\u{e7a8}', rgb(222, 165, 132)), // rust
         "flake.lock" => ('\u{f313}', rgb(126, 186, 228)),                // nix
         "Makefile" | "makefile" => ('\u{e779}', rgb(110, 130, 135)),
+        "justfile" | "Justfile" | "JUSTFILE" | ".justfile" => ('\u{e779}', rgb(110, 130, 135)),
         "Dockerfile" => ('\u{f308}', rgb(76, 110, 180)),
         ".gitignore" | ".gitattributes" | ".gitmodules" => ('\u{e702}', rgb(241, 76, 40)),
         _ => return None,
