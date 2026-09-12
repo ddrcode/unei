@@ -3,43 +3,78 @@
 use unei::editor::testing::{editor_from, editor_with_buffers, feed, text};
 
 #[test]
-fn ctrl_o_returns_from_a_goto_jump() {
+fn ctrl_o_means_previous_buffer_not_previous_position() {
+    // #104: within one buffer there is no "previous buffer" to go to —
+    // the jumps are still recorded (for `''`), but Ctrl+O doesn't walk them
     let long = (1..=60).map(|i| format!("l{i}\n")).collect::<String>();
     let mut ed = editor_from(&long);
     feed(&mut ed, "5G"); // jump: records line 0
-    assert_eq!(ed.cursor.line, 4);
     feed(&mut ed, "G"); // jump: records line 4
     assert_eq!(ed.cursor.line, 59);
     feed(&mut ed, "<C-o>");
+    assert_eq!(ed.cursor.line, 59, "stays: nothing to go back to");
+    assert!(
+        ed.message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("no previous buffer")
+    );
+    feed(&mut ed, "''"); // where the last jump came from: still the mark's job
     assert_eq!(ed.cursor.line, 4);
+}
+
+#[test]
+fn ctrl_o_and_ctrl_i_walk_the_buffer_history() {
+    let mut ed = editor_with_buffers(&[
+        (
+            "a.txt",
+            "a1
+a2
+a3
+",
+        ),
+        (
+            "b.txt",
+            "b1
+b2
+b3
+",
+        ),
+        (
+            "c.txt", "c1
+",
+        ),
+    ]);
+    feed(&mut ed, "k"); // a.txt line 1
+    feed(&mut ed, " b<C-k><CR>"); // → b.txt
+    feed(&mut ed, "G"); // a within-buffer jump in b.txt: recorded, but not a stop
+    feed(&mut ed, " b<C-k><C-k><CR>"); // → c.txt
+    assert_eq!(text(&ed), "c1\n");
     feed(&mut ed, "<C-o>");
-    assert_eq!(ed.cursor.line, 0);
-    feed(&mut ed, "<C-o>"); // at oldest: stays
-    assert_eq!(ed.cursor.line, 0);
+    assert_eq!(text(&ed), "b1\nb2\nb3\n", "one press: the previous buffer");
+    assert_eq!(ed.cursor.line, 2, "at the position b.txt was left");
+    feed(&mut ed, "<C-o>");
+    assert_eq!(text(&ed), "a1\na2\na3\n", "one more: the one before");
+    assert_eq!(ed.cursor.line, 1);
+    feed(&mut ed, "<C-o>");
+    assert_eq!(text(&ed), "a1\na2\na3\n", "oldest: stays");
     feed(&mut ed, "<C-i>");
-    assert_eq!(ed.cursor.line, 4);
-    feed(&mut ed, "<C-i>"); // back to where history was entered
-    assert_eq!(ed.cursor.line, 59);
+    assert_eq!(text(&ed), "b1\nb2\nb3\n");
+    feed(&mut ed, "<Tab>"); // Tab is Ctrl+I too
+    assert_eq!(text(&ed), "c1\n", "back where history was entered");
     feed(&mut ed, "<C-i>");
-    assert_eq!(ed.cursor.line, 59);
+    assert_eq!(text(&ed), "c1\n", "newest: stays");
+    assert!(ed.message.as_ref().unwrap().text.contains("no next buffer"));
 }
 
 #[test]
-fn tab_is_jump_forward_too() {
-    let mut ed = editor_from("a\nb\nc\nd\ne\n");
-    feed(&mut ed, "G<C-o>");
-    assert_eq!(ed.cursor.line, 0);
-    feed(&mut ed, "<Tab>");
-    assert_eq!(ed.cursor.line, 4);
-}
-
-#[test]
-fn paragraph_jumps_are_recorded() {
+fn paragraph_jumps_still_feed_the_back_mark() {
     let mut ed = editor_from("a\n\nb\n\nc\n");
     feed(&mut ed, "}}");
     assert_eq!(ed.cursor.line, 3);
-    feed(&mut ed, "<C-o><C-o>");
-    assert_eq!(ed.cursor.line, 0);
+    feed(&mut ed, "''"); // the pre-jump mark, not Ctrl+O, walks positions
+    assert_eq!(ed.cursor.line, 1);
 }
 
 #[test]
@@ -60,10 +95,11 @@ fn ctrl_o_crosses_buffers() {
 fn stale_buffer_entries_are_dropped() {
     let mut ed = editor_with_buffers(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
     feed(&mut ed, " b<C-k><CR>"); // to b.txt, jump recorded from a.txt
-    feed(&mut ed, ":bd!<CR>"); // hmm: closes b.txt, back in a.txt
+    feed(&mut ed, ":bd!<CR>"); // closes b.txt, back in a.txt
     assert_eq!(text(&ed), "a\n");
     feed(&mut ed, "<C-o><C-o>"); // history may reference either; never panics
     assert_eq!(ed.buffer_count(), 1);
+    assert_eq!(text(&ed), "a\n");
 }
 
 #[test]

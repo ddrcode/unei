@@ -136,7 +136,7 @@ server (not a cargo project) the projection is the numbered source.
 | `Space s` | symbol picker — fuzzy-jump to a function / struct / … in the current file |
 | `Space g` | live grep — regex-search every line in the project, jump to the match |
 | `Ctrl+^` / `Ctrl+6` | alternate buffer |
-| `Ctrl+O` / `Ctrl+I` (`Tab`) | jumplist back / forward (crosses buffers) |
+| `Ctrl+O` / `Ctrl+I` (`Tab`) | previous / next **buffer**, at the position it was left — the jumplist walked buffer to buffer, never position to position (`''` does that) |
 | `m{a-z}` | set a mark at the cursor (per buffer) |
 | `` `{a-z} `` / `'{a-z}` | jump to a mark — exact position / first non-blank of its line |
 | `` `` `` / `''` | jump back to where the last jump started (toggles) |

@@ -63,7 +63,7 @@ fn star_searches_word_under_cursor() {
     // whole-word: skips `value` and `val2`, lands on `val` in line 2
     assert_eq!((ed.cursor.line, ed.cursor.col), (2, 11));
     assert_eq!(ed.search.count(), 2);
-    feed(&mut ed, "<C-o>"); // star recorded the jump
+    feed(&mut ed, "''"); // star recorded the jump (the back mark; Ctrl+O is buffers, #104)
     assert_eq!(ed.cursor.line, 0);
 }
 
@@ -166,8 +166,8 @@ fn search_commits_record_the_jumplist() {
     let mut ed = editor_from("one\ntwo\nfindme\n");
     feed(&mut ed, "/findme<CR>");
     assert_eq!(ed.cursor.line, 2);
-    feed(&mut ed, "<C-o>");
-    assert_eq!(ed.cursor.line, 0, "Ctrl+O returns to where / was pressed");
+    feed(&mut ed, "''");
+    assert_eq!(ed.cursor.line, 0, "'' returns to where / was pressed");
 }
 
 #[test]

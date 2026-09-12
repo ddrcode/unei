@@ -16,7 +16,7 @@ Personal quick-ref. Terse on purpose. Reminder: **navigation is IJKL**, and
 | `%` | matching `()[]{}` |
 | `Ctrl+d` `Ctrl+u` · `Ctrl+f` `Ctrl+b` | half / full page |
 | `zz` `zt` `zb` | cursor to center / top / bottom |
-| `Ctrl+o` `Ctrl+i` | jumplist back / forward |
+| `Ctrl+o` `Ctrl+i` | previous / next **buffer** (where I left it) · `''` = back to where I jumped from |
 
 ## Enter insert
 
