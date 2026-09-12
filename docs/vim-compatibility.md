@@ -37,9 +37,9 @@ the bracket pairs, and quotes — on `d`/`c`/`y` and in visual mode, plus
 **syntax-aware `f` (function) and `c` (class/type)** via tree-sitter, which
 vim needs a plugin for. (The prefix is `a`/`n`, not `a`/`i` — see *Different*.)
 
-**Marks & jumps.** `m{a-z}` set; `` `x `` / `'x`; `` `` `` / `''`;
-`Ctrl+O` / `Ctrl+I` jumplist (crossing buffers), fed by `G`/`gg`/`{`/`}`,
-search, marks, `%`, and `gf`.
+**Marks & jumps.** `m{a-z}` set; `` `x `` / `'x`; `` `` `` / `''` (the
+pre-jump position, fed by `G`/`gg`/`{`/`}`, search, marks, `%`, `gf`);
+`Ctrl+O` / `Ctrl+I` exist but mean something narrower — see Different.
 
 **Search & substitute.** Incremental `/` `?`, `n` / `N`, `*`, hlsearch with
 `:noh`, and `:s/pat/rep/[g]`. (Regex dialect and `:s` scoping differ — see
@@ -83,6 +83,7 @@ always on; `zz`/`zt`/`zb` and `scrolloff` count display rows.
 | **Opening files** | the fuzzy picker (`Ctrl+P`) or `gf` — there is no `:e path` | `:e`, `:find`, netrw, … |
 | **Formatting** | external only, on save (treefmt); no `=` or `gq` | built-in `=`, `gq`, `equalprg`, … |
 | **Long lines** | always soft-wrapped at word boundaries; no horizontal scrolling, no `nowrap` | `wrap`/`nowrap`, `linebreak`, sideways scrolling |
+| **`Ctrl+O` / `Ctrl+I`** | previous / next *buffer*, at the position it was left; jumps inside a buffer are skipped (`''` and marks cover those) | the full jumplist, position by position, several presses to leave a buffer |
 | **Highlighting** | tree-sitter only, always on | built-in regex syntax + options |
 | **Configuration** | compiled in; no `~/.vimrc`, no runtime `:map` | `.vimrc`, `:map`, `:set` at runtime |
 | **Terminal** | Kitty only; uses its keyboard protocol (instant `Esc`, distinct `Ctrl+I`/`Tab`) and curly underlines | any terminal |

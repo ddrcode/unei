@@ -44,7 +44,7 @@ fn jump_to_method_records_a_jumplist_entry() {
     feed(&mut e, "method"); // the impl method on line 3
     feed(&mut e, "<CR>");
     assert_eq!(e.cursor.line, 3);
-    feed(&mut e, "<C-o>"); // jumplist back to where we started
+    feed(&mut e, "''"); // jumplist back to where we started
     assert_eq!(e.cursor.line, 0);
 }
 

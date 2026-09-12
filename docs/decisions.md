@@ -3,6 +3,19 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-12 — `Ctrl+O` is "previous buffer", not "previous position" (ticket #104)
+
+Vim's jumplist mixes two questions — *where did I jump from* and *which
+file was I in* — into one key, so leaving a buffer by `Ctrl+O` takes as
+many presses as jumps were made inside it. The author never asks the
+first question with `Ctrl+O` (marks and `''` answer it), and asks the
+second constantly. So `Ctrl+O`/`Ctrl+I` now walk the same jumplist but
+**buffer to buffer**: entries in the current buffer are skipped, the
+landing is the position that buffer was left at. Nothing is lost — jumps
+are still recorded, the `` ` `` mark still moves — and one press means
+one buffer. `Ctrl+^` remains the two-buffer toggle. A deliberate
+divergence, listed in vim-compatibility.md.
+
 ## 2026-09-08 — The buffer list is a picker (ticket #102)
 
 The buffer list predated the picker and had become the one list in the

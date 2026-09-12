@@ -578,16 +578,29 @@ impl Editor {
         self.jump_index = self.jumplist.len();
     }
 
+    /// Drops jumplist entries whose buffer is gone, keeping `jump_index`
+    /// pointing at the same place in what remains.
+    fn prune_stale_jumps(&mut self) {
+        let alive: Vec<bool> = self
+            .jumplist
+            .iter()
+            .map(|(b, _)| self.slot_index(*b).is_some())
+            .collect();
+        let gone_before = alive[..self.jump_index.min(alive.len())]
+            .iter()
+            .filter(|a| !**a)
+            .count();
+        let mut i = 0;
+        self.jumplist.retain(|_| {
+            let keep = alive[i];
+            i += 1;
+            keep
+        });
+        self.jump_index = (self.jump_index - gone_before).min(self.jumplist.len());
+    }
+
     fn goto_jump_entry(&mut self, index: usize) {
         let (buf, cursor) = self.jumplist[index];
-        if self.slot_index(buf).is_none() {
-            // buffer no longer exists; drop the stale entry
-            self.jumplist.remove(index);
-            if self.jump_index > index {
-                self.jump_index -= 1;
-            }
-            return;
-        }
         if buf != self.current {
             let old = self.current;
             self.checkout_buffer(buf);
@@ -599,12 +612,12 @@ impl Editor {
         self.refresh_focused_view();
     }
 
-    /// `Ctrl+o` — walk back through the jumplist.
+    /// `Ctrl+o` — back to the previous *buffer* (#104): the nearest older
+    /// jumplist entry in a different buffer, at the position that buffer
+    /// was left. Entries in the current buffer are skipped — one press,
+    /// one buffer; "where did I jump from" within a buffer is `` `` ``.
     pub(crate) fn jump_back(&mut self) {
-        if self.jump_index == 0 {
-            self.msg("at oldest jump");
-            return;
-        }
+        self.prune_stale_jumps();
         if self.jump_index == self.jumplist.len() {
             // entering history: remember where we are so Ctrl+i returns
             let entry = (self.current, self.cursor);
@@ -612,18 +625,30 @@ impl Editor {
                 self.jumplist.push(entry);
             }
         }
-        self.jump_index -= 1;
-        self.goto_jump_entry(self.jump_index);
+        let target = (0..self.jump_index)
+            .rev()
+            .find(|&i| self.jumplist[i].0 != self.current);
+        match target {
+            Some(i) => {
+                self.jump_index = i;
+                self.goto_jump_entry(i);
+            }
+            None => self.msg("no previous buffer"),
+        }
     }
 
-    /// `Ctrl+i` / `Tab` — walk forward again.
+    /// `Ctrl+i` / `Tab` — forward again, to the next buffer in the history.
     pub(crate) fn jump_forward(&mut self) {
-        if self.jump_index + 1 >= self.jumplist.len() {
-            self.msg("at newest jump");
-            return;
+        self.prune_stale_jumps();
+        let target = (self.jump_index + 1..self.jumplist.len())
+            .find(|&i| self.jumplist[i].0 != self.current);
+        match target {
+            Some(i) => {
+                self.jump_index = i;
+                self.goto_jump_entry(i);
+            }
+            None => self.msg("no next buffer"),
         }
-        self.jump_index += 1;
-        self.goto_jump_entry(self.jump_index);
     }
 
     /// `Ctrl+w Ctrl+w` — cycle focus through windows in layout order.

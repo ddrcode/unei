@@ -38,7 +38,7 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - **Clipboard**: separate yank and cut registers; yanks mirror to the system clipboard (OSC 52); bracketed paste
 - **Format on save** via treefmt (project-level `treefmt.toml`; silence otherwise)
 - **Soft wrap** at word boundaries (vim `wrap` + `linebreak`), always on — no horizontal scrolling; line numbers on the first row only
-- Jumplist (`Ctrl+O`/`Ctrl+I`), dimmed inactive panels, full-width cursorline, scrolloff 15
+- `Ctrl+O`/`Ctrl+I` walk buffers (previous buffer, where you left it — not previous position), dimmed inactive panels, full-width cursorline, scrolloff 15
 
 ## Make it yours
 
