@@ -3,6 +3,24 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-12 — Linewise deletes are cuts: they reach `p` (ticket #105, amends #10)
+
+The yank/cut split (#10) predicted its own cost — "the `dd`+`p` line-move
+becomes `dd`+`Space p`" — and a week of daily use priced it: countless
+`dd` `p` reflexes pasting the wrong thing. The field found the seam the
+split missed. Intent divides by *shape*, not by operator: a **linewise**
+delete (`dd`, `3dd`, `dj`, `d}`, `V…d`) is almost always a cut — move this
+line — while a **charwise** delete (`dw`, `dnw`, `x`, `c…`) is almost
+always a discard, and the `ynw … dnw … p` annoyance the split exists for
+lives entirely on the charwise side. So linewise deletes now write both
+registers: `p` pastes them, `Space p` still means the last cut of any
+shape, and the protection stays exactly where it protects something. The
+one case handed back to vim is `yy … dd … p` pasting the deleted line,
+whose idiomatic answer — `V p`, paste over the line — already never
+clobbers here. `cc`/`S` replace text and stay cut-only; the clipboard
+still mirrors yanks only. Twenty years of `dd p` is not muscle memory
+worth fighting.
+
 ## 2026-09-12 — `Ctrl+O` is "previous buffer", not "previous position" (ticket #104)
 
 Vim's jumplist mixes two questions — *where did I jump from* and *which

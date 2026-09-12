@@ -3,30 +3,79 @@
 use unei::editor::testing::{editor_from, feed, text};
 
 #[test]
-fn deletes_do_not_clobber_the_yank() {
-    let mut ed = editor_from("keep\nnoise\ntarget\n");
-    feed(&mut ed, "yy"); // yank "keep"
-    feed(&mut ed, "kdd"); // delete "noise" — cut register only
-    feed(&mut ed, "kp"); // p pastes the YANK
-    assert_eq!(text(&ed), "keep\ntarget\nkeep\n");
+fn charwise_deletes_do_not_clobber_the_yank() {
+    // the annoyance #10 was built for: yank a word, delete another to
+    // replace it, paste — the yank must survive the delete
+    let mut ed = editor_from("keep noise target\n");
+    feed(&mut ed, "ynw"); // yank "keep" (n = inner, IJKL layout)
+    feed(&mut ed, "wdnw"); // delete "noise" — cut register only
+    feed(&mut ed, "P"); // pastes the YANK
+    assert_eq!(text(&ed), "keep keep target\n");
+    feed(&mut ed, " p"); // and the cut is still there
+    assert!(text(&ed).contains("noise"));
 }
 
 #[test]
-fn repeated_paste_after_many_deletes() {
-    // the exact annoyance from #10: paste the same thing in several places
-    let mut ed = editor_from("one\ntwo\nthree\nfour\n");
-    feed(&mut ed, "yy"); // yank "one"
-    feed(&mut ed, "kdd"); // delete two
-    feed(&mut ed, "p"); // still pastes "one"
-    feed(&mut ed, "kk"); // wait: kk = down twice
-    feed(&mut ed, "dd");
-    feed(&mut ed, "p");
+fn repeated_paste_after_many_charwise_deletes() {
+    let mut ed = editor_from("one two three four\n");
+    feed(&mut ed, "ynw"); // yank "one"
+    feed(&mut ed, "wdnw"); // delete two
+    feed(&mut ed, "P"); // still pastes "one"
+    feed(&mut ed, "wwdnw"); // delete four
+    feed(&mut ed, "P");
     let t = text(&ed);
     assert_eq!(
         t.matches("one").count(),
         3,
         "yank survived every delete: {t}"
     );
+}
+
+#[test]
+fn dd_then_p_moves_the_line() {
+    // #105: a linewise delete is a cut — the reflex `dd` … `p` works
+    let mut ed = editor_from("first\nsecond\nthird\n");
+    feed(&mut ed, "dd"); // cut "first"
+    feed(&mut ed, "kp"); // below "third"
+    assert_eq!(text(&ed), "second\nthird\nfirst\n");
+    feed(&mut ed, " p"); // Space p still holds the same cut
+    assert_eq!(text(&ed), "second\nthird\nfirst\nfirst\n");
+}
+
+#[test]
+fn linewise_cuts_of_every_shape_reach_p() {
+    let mut ed = editor_from("a\nb\nc\nd\ne\n");
+    feed(&mut ed, "2dd"); // a, b
+    feed(&mut ed, "Gp");
+    assert_eq!(text(&ed), "c\nd\ne\na\nb\n");
+    feed(&mut ed, "ggVkd"); // visual-line: c, d
+    feed(&mut ed, "Gp");
+    assert_eq!(text(&ed), "e\na\nb\nc\nd\n");
+    feed(&mut ed, "ggdk"); // linewise motion: e, a
+    feed(&mut ed, "Gp");
+    assert_eq!(text(&ed), "b\nc\nd\ne\na\n");
+}
+
+#[test]
+fn yank_then_dd_then_p_pastes_the_deleted_line_like_vim() {
+    // the one case the amended rule gives back to vim — V p (paste over
+    // the line, never clobbering) is the idiom for replacing a line
+    let mut ed = editor_from("keep\nnoise\n");
+    feed(&mut ed, "yy"); // yank "keep"
+    feed(&mut ed, "kdd"); // linewise delete: the newest cut is what p means
+    feed(&mut ed, "p");
+    assert_eq!(text(&ed), "keep\nnoise\n");
+}
+
+#[test]
+fn change_of_a_line_is_a_discard_not_a_cut() {
+    let mut ed = editor_from("keep\nold\n");
+    feed(&mut ed, "yy"); // yank "keep"
+    feed(&mut ed, "kccnew<Esc>"); // cc replaces the line: cut register only
+    feed(&mut ed, "p"); // p still pastes the yank
+    assert_eq!(text(&ed), "keep\nnew\nkeep\n");
+    feed(&mut ed, " p");
+    assert_eq!(text(&ed), "keep\nnew\nkeep\nold\n");
 }
 
 #[test]

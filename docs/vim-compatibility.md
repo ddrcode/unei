@@ -74,7 +74,7 @@ always on; `zz`/`zt`/`zb` and `scrolloff` count display rows.
 |---|---|---|
 | **Navigation** | `IJKL`; `h` = insert, `H` = insert at first non-blank | `HJKL`; `i` = insert |
 | **Inner text objects** | prefix **`n`** (`dnw`, `cn(`) | prefix `i` (`diw`) — impossible here, `i` is a motion |
-| **Registers** | two: a **yank** register (`p`/`P`) and a **cut** register (`Space p`/`Space P`). No named or numbered registers, no history | many named/numbered registers with `"x` |
+| **Registers** | two: a **yank** register (`p`/`P`) and a **cut** register (`Space p`/`Space P`); linewise deletes land in both, charwise deletes only in cut. No named or numbered registers, no history | many named/numbered registers with `"x` |
 | **System clipboard** | yanks mirror out via OSC 52; deletes never do | via `"+`/`"*` or `clipboard` option |
 | **Search dialect** | the Rust `regex` crate; smartcase always on | vim's own regex; `ignorecase`/`smartcase` options |
 | **Substitute scope** | `:s` acts on the whole file, or the visual selection — no line ranges, no `:%s` | `:s` needs a range; `:%s` for the file |
