@@ -3,6 +3,25 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-09-12 — Third-party grammars vendored as C when their crate can't be linked (ticket #108)
+
+The justfile grammar is the first third-party grammar unei couldn't take
+as a crate: `tree-sitter-just` pins `tree-sitter ~0.25` as a hard
+dependency, Cargo allows exactly one crate to link the native library, and
+unei is on 0.27 — and the published crate lacks the query files its own
+`lib.rs` includes. Rather than pin unei to an older parser core or fork the
+crate, the mechanism built for the bespoke 6502 grammar (#18) generalizes:
+copy upstream's generated `parser.c`, `scanner.c` and headers under
+`grammars/just/`, compile them in `build.rs`, expose a `LanguageFn` — no
+tree-sitter CLI, no dependency on how upstream packages Rust bindings. The
+cost is a manual update path, so the vendored directory carries the
+license and a README naming the upstream commit; a grammar changes rarely
+enough that this is the right trade for a personal editor. The
+nvim-flavoured queries are used as shipped: their captures resolve through
+the theme's dotted-prefix mapping, and their injections (bash by default,
+the shebang's language otherwise) route through the registry like markdown
+fences.
+
 ## 2026-09-12 — Linewise deletes are cuts: they reach `p` (ticket #105, amends #10)
 
 The yank/cut split (#10) predicted its own cost — "the `dd`+`p` line-move

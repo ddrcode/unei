@@ -239,3 +239,65 @@ fn non_6502_asm_stays_plain() {
     );
     assert!(spans(&ed, 1).is_empty());
 }
+
+const JUSTFILE: &str = "# build it\nset shell := [\"bash\", \"-c\"]\nname := \"unei\"\n\n# run the tests\ntest filter='':\n    cargo test {{filter}}\n    echo done\n\nalias t := test\n";
+
+#[test]
+fn justfile_is_highlighted_and_recipes_inject_bash() {
+    // #108: the vendored tree-sitter-just grammar, found by file name
+    let mut ed = editor_with("justfile", JUSTFILE);
+    assert!(ed.ensure_syntax(1));
+    assert_eq!(capture_at(&ed, 0, 0), Some("comment"));
+    assert_eq!(capture_at(&ed, 1, 0), Some("keyword"), "set");
+    assert_eq!(capture_at(&ed, 1, 15), Some("string"), "\"bash\"");
+    assert_eq!(capture_at(&ed, 2, 0), Some("variable"), "name :=");
+    assert_eq!(capture_at(&ed, 2, 5), Some("operator"), ":=");
+    assert_eq!(capture_at(&ed, 5, 0), Some("function"), "recipe name");
+    assert_eq!(capture_at(&ed, 5, 6), Some("variable.parameter"), "filter");
+    // the recipe body is bash by injection: `cargo` and `echo` are commands
+    assert_eq!(capture_at(&ed, 6, 4), Some("function"), "cargo, via bash");
+    assert_eq!(
+        capture_at(&ed, 6, 18),
+        Some("variable"),
+        "{{filter}} stays just"
+    );
+    assert_eq!(capture_at(&ed, 7, 4), Some("function"), "echo, via bash");
+    assert_eq!(capture_at(&ed, 9, 0), Some("keyword"), "alias");
+}
+
+#[test]
+fn justfile_symbols_list_recipes_variables_and_aliases() {
+    let mut ed = editor_with("justfile", JUSTFILE);
+    feed(&mut ed, " s");
+    let p = ed.file_picker.as_ref().expect("symbol picker");
+    let items: Vec<String> = p.matches.iter().map(|m| p.item(m).to_string()).collect();
+    assert!(
+        items
+            .iter()
+            .any(|i| i.starts_with("recipe") && i.ends_with("test")),
+        "{items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|i| i.starts_with("var") && i.ends_with("name")),
+        "{items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|i| i.starts_with("alias") && i.ends_with("t")),
+        "{items:?}"
+    );
+    feed(&mut ed, "test<CR>");
+    assert_eq!(ed.cursor.line, 5, "jumped to the recipe");
+}
+
+#[test]
+fn justfile_comments_toggle_with_hash() {
+    let mut ed = editor_with("justfile", "name := \"x\"\n");
+    feed(&mut ed, "gcc");
+    assert_eq!(ed.buffer.rope.to_string(), "# name := \"x\"\n");
+    feed(&mut ed, "gcc");
+    assert_eq!(ed.buffer.rope.to_string(), "name := \"x\"\n");
+}
