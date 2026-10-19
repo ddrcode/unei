@@ -17,9 +17,14 @@ fn project(name: &str) -> PathBuf {
     fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
     fs::write(dir.join("src/term.rs"), "// term\n").unwrap();
     fs::write(dir.join("docs/rules.md"), "rules\n").unwrap();
-    fs::write(dir.join(".gitignore"), "/target\n").unwrap();
+    fs::write(dir.join(".gitignore"), "/target\n/.direnv\n").unwrap();
     fs::write(dir.join("target/skip.txt"), "no\n").unwrap();
-    fs::write(dir.join(".hidden.txt"), "no\n").unwrap();
+    fs::write(dir.join(".hidden.txt"), "yes\n").unwrap();
+    fs::create_dir_all(dir.join(".direnv")).unwrap();
+    fs::write(dir.join(".direnv/profile"), "no\n").unwrap();
+    fs::create_dir_all(dir.join(".git/objects")).unwrap();
+    fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    fs::write(dir.join(".git/objects/aa"), "no\n").unwrap();
     dir
 }
 
@@ -36,14 +41,31 @@ fn visible(ed: &Editor) -> Vec<String> {
 }
 
 #[test]
-fn listing_respects_gitignore_and_hidden() {
+fn listing_shows_dotfiles_but_honours_gitignore_and_skips_dot_git() {
+    // #110: `.gitignore` and `.hidden.txt` are files one edits; `/target`
+    // and `/.direnv` are gitignored; `.git/` is never a place to open
     let (mut ed, _dir) = editor_in("listing");
     feed(&mut ed, "<C-p>");
     let items = visible(&ed);
     assert_eq!(
         items,
-        ["README.md", "docs/rules.md", "src/main.rs", "src/term.rs"]
+        [
+            ".gitignore",
+            ".hidden.txt",
+            "README.md",
+            "docs/rules.md",
+            "src/main.rs",
+            "src/term.rs"
+        ]
     );
+}
+
+#[test]
+fn dotfiles_open_from_the_picker() {
+    let (mut ed, _dir) = editor_in("dotopen");
+    feed(&mut ed, "<C-p>.gitignore<CR>");
+    assert!(ed.buffer.path.as_ref().unwrap().ends_with(".gitignore"));
+    assert!(ed.buffer.rope.to_string().starts_with("/target"));
 }
 
 #[test]
@@ -61,7 +83,7 @@ fn fuzzy_narrows_and_ranks() {
     let items = visible(&ed);
     assert_eq!(items[0], "src/term.rs");
     feed(&mut ed, "<C-u>"); // clear query restores everything
-    assert_eq!(visible(&ed).len(), 4);
+    assert_eq!(visible(&ed).len(), 6);
 }
 
 #[test]
@@ -78,15 +100,15 @@ fn enter_opens_the_selection() {
 #[test]
 fn selection_navigation_picks_lower_match() {
     let (mut ed, _dir) = editor_in("nav");
-    feed(&mut ed, "<C-p>"); // empty query: alphabetical
-    feed(&mut ed, "<Down><Down><CR>"); // third entry: src/main.rs
+    feed(&mut ed, "<C-p>"); // empty query: alphabetical (dotfiles sort first)
+    feed(&mut ed, "<Down><Down><Down><Down><CR>"); // fifth entry: src/main.rs
     assert_eq!(text(&ed), "fn main() {}\n");
 }
 
 #[test]
 fn ctrl_ik_navigate_too() {
     let (mut ed, _dir) = editor_in("ctrlik");
-    feed(&mut ed, "<C-p><C-k><C-i><C-k><C-k><CR>"); // net: third entry
+    feed(&mut ed, "<C-p><C-k><C-i><C-k><C-k><C-k><C-k><CR>"); // net: fifth entry
     assert_eq!(text(&ed), "fn main() {}\n");
 }
 

@@ -214,11 +214,7 @@ impl FilePicker {
         else {
             return; // too short, or an incomplete/invalid regex — no results
         };
-        let walker = ignore::WalkBuilder::new(&self.root)
-            .require_git(false)
-            .follow_links(false)
-            .build();
-        'walk: for entry in walker.flatten() {
+        'walk: for entry in walk(&self.root).flatten() {
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
@@ -304,15 +300,25 @@ impl FilePicker {
     }
 }
 
+/// The one walk over the working folder, for the listing and for grep:
+/// `.gitignore`/`.ignore`/git excludes honoured (in or out of a repo),
+/// dotfiles *listed* — `.gitignore` and `.envrc` are files one edits (#110)
+/// — and `.git/` itself always skipped, since without a repo check the
+/// walker would descend into it.
+fn walk(root: &Path) -> ignore::Walk {
+    ignore::WalkBuilder::new(root)
+        .require_git(false)
+        .hidden(false)
+        .follow_links(false)
+        .filter_entry(|e| e.file_name() != ".git")
+        .build()
+}
+
 /// Walks the working folder and opens the picker.
 pub fn open(ed: &mut Editor) {
     let mut items = Vec::new();
     let mut truncated = false;
-    let walker = ignore::WalkBuilder::new(ed.root())
-        .require_git(false)
-        .follow_links(false)
-        .build();
-    for entry in walker.flatten() {
+    for entry in walk(ed.root()).flatten() {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }

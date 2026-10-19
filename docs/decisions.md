@@ -315,8 +315,10 @@ clears.
 ## 2026-09-04 — File picker: nucleo + ignore, one mechanism each
 
 Fuzzy matching is nucleo (the Helix engine) and file listing is ripgrep's
-`ignore` walker (gitignore honored even outside git repos, hidden files
-skipped) — one matcher, one walker, no fallbacks. The picker is the single
+`ignore` walker (gitignore honored even outside git repos; hidden files
+were skipped at first, until #110 found that this made `.gitignore` and
+`.envrc` unopenable — dotfiles are listed now, gitignore still rules,
+`.git/` itself is always excluded) — one matcher, one walker, no fallbacks. The picker is the single
 file-opening mechanism (no `:e`); it dedupes against open buffers by
 canonical path. Launched on a directory the editor opens straight into the
 picker (resolving the ticket's TBD). Ctrl+Enter creates the queried path:
