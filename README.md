@@ -24,7 +24,7 @@ This project takes the other road. Thanks to AI-assisted development it became p
 - Vim grammar: operators `d c y` × motions × counts, `f/t` finds, undo/redo as single units, dot-repeat, registers (char / line / block), yank flash
 - **Buffers**: `Ctrl+^` alternate, a buffers picker with preview (`Space b`), vim-style numbering
 - **Splits**: vim/tmux hybrid — `Ctrl+w` chord, tmux-style resizing, zoom, layout flip; per-window statuslines
-- **Fuzzy file picker** (`Ctrl+P`): gitignore-aware listing, nucleo matching, a syntax-highlighted preview of the selected file, open-in-split, create-file-with-parents
+- **Fuzzy file picker** (`Ctrl+P`): gitignore-aware listing (dotfiles included, `.git/` never), nucleo matching, a syntax-highlighted preview of the selected file, open-in-split, create-file-with-parents
 - **Symbol picker** (`Space s`): fuzzy-jump to a function / struct / trait / … in the current file, via tree-sitter
 - **Live grep** (`Space g`): regex-search every line in the project and jump to the match — in-process (no `rg` subprocess), with a context preview
 - **Search**: incremental `/` `?`, `n`/`N`, `*`, hlsearch, `:s` substitution — one dialect, Rust regex, smartcase
