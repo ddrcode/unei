@@ -1360,35 +1360,39 @@ fn paste_register(ed: &mut Editor, reg: Register, after: bool, count: usize) {
             let end = at + text.chars().count();
             ed.cursor = motion_cursor_of_abs(ed, end.saturating_sub(1));
         }
-        Register::Block(segments) => {
-            block_paste(ed, &segments, after);
-        }
+        Register::Block { rows, width } => block_paste(ed, &rows, width, after, count),
     }
     let committed = ed.buffer.end_change();
     ed.note_change_committed(committed);
 }
 
-/// Blockwise put: each segment lands on a successive line at the cursor's
-/// display column (short lines are space-padded, missing lines created).
-fn block_paste(ed: &mut Editor, segments: &[String], after: bool) {
+/// Blockwise put (#112, vim's `do_put` for MBLOCK): each row lands on a
+/// successive line at the cursor's display column. A target shorter than
+/// the column is padded up to it; a row shorter than the block's `width`
+/// is padded to it whenever text follows, so the block stays rectangular
+/// and what sits right of it keeps its alignment; `count` repeats each row
+/// side by side. A column inside a tab splits the tab into spaces around
+/// the insertion; inside a wide char it pads before the char and pushes it
+/// right. Missing lines are created. Where nothing follows the paste the
+/// block is not padded — unei leaves no trailing whitespace, which is the
+/// one deliberate difference from vim. The cursor lands on the top-left
+/// of the pasted block.
+fn block_paste(ed: &mut Editor, rows: &[String], width: usize, after: bool, count: usize) {
+    let count = count.max(1);
     let cur_grs = line_graphemes(
         &line_content(&ed.buffer.rope, ed.cursor.line),
         OPTIONS.tabstop,
     );
-    let cell = if after {
-        cell_at_col(&cur_grs, ed.cursor.col)
-            + cur_grs
-                .iter()
-                .find(|g| g.char_off == ed.cursor.col)
-                .map(|g| g.width)
-                .unwrap_or(0)
-    } else {
-        cell_at_col(&cur_grs, ed.cursor.col)
-    };
-    for (i, segment) in segments.iter().enumerate() {
-        if segment.is_empty() {
-            continue;
-        }
+    let mut cell = cell_at_col(&cur_grs, ed.cursor.col);
+    if after {
+        cell += cur_grs
+            .iter()
+            .find(|g| g.char_off == ed.cursor.col)
+            .map(|g| g.width)
+            .unwrap_or(0);
+    }
+    let mut landed: Option<Cursor> = None;
+    for (i, row) in rows.iter().enumerate() {
         let line = ed.cursor.line + i;
         while line >= text_lines(&ed.buffer.rope) {
             let at = ed.buffer.rope.len_chars();
@@ -1396,17 +1400,57 @@ fn block_paste(ed: &mut Editor, segments: &[String], after: bool) {
         }
         let content = line_content(&ed.buffer.rope, line);
         let grs = line_graphemes(&content, OPTIONS.tabstop);
-        let width: usize = grs.iter().map(|g| g.width).sum();
-        if width < cell {
-            // pad to the block column
-            let at = ed.buffer.rope.line_to_char(line) + line_len(&ed.buffer.rope, line);
-            ed.buffer.insert(at, &" ".repeat(cell - width));
+        let line_cells: usize = grs.iter().map(|g| g.width).sum();
+        // where the block column falls on this row: (char col, spaces
+        // before, spaces after, a tab to remove, nothing follows)
+        let (textcol, before, after_pad, split_tab, shortline) = match grs
+            .iter()
+            .find(|g| g.cell < cell && cell < g.cell + g.width)
+        {
+            // inside a tab (the only blank wider than a cell): split it;
+            // inside a wide char: pad up to the column, keep the char
+            Some(g) if g.is_blank => (
+                g.char_off,
+                cell - g.cell,
+                g.cell + g.width - cell,
+                true,
+                false,
+            ),
+            Some(g) => (g.char_off, cell - g.cell, 0, false, false),
+            None if line_cells < cell => {
+                (content.chars().count(), cell - line_cells, 0, false, true)
+            }
+            None => (
+                char_col_for_cell(&grs, cell, &content),
+                0,
+                0,
+                false,
+                line_cells == cell,
+            ),
+        };
+        if row.is_empty() && shortline {
+            continue; // nothing to place and nothing to align
         }
-        let content = line_content(&ed.buffer.rope, line);
-        let grs = line_graphemes(&content, OPTIONS.tabstop);
-        let col = char_col_for_cell(&grs, cell, &content);
-        let at = ed.buffer.rope.line_to_char(line) + col;
-        ed.buffer.insert(at, segment);
+        let pad = width.saturating_sub(cells(row));
+        let mut text = " ".repeat(before);
+        for j in 0..count {
+            text.push_str(row);
+            if pad > 0 && (j + 1 < count || !shortline) {
+                text.push_str(&" ".repeat(pad));
+            }
+        }
+        text.push_str(&" ".repeat(after_pad));
+        let base = ed.buffer.rope.line_to_char(line);
+        if split_tab {
+            ed.buffer.remove(base + textcol..base + textcol + 1);
+        }
+        ed.buffer.insert(base + textcol, &text);
+        if landed.is_none() {
+            landed = Some(Cursor::new(line, textcol + before));
+        }
+    }
+    if let Some(c) = landed {
+        ed.cursor = c;
     }
 }
 
@@ -1433,7 +1477,22 @@ fn visual_block_rect(ed: &Editor) -> (usize, usize, usize, usize) {
         cell_at_col(&grs, cur.col)
     };
     let (ca, cc) = (cell_of(a), cell_of(c));
-    (l1, l2, ca.min(cc), ca.max(cc))
+    // `$` reaches to the end of every row, however long (vim's v_b_$)
+    let right = if ed.block_to_line_end() {
+        usize::MAX
+    } else {
+        ca.max(cc)
+    };
+    (l1, l2, ca.min(cc), right)
+}
+
+/// Display cells a block row occupies when pasted (tabs measured from
+/// column 0, as vim does).
+fn cells(s: &str) -> usize {
+    line_graphemes(s, OPTIONS.tabstop)
+        .iter()
+        .map(|g| g.width)
+        .sum()
 }
 
 /// Per-line char range of the block on `line`; None when the line is shorter
@@ -1510,11 +1569,24 @@ fn visual_block_operate(ed: &mut Editor, op: Op) {
             .unwrap_or_default();
         segments.push(text);
     }
+    // a `$` block is as wide as its widest row; a fixed block is as wide
+    // as selected, even where every row falls short of its right edge
+    let width = if right == usize::MAX {
+        segments.iter().map(|s| cells(s)).max().unwrap_or(0)
+    } else {
+        right - left + 1
+    };
     if op == Op::Yank {
         ed.mirror_yank_to_clipboard(&segments.join("\n"));
-        ed.yank_reg = Some(Register::Block(segments));
+        ed.yank_reg = Some(Register::Block {
+            rows: segments,
+            width,
+        });
     } else {
-        ed.cut_reg = Some(Register::Block(segments));
+        ed.cut_reg = Some(Register::Block {
+            rows: segments,
+            width,
+        });
     }
     ed.goal = None;
 
@@ -1667,9 +1739,9 @@ pub(crate) fn visual_paste_with(ed: &mut Editor, reg: Register) {
                     ed.buffer.insert(start, &format!("\n{text}"));
                     ed.cursor = motion_cursor_of_abs(ed, start + 1);
                 }
-                Register::Block(segments) => {
+                Register::Block { rows, width } => {
                     ed.cursor = motion_cursor_of_abs(ed, start);
-                    block_paste(ed, &segments, false);
+                    block_paste(ed, &rows, width, false, 1);
                 }
             }
         }
@@ -1689,7 +1761,7 @@ pub(crate) fn visual_paste_with(ed: &mut Editor, reg: Register) {
             let text = match reg {
                 Register::Line(text) => text,
                 Register::Char(text) => format!("{text}\n"),
-                Register::Block(segments) => segments.iter().fold(String::new(), |mut acc, s| {
+                Register::Block { rows, .. } => rows.iter().fold(String::new(), |mut acc, s| {
                     acc.push_str(s);
                     acc.push('\n');
                     acc
@@ -1715,7 +1787,7 @@ pub(crate) fn visual_paste_with(ed: &mut Editor, reg: Register) {
             }
             ed.cursor = Cursor::new(l1, top_left);
             match reg {
-                Register::Block(segments) => block_paste(ed, &segments, false),
+                Register::Block { rows, width } => block_paste(ed, &rows, width, false, 1),
                 Register::Char(text) => {
                     let at = abs_of(ed, ed.cursor);
                     ed.buffer.insert(at, &text);

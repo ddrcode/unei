@@ -130,12 +130,14 @@ fn v_paste_repeatedly_same_content() {
 }
 
 // block paste creating and padding lines
-// ragged block: the short line contributes an empty segment, pasted as nothing
+// ragged block: the short line contributes an empty segment — padded to the
+// block's width because text follows it, so the block stays rectangular
+// (#112; the old expectation "x" was the bug)
 golf!(
     block_paste_ragged_rows,
     "abcd\nx\nabcd\n",
     "l<C-v>kkly0P",
-    "bcabcd\nx\nbcabcd\n"
+    "bcabcd\n  x\nbcabcd\n"
 );
 
 // selection ops are one undo step

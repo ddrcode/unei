@@ -927,7 +927,12 @@ fn selection_on_line(ed: &Editor, line: usize) -> SelSpan {
                 cell_at_col(&grs, cur.col)
             };
             let (ca, cc) = (cell_of(a), cell_of(c));
-            SelSpan::Cells(ca.min(cc) as u32, ca.max(cc) as u32)
+            let right = if ed.block_to_line_end() {
+                u32::MAX // `$`: every row to its end
+            } else {
+                ca.max(cc) as u32
+            };
+            SelSpan::Cells(ca.min(cc) as u32, right)
         }
         VisualKind::Char => {
             let (first, last) = if (a.line, a.col) <= (c.line, c.col) {

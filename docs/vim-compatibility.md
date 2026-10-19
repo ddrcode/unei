@@ -47,6 +47,10 @@ pre-jump position, fed by `G`/`gg`/`{`/`}`, search, marks, `%`, `gf`);
 
 **Visual mode.** `v` `V` `Ctrl+V`; operators and `~`; `o` / `O` to swap
 ends / block corners; `p` to replace the selection; `gv` to reselect.
+Block mode follows vim's rules measured against nvim (#112): `$` reaches
+the end of every row, a ragged block pastes rectangular (shorter rows
+padded to the block's width where text follows), a tab under the paste
+column is split, `3p` repeats rows side by side.
 
 **Insert mode.** `Esc` / `Ctrl+C` / `Ctrl+[`; `Enter` copies the indent;
 `Tab`; `Backspace` / `Del`; `Ctrl+W` (delete word); `Ctrl+U` (delete to
@@ -84,6 +88,7 @@ always on; `zz`/`zt`/`zb` and `scrolloff` count display rows.
 | **Formatting** | external only, on save (treefmt); no `=` or `gq` | built-in `=`, `gq`, `equalprg`, … |
 | **Long lines** | always soft-wrapped at word boundaries; no horizontal scrolling, no `nowrap` | `wrap`/`nowrap`, `linebreak`, sideways scrolling |
 | **`Ctrl+O` / `Ctrl+I`** | previous / next *buffer*, at the position it was left; jumps inside a buffer are skipped (`''` and marks cover those) | the full jumplist, position by position, several presses to leave a buffer |
+| **Block paste onto a row with nothing after it** | not padded — unei never leaves trailing whitespace | padded to the block width |
 | **Highlighting** | tree-sitter only, always on | built-in regex syntax + options |
 | **Configuration** | compiled in; no `~/.vimrc`, no runtime `:map` | `.vimrc`, `:map`, `:set` at runtime |
 | **Terminal** | Kitty only; uses its keyboard protocol (instant `Esc`, distinct `Ctrl+I`/`Tab`) and curly underlines | any terminal |

@@ -3,6 +3,29 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-10-19 — Blockwise operations follow vim's `do_put` rules, measured (ticket #112)
+
+Drawing a pinout in markdown is the acid test for block operations, and it
+found three rules unei had never implemented. Each expectation here was
+*measured* against headless nvim rather than recalled. (1) The block
+register now carries its **width**; a paste pads a shorter — or empty —
+row to that width wherever text follows the insertion point, so the block
+stays rectangular and whatever sits right of it keeps its alignment. The
+width is the selection's, even where every row falls short of its right
+edge; a `$` block's is its widest row. (2) **`$` in block mode** reaches
+to the end of *every* row (vim's `v_b_$`): the right edge becomes
+`usize::MAX`, the goal column is already `MAX` after `$`, and yank, delete,
+change and the selection highlight all read that. (3) A paste column
+**inside a tab** splits the tab into spaces around the insertion; inside a
+wide character it pads up to the column and pushes the character right —
+vim's behaviour in both cases, keeping the block's column exact. Also
+from the same code path: `3p` repeats each row side by side, and the
+cursor lands on the top-left of the pasted block (so `.` and `x` act where
+vim's would). One deliberate difference: where *nothing* follows the paste,
+vim still pads the row to the block width; unei leaves no trailing
+whitespace, which treefmt would strip anyway. A pre-existing test encoded
+the padding bug as intended behaviour and was corrected.
+
 ## 2026-09-12 — Third-party grammars vendored as C when their crate can't be linked (ticket #108)
 
 The justfile grammar is the first third-party grammar unei couldn't take
