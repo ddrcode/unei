@@ -220,6 +220,7 @@ Motions extend the selection; `h` is a left motion here.
 | `p` | replace selection with register — **never clobbers the register** |
 | `o` / `O` | swap ends / swap block corners |
 | `v` `V` `Ctrl+V` | switch kind (same kind exits) |
+| `$` (block) | extend the block to the end of every row, however long |
 | `Esc`, `Ctrl+C` | back to normal |
 
 ## Insert mode

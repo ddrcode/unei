@@ -241,6 +241,11 @@ pub enum WinCmd {
 pub enum Register {
     Char(String),
     Line(String),
-    /// One segment per selected line (blockwise yank/delete).
-    Block(Vec<String>),
+    /// One row per selected line (blockwise yank/delete) and the block's
+    /// width in cells — a `$` block's is its widest row — so a paste can pad
+    /// shorter rows and keep the block rectangular (#112).
+    Block {
+        rows: Vec<String>,
+        width: usize,
+    },
 }

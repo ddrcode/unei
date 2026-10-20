@@ -1829,6 +1829,12 @@ impl Editor {
         }
     }
 
+    /// Whether a block selection reaches to the end of every row — `$` was
+    /// the last horizontal motion (vim's `v_b_$`, #112).
+    pub fn block_to_line_end(&self) -> bool {
+        self.goal == Some(usize::MAX)
+    }
+
     /// `gv` — reselect the last visual selection.
     pub(crate) fn reselect_visual(&mut self) {
         if let Some((kind, anchor, cursor)) = self.last_visual {
