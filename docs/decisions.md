@@ -3,6 +3,28 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-10-20 — The picker's list sizes itself to its paths; the directory reads dim (ticket #114)
+
+Daily use found the file list unreadable: the list pane was a quarter of
+the picker, clamped at its 34-cell floor on any real terminal, so every
+path in a deep tree was head-truncated to `…02/src/tree_sitter/alloc.h`
+while the preview took a hundred cells it had no use for. The reference
+the author reached for (snacks.nvim) splits half and half and dims the
+directory. Unei's rule is one sentence: **the list is as wide as its
+longest row needs, between a floor and half the picker** — measured once
+when the rows are set, so it never moves while you type; a shallow project
+keeps its big preview, a deep one gets the half. On every row holding a
+path the **directory is dimmed and the name is not**, fuzzy hits still on
+top, so the eye lands where the decision is. A row that still overflows
+keeps its first segment and its whole name (`grammars/…/tree_sitter/
+alloc.h`), with the ellipsis standing in for the middle rather than the
+start; location rows (`path:line: text`) keep their head as before. And
+a terminal too narrow for two panes no longer drops the preview: it
+**stacks** it under the list — the author called this optional, but once
+the layout is a single function it costs nothing and serves the laptop.
+The picker's geometry is now a pure function (`layout`), rendered through
+the real `ui::render` in tests, so these promises are checked on screen.
+
 ## 2026-10-19 — Blockwise operations follow vim's `do_put` rules, measured (ticket #112)
 
 Drawing a pinout in markdown is the acid test for block operations, and it
