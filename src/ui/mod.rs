@@ -454,29 +454,19 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
 
     let Some(p) = &ed.file_picker else { return };
 
-    // widen into a two-pane float (list left, preview right) when there's
-    // room and a preview to show; otherwise the list-only float (#26). Sizes
-    // scale with the terminal — a big monitor gets a big preview.
-    let show_preview = area.width >= 96 && p.preview.is_some();
-    let (w, preview_w) = if show_preview {
-        // the float spans ~80% of the width; the list takes a quarter (grep
-        // rows are longer — path:line:text — so it gets a wider slice), the
-        // preview the rest, so a wide screen pours the extra into the preview
-        let total = (area.width * 4 / 5).min(area.width.saturating_sub(4));
-        let list = if p.kind.is_location_list() {
-            (total * 2 / 5).clamp(48, 90)
-        } else {
-            (total / 4).clamp(34, 60)
-        };
-        (list, total.saturating_sub(list))
-    } else {
-        ((area.width * 3 / 5).clamp(30, 100), 0)
-    };
-    let total_w = w + preview_w;
-    // ~80% of the height, floored for small terminals, never past the edges
-    let h = (area.height * 4 / 5).clamp(8, area.height.saturating_sub(2));
-    let x = (area.width.saturating_sub(total_w)) / 2;
-    let y = area.height.saturating_sub(h) / 3;
+    // the list is as wide as its longest row needs, up to half the picker;
+    // the preview takes the rest, or sits underneath on a narrow terminal
+    // (#114). Rows wear a 3-cell marker and, in file mode, a 2-cell icon.
+    let is_files = p.kind == crate::editor::file_picker::PickerKind::Files;
+    let icon_w = if is_files { 2 } else { 0 };
+    let lay = crate::editor::file_picker::layout(
+        area.width,
+        area.height,
+        p.widest,
+        3 + icon_w,
+        p.preview.is_some(),
+    );
+    let (x, y, w, h) = lay.list;
     let rect = Rect::new(x, y, w, h);
     let inner_w = w.saturating_sub(2) as usize;
     let list_rows = h.saturating_sub(3) as usize; // border + query line
@@ -505,37 +495,26 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
         let item = p.item(m);
         let selected = row == p.selected;
         // a nerd-font file-type icon leads each row in file mode (#73)
-        let icon = (p.kind == crate::editor::file_picker::PickerKind::Files)
-            .then(|| crate::config::icons::icon_for(item));
-        let icon_w = if icon.is_some() { 2 } else { 0 };
-        // truncate long rows: files/symbols keep the tail (the filename),
-        // grep keeps the head (path:line) — shift match indices with the cut
-        let grep = p.kind.is_location_list();
-        let (shown, cut) = {
-            let max = inner_w.saturating_sub(3 + icon_w);
-            let n = item.chars().count();
-            if n <= max {
-                (item.to_string(), 0)
-            } else if grep {
-                (
-                    format!("{}…", item.chars().take(max - 1).collect::<String>()),
-                    0,
-                )
-            } else {
-                let cut = n - (max - 1);
-                (
-                    format!("…{}", item.chars().skip(cut).collect::<String>()),
-                    cut as i64 - 1, // the ellipsis occupies one slot
-                )
-            }
-        };
-        let (row_style, hit_style) = if selected {
+        let icon = is_files.then(|| crate::config::icons::icon_for(item));
+        // cut a row that still won't fit (#114): location rows keep their
+        // head, the rest keep the filename whole; `origin` maps each shown
+        // char back so hits and the directory dim land where they should
+        let max = inner_w.saturating_sub(3 + icon_w);
+        let (shown, origin) =
+            crate::editor::file_picker::fit_row(item, max, !p.kind.is_location_list());
+        // the directory reads dim so the eye lands on the name (#114)
+        let dir = crate::editor::file_picker::dir_range(item);
+        let (row_style, hit_style, dir_style) = if selected {
             let sel = Style::default()
                 .bg(palette::MODE_NORMAL)
                 .fg(palette::MODE_LABEL_FG);
-            (sel, sel.add_modifier(Modifier::BOLD | Modifier::UNDERLINED))
+            (
+                sel,
+                sel.add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                sel.add_modifier(Modifier::DIM),
+            )
         } else {
-            (float, accent)
+            (float, accent, dim)
         };
         let mut spans = vec![Span::styled(
             if selected { " ▸ " } else { "   " },
@@ -550,12 +529,21 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
             spans.push(Span::styled(format!("{glyph} "), istyle));
         }
         for (ci, ch) in shown.chars().enumerate() {
-            let orig = ci as i64 + cut;
-            let hit = orig >= 0 && m.indices.contains(&(orig as u32));
-            spans.push(Span::styled(
-                ch.to_string(),
-                if hit { hit_style } else { row_style },
-            ));
+            let orig = origin[ci];
+            let hit = orig.is_some_and(|o| m.indices.contains(&(o as u32)));
+            let in_dir = match (orig, dir) {
+                (Some(o), Some((s, e))) => o >= s && o < e,
+                (None, _) => true, // the ellipsis stands in for path
+                _ => false,
+            };
+            let style = if hit {
+                hit_style
+            } else if in_dir {
+                dir_style
+            } else {
+                row_style
+            };
+            spans.push(Span::styled(ch.to_string(), style));
         }
         let used: usize = 3 + icon_w + shown.width();
         spans.push(Span::styled(
@@ -584,14 +572,9 @@ fn draw_file_picker(f: &mut Frame, ed: &Editor, area: Rect) {
         ),
         rect,
     );
-    if show_preview {
+    if let (Some((px, py, pw, ph)), Some(preview)) = (lay.preview, p.preview.as_ref()) {
         let name = p.preview_title();
-        draw_picker_preview(
-            f,
-            p.preview.as_ref().unwrap(),
-            &name,
-            Rect::new(x + w, y, preview_w, h),
-        );
+        draw_picker_preview(f, preview, &name, Rect::new(px, py, pw, ph));
     }
 
     // terminal cursor sits in the query line

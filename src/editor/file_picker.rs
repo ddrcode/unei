@@ -17,6 +17,8 @@ use crate::core::hex::{hex_dump, is_binary};
 use crate::core::text::first_non_blank;
 use crate::editor::windows::SplitDir;
 
+use unicode_width::UnicodeWidthStr;
+
 use super::Editor;
 
 /// What the picker is picking: files to open (#26), symbols in the current
@@ -115,6 +117,138 @@ pub struct FilePicker {
     buffers: Vec<(super::BufId, Preview)>,
     /// The frame title.
     pub label: &'static str,
+    /// Display cells of the widest row, measured when the rows are set —
+    /// the list pane is sized to it (#114), and measuring per frame would
+    /// cost a walk over every row.
+    pub widest: usize,
+}
+
+/// Display cells of the widest row.
+fn widest(items: &[String]) -> usize {
+    items.iter().map(|s| s.width()).max().unwrap_or(0)
+}
+
+/// The picker's panes as (x, y, width, height).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PickerLayout {
+    pub list: (u16, u16, u16, u16),
+    pub preview: Option<(u16, u16, u16, u16)>,
+}
+
+/// Where the picker's panes go (#114), from the terminal size, the widest
+/// row (plus what each row wears: marker, icon) and whether there is a
+/// preview to show. The list is as wide as its longest row needs, between
+/// a floor and *half* the picker — paths read whole wherever they can,
+/// and the preview takes what is left. A terminal too narrow for the two
+/// side by side stacks the preview under the list rather than dropping it.
+pub fn layout(
+    area_w: u16,
+    area_h: u16,
+    widest_row: usize,
+    row_decor: usize,
+    has_preview: bool,
+) -> PickerLayout {
+    let h = (area_h * 4 / 5).clamp(8, area_h.saturating_sub(2).max(8));
+    let need = (widest_row + row_decor + 2).min(u16::MAX as usize) as u16; // + borders
+    if has_preview && area_w >= 96 {
+        let total = (area_w * 4 / 5).min(area_w.saturating_sub(4));
+        let list = need.clamp(34, (total / 2).max(34));
+        let x = area_w.saturating_sub(total) / 2;
+        let y = area_h.saturating_sub(h) / 3;
+        return PickerLayout {
+            list: (x, y, list, h),
+            preview: Some((x + list, y, total - list, h)),
+        };
+    }
+    if has_preview && area_h >= 24 {
+        // stacked: full-width rows, the preview underneath
+        let w = area_w.saturating_sub(4).max(30).min(area_w);
+        let list_h = (h * 2 / 5).max(8);
+        let x = area_w.saturating_sub(w) / 2;
+        let y = area_h.saturating_sub(h) / 3;
+        return PickerLayout {
+            list: (x, y, w, list_h),
+            preview: Some((x, y + list_h, w, h - list_h)),
+        };
+    }
+    let w = (area_w * 3 / 5).clamp(30, 100).min(area_w);
+    PickerLayout {
+        list: (
+            area_w.saturating_sub(w) / 2,
+            area_h.saturating_sub(h) / 3,
+            w,
+            h,
+        ),
+        preview: None,
+    }
+}
+
+/// A row cut to `max` cells, with the original char index of every shown
+/// char (None for the ellipsis) so fuzzy hits and the dimmed directory can
+/// be mapped onto it. Location rows keep their head (`path:line:` is the
+/// point); everything else keeps its tail — the filename whole, and the
+/// first path segment too when it fits: `grammars/…/tree_sitter/alloc.h`
+/// rather than `…02/src/tree_sitter/alloc.h` (#114).
+pub fn fit_row(item: &str, max: usize, keep_tail: bool) -> (String, Vec<Option<usize>>) {
+    let chars: Vec<char> = item.chars().collect();
+    let n = chars.len();
+    if n <= max {
+        return (item.to_string(), (0..n).map(Some).collect());
+    }
+    if max < 2 {
+        return ("…".to_string(), vec![None]);
+    }
+    let (a, b) = if !keep_tail {
+        (max - 1, n)
+    } else {
+        let name_start = chars.iter().rposition(|&c| c == '/').map_or(0, |i| i + 1);
+        let first_seg = chars.iter().position(|&c| c == '/').map(|i| i + 1);
+        let name_len = n - name_start;
+        match first_seg {
+            // "head/…/tail": the tail starts at a segment boundary and
+            // holds at least "/name"
+            Some(h) if h < name_start && h + 2 + name_len <= max => {
+                let mut b = n - (max - h - 1);
+                while chars[b] != '/' {
+                    b += 1;
+                }
+                (h, b)
+            }
+            _ => (0, n - (max - 1)),
+        }
+    };
+    let mut shown = String::with_capacity(max * 2);
+    let mut origin = Vec::with_capacity(max);
+    for (i, c) in chars.iter().enumerate().take(a) {
+        shown.push(*c);
+        origin.push(Some(i));
+    }
+    shown.push('…');
+    origin.push(None);
+    for (i, c) in chars.iter().enumerate().skip(b) {
+        shown.push(*c);
+        origin.push(Some(i));
+    }
+    (shown, origin)
+}
+
+/// The directory part of the path in a row — char range up to and
+/// including its last slash — for dimming, so the name stands out (#114).
+/// The path is the first blank-delimited token holding a slash, cut at a
+/// colon (`path:line:` rows); rows without a slash have none.
+pub fn dir_range(item: &str) -> Option<(usize, usize)> {
+    let chars: Vec<char> = item.chars().collect();
+    let slash = chars.iter().position(|&c| c == '/')?;
+    let start = chars[..slash]
+        .iter()
+        .rposition(|c| c.is_whitespace())
+        .map_or(0, |i| i + 1);
+    let end = chars[slash..]
+        .iter()
+        .position(|&c| c.is_whitespace() || c == ':')
+        .map_or(chars.len(), |i| slash + i);
+    let last = chars[start..end].iter().rposition(|&c| c == '/')?;
+    Some((start, start + last + 1))
 }
 
 impl FilePicker {
@@ -252,6 +386,7 @@ impl FilePicker {
                 }
             }
         }
+        self.widest = widest(&self.items);
     }
 
     fn refilter(&mut self) {
@@ -345,7 +480,9 @@ pub fn open(ed: &mut Editor) {
         accents: Vec::new(),
         buffers: Vec::new(),
         label: " files ",
+        widest: 0,
     };
+    picker.widest = widest(&picker.items);
     picker.refilter();
     ed.file_picker = Some(picker);
 }
@@ -368,7 +505,9 @@ pub fn open_grep(ed: &mut Editor) {
         accents: Vec::new(),
         buffers: Vec::new(),
         label: " grep ",
+        widest: 0,
     };
+    picker.widest = widest(&picker.items);
     picker.refilter();
     ed.file_picker = Some(picker);
 }
@@ -411,7 +550,9 @@ pub fn open_symbols(ed: &mut Editor) {
         accents: Vec::new(),
         buffers: Vec::new(),
         label: " symbols ",
+        widest: 0,
     };
+    picker.widest = widest(&picker.items);
     picker.refilter();
     ed.file_picker = Some(picker);
 }
@@ -443,7 +584,9 @@ pub fn open_locations(ed: &mut Editor, label: &'static str, rows: Vec<LocationRo
         accents,
         buffers: Vec::new(),
         label,
+        widest: 0,
     };
+    picker.widest = widest(&picker.items);
     picker.refilter();
     ed.file_picker = Some(picker);
 }
@@ -487,7 +630,9 @@ pub fn open_buffers(ed: &mut Editor) {
         accents: Vec::new(),
         buffers,
         label: " buffers ",
+        widest: 0,
     };
+    picker.widest = widest(&picker.items);
     picker.refilter();
     picker.selected = current;
     picker.refresh_preview();
@@ -848,5 +993,77 @@ mod tests {
         assert!(!valid_new_path("/etc/passwd"));
         assert!(!valid_new_path("../outside.txt"));
         assert!(!valid_new_path("docs/../../outside.txt"));
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn the_list_is_as_wide_as_its_longest_row_up_to_half() {
+        // 140 cols: the float is 112 wide; a 39-cell path plus marker,
+        // icon and borders needs 46 — it gets exactly that, not the floor
+        let l = layout(140, 40, 39, 5, true);
+        assert_eq!(l.list.2, 46);
+        assert_eq!(l.preview.unwrap().2, 112 - 46);
+        // a shallow project keeps the floor, and a big preview
+        assert_eq!(layout(140, 40, 10, 5, true).list.2, 34);
+        // deep paths stop at half the picker
+        assert_eq!(layout(140, 40, 120, 5, true).list.2, 56);
+        // the panes sit side by side on one row
+        let (lx, ly, lw, lh) = l.list;
+        let (px, py, _, ph) = l.preview.unwrap();
+        assert_eq!((px, py, ph), (lx + lw, ly, lh));
+    }
+
+    #[test]
+    fn a_narrow_terminal_stacks_the_preview_under_the_list() {
+        let l = layout(80, 40, 60, 5, true);
+        let (lx, ly, lw, lh) = l.list;
+        let (px, py, pw, ph) = l.preview.unwrap();
+        assert_eq!(lw, 76, "full-width rows");
+        assert_eq!((px, pw), (lx, lw));
+        assert_eq!(py, ly + lh, "preview directly below");
+        assert!(ph >= 6 && lh >= 8);
+        // too short to stack: list only, as before
+        assert_eq!(layout(80, 16, 60, 5, true).preview, None);
+        // nothing to preview: list only, whatever the size
+        assert_eq!(layout(140, 40, 60, 5, false).preview, None);
+    }
+
+    #[test]
+    fn fit_row_keeps_the_first_segment_and_the_whole_name() {
+        let item = "grammars/asm6502/src/tree_sitter/alloc.h";
+        let (s, o) = fit_row(item, 30, true);
+        assert_eq!(s, "grammars/…/tree_sitter/alloc.h");
+        assert_eq!(s.chars().count(), 30);
+        assert_eq!(o[0], Some(0));
+        assert_eq!(o[9], None, "the ellipsis maps to nothing");
+        assert_eq!(o[10], Some(20), "the tail starts at a slash");
+        assert_eq!(*o.last().unwrap(), Some(39));
+        // too tight for a head: the tail alone, name still whole
+        assert_eq!(fit_row(item, 12, true).0, "…ter/alloc.h");
+        // fits: untouched, identity map
+        let (s, o) = fit_row("src/main.rs", 30, true);
+        assert_eq!(s, "src/main.rs");
+        assert_eq!(o, (0..11).map(Some).collect::<Vec<_>>());
+        // location rows keep their head
+        assert_eq!(
+            fit_row("src/a.rs:12: let x = 1;", 10, false).0,
+            "src/a.rs:…"
+        );
+        // no slash at all: plain tail
+        assert_eq!(fit_row("abcdefghij", 5, true).0, "…ghij");
+    }
+
+    #[test]
+    fn dir_range_finds_the_path_in_every_row_shape() {
+        assert_eq!(dir_range("src/editor/mod.rs"), Some((0, 11)));
+        assert_eq!(dir_range("README.md"), None, "no directory");
+        assert_eq!(dir_range("src/a.rs:12: let x = 1;"), Some((0, 4)));
+        assert_eq!(dir_range("E src/main.rs:1: bad thing"), Some((2, 6)));
+        assert_eq!(dir_range(" 1 % src/core/text.rs [+]"), Some((5, 14)));
+        assert_eq!(dir_range("fn     name"), None);
     }
 }
