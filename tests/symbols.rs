@@ -64,3 +64,42 @@ fn no_symbols_for_plain_text() {
     assert!(e.file_picker.is_none());
     assert!(e.message.as_ref().unwrap().text.contains("no symbol"));
 }
+
+const SV_SRC: &str = "package pkg;\n  typedef logic [7:0] byte_t;\n  localparam int N = 4;\n  function automatic int add(input int a, b);\n    return a + b;\n  endfunction\nendpackage\n\nclass Foo;\n  task run();\n  endtask\nendclass\n\nmodule top #(parameter int W = 8) (input logic clk);\n  sub u_sub (.clk(clk));\nendmodule\n";
+
+#[test]
+fn systemverilog_symbols_are_units_routines_types_and_params() {
+    // pkg, byte_t, N, add, Foo, run, top, W — instances, ports and routine
+    // arguments are not symbols
+    let mut e = ed("top.sv", SV_SRC);
+    feed(&mut e, "<Space>s");
+    assert_eq!(e.file_picker.as_ref().unwrap().matches.len(), 8);
+    // rows are "<kind>  <name>", so a kind tag narrows to that kind
+    for (kind, count) in [
+        ("param", 2),
+        ("module", 1),
+        ("task", 1),
+        ("fn", 1),
+        ("type", 1),
+        ("pkg", 1),
+        ("class", 1),
+    ] {
+        let mut e = ed("top.sv", SV_SRC);
+        feed(&mut e, "<Space>s");
+        feed(&mut e, kind);
+        assert_eq!(
+            e.file_picker.as_ref().unwrap().matches.len(),
+            count,
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn systemverilog_symbol_jump() {
+    let mut e = ed("top.sv", SV_SRC);
+    feed(&mut e, "<Space>s");
+    feed(&mut e, "run<CR>");
+    assert!(e.file_picker.is_none());
+    assert_eq!(e.cursor.line, 9); // task run();
+}

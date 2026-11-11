@@ -162,8 +162,12 @@ pub fn document_symbols(rope: &Rope, lang: &str) -> Vec<Symbol> {
 /// (`"function"` or `"class"`) enclosing the cursor. Returns a char range
 /// `start..end` and whether it is linewise. `around` gives the whole node
 /// (linewise); inner gives its body's content, braces and surrounding
-/// whitespace trimmed (linewise when it spans lines, else charwise). `None`
-/// when the language has no text-object query or nothing encloses the cursor.
+/// whitespace trimmed — linewise when it spans lines or sits on lines of its
+/// own between the delimiters (vim's rule for `i{`), else charwise. A body
+/// is either one `.inner` node (Rust's block) or, for grammars without one,
+/// what lies between an `.open` node and a `.close` keyword (SystemVerilog's
+/// `…; items endmodule`, #117). `None` when the language has no text-object
+/// query or nothing encloses the cursor.
 pub fn text_object(
     rope: &Rope,
     lang: &str,
@@ -182,37 +186,78 @@ pub fn text_object(
     let names = query.capture_names();
     let around_cap = format!("{want}.around");
     let inner_cap = format!("{want}.inner");
+    let open_cap = format!("{want}.open");
+    let close_cap = format!("{want}.close");
     let mut best: Option<(usize, usize)> = None; // innermost enclosing @around
     let mut inners: Vec<(usize, usize)> = Vec::new();
+    let mut opens: Vec<(usize, usize)> = Vec::new();
+    let mut closes: Vec<(usize, usize)> = Vec::new();
     let mut qc = QueryCursor::new();
     let mut it = qc.matches(query, tree.root_node(), source.as_bytes());
     while let Some(m) = it.next() {
         for cap in m.captures() {
             let (s, e) = (cap.node.start_byte(), cap.node.end_byte());
-            if names[cap.index as usize] == around_cap {
+            let name = names[cap.index as usize];
+            if name == around_cap {
                 if s <= cursor_byte
                     && cursor_byte < e
                     && best.is_none_or(|(bs, be)| e - s < be - bs)
                 {
                     best = Some((s, e));
                 }
-            } else if names[cap.index as usize] == inner_cap {
+            } else if name == inner_cap {
                 inners.push((s, e));
+            } else if name == open_cap {
+                opens.push((s, e));
+            } else if name == close_cap {
+                closes.push((s, e));
             }
         }
     }
     let (as_, ae) = best?;
-    let (s, e) = if around {
-        (as_, ae)
+    let (s, e, own_lines) = if around {
+        (as_, ae, false)
     } else {
-        // the chosen node's own body is the largest inner within its span
-        let (bs, be) = inners
-            .into_iter()
-            .filter(|&(s, e)| s >= as_ && e <= ae)
-            .max_by_key(|&(s, e)| e - s)?;
-        trim_body(&source, bs, be)?
+        let within = |&(s, e): &(usize, usize)| s >= as_ && e <= ae;
+        // a delimited body: the earliest open and the latest close inside the
+        // chosen node bound its items — nested declarations' own delimiters
+        // lie strictly between them
+        let delimited = match (
+            opens.iter().filter(|c| within(c)).map(|&(_, e)| e).min(),
+            closes.iter().filter(|c| within(c)).map(|&(s, _)| s).max(),
+        ) {
+            (Some(o), Some(c)) if o <= c => Some((o, c)),
+            _ => None,
+        };
+        // otherwise the chosen node's own body is the largest inner within
+        // its span; either way note which lines the delimiters sit on
+        let (bs, be, open_line, close_line) = match delimited {
+            Some((o, c)) => (
+                o,
+                c,
+                rope.byte_to_line(o.saturating_sub(1)),
+                rope.byte_to_line(c),
+            ),
+            None => {
+                let (bs, be) = inners
+                    .into_iter()
+                    .filter(|c| within(c))
+                    .max_by_key(|&(s, e)| e - s)?;
+                (
+                    bs,
+                    be,
+                    rope.byte_to_line(bs),
+                    rope.byte_to_line(be.saturating_sub(1)),
+                )
+            }
+        };
+        let (s, e) = trim_body(&source, bs, be)?;
+        let own_lines =
+            open_line < rope.byte_to_line(s) && rope.byte_to_line(e.saturating_sub(1)) < close_line;
+        (s, e, own_lines)
     };
-    let linewise = around || rope.byte_to_line(s) != rope.byte_to_line(e.saturating_sub(1));
+    let linewise =
+        around || own_lines || rope.byte_to_line(s) != rope.byte_to_line(e.saturating_sub(1));
     Some((rope.byte_to_char(s), rope.byte_to_char(e), linewise))
 }
 

@@ -301,3 +301,81 @@ fn justfile_comments_toggle_with_hash() {
     feed(&mut ed, "gcc");
     assert_eq!(ed.buffer.rope.to_string(), "name := \"x\"\n");
 }
+
+/// A package, a class, a parameterised module with an instance and a routine,
+/// an interface — the shapes the SystemVerilog symbol and text-object queries
+/// rely on (#117).
+const SV_FIXTURE: &str = "package pkg;
+  typedef logic [7:0] byte_t;
+  localparam int N = 4;
+  function automatic int add(input int a, b);
+    return a + b;
+  endfunction
+  task automatic wait_n(int n);
+    repeat (n) @(posedge clk);
+  endtask
+endpackage
+
+class Foo extends Bar;
+  int x;
+  function new();
+    x = 1;
+  endfunction
+endclass
+
+module top #(parameter int W = 8) (input logic clk, output logic [W-1:0] q);
+  logic [W-1:0] cnt;
+  always_ff @(posedge clk) begin
+    cnt <= cnt + 1'b1;
+  end
+  sub #(.W(W)) u_sub (.clk(clk), .q(q));
+  function int f(int a);
+    f = a;
+  endfunction
+endmodule : top
+
+interface bus_if;
+  logic valid;
+endinterface
+";
+
+#[test]
+fn systemverilog_fixture_parses_without_errors() {
+    let config = unei::config::languages::config_for("systemverilog").expect("registered");
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&config.language).unwrap();
+    let tree = parser.parse(SV_FIXTURE, None).unwrap();
+    assert!(
+        !tree.root_node().has_error(),
+        "{}",
+        tree.root_node().to_sexp()
+    );
+}
+
+#[test]
+fn systemverilog_basics_are_captured() {
+    let src = "module top #(parameter int W = 8) (input logic clk);\n    logic [W-1:0] cnt;\n    always_ff @(posedge clk) cnt <= cnt + 1'b1; // tick\nendmodule\n";
+    let mut ed = editor_with("top.sv", src);
+    assert!(ed.ensure_syntax(1));
+    let lines: Vec<&str> = src.lines().collect();
+    let at = |ed: &Editor, line: usize, needle: &str| {
+        let col = lines[line].find(needle).unwrap() as u32;
+        capture_at(ed, line, col)
+    };
+    assert_eq!(at(&ed, 0, "module"), Some("keyword"));
+    assert_eq!(at(&ed, 0, "top"), Some("constructor")); // unit names, as nvim
+    assert_eq!(at(&ed, 0, "parameter"), Some("keyword"));
+    assert_eq!(at(&ed, 0, "int"), Some("type"));
+    assert_eq!(at(&ed, 0, "W = 8"), Some("variable.parameter"));
+    assert_eq!(at(&ed, 0, "8)"), Some("number"));
+    assert_eq!(at(&ed, 0, "input"), Some("keyword"));
+    assert_eq!(at(&ed, 0, "logic"), Some("type"));
+    assert_eq!(at(&ed, 0, "clk"), Some("variable"));
+    assert_eq!(at(&ed, 1, "cnt"), Some("variable"));
+    assert_eq!(at(&ed, 2, "always_ff"), Some("keyword"));
+    assert_eq!(at(&ed, 2, "@"), Some("attribute"));
+    assert_eq!(at(&ed, 2, "posedge"), Some("keyword"));
+    assert_eq!(at(&ed, 2, "1'b1"), Some("number"));
+    assert_eq!(at(&ed, 2, "// tick"), Some("comment"));
+    assert_eq!(at(&ed, 3, "endmodule"), Some("keyword"));
+}

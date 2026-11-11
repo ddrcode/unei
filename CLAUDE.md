@@ -10,7 +10,7 @@ Unei is a bespoke, personal vim-like terminal editor written in Rust (Ratatui as
 
 The crate is a library (headless, fully testable editor core) plus a thin binary (`src/main.rs`, terminal event loop):
 
-- `config/` — ALL configuration, compiled in: options (`OPTIONS`), the key→command tables (`keymap.rs` — the IJKL layout lives here), chrome palette, capture→style theme (`theme.rs`), and the tree-sitter grammar registry (`languages.rs` — add a language here + a Cargo dep; when a grammar crate can't be linked — it pins another `tree-sitter` — vendor its generated C under `grammars/<name>/` and compile it in `build.rs`, as asm6502 and just do). Behavior changes happen here first.
+- `config/` — ALL configuration, compiled in: options (`OPTIONS`), the key→command tables (`keymap.rs` — the IJKL layout lives here), chrome palette, capture→style theme (`theme.rs`), and the tree-sitter grammar registry (`languages.rs` — add a language here + a Cargo dep; when a grammar crate can't be linked — it pins another `tree-sitter` — vendor its generated C under `grammars/<name>/` and compile it in `build.rs`, as asm6502, just and systemverilog do). Behavior changes happen here first.
 - `syntax.rs` — per-buffer highlight cache driving tree-sitter core directly (deterministic injection layering; see docs/decisions.md). Version-checked full reparse, lazily at render.
 - `preview/` — window projections (`gp`): `markdown.rs` renders a buffer as the reader sees it, `rust.rs` as the compiler sees it (rust-analyzer's hints and diagnostics written into the text). Each is a pure function of (buffer, inputs, width) → styled lines + a LineMap back to source; the editor caches per buffer and re-derives lazily at render.
 - `core/` — buffer (ropey rope + snapshot undo + newline invariant), grapheme/width-aware text helpers, motion resolution (`motion.rs` returns target + linewise/inclusive/exclusive kind), shared command enums.
@@ -52,4 +52,5 @@ Standard Cargo workflow:
 - Lint: `cargo clippy`
 - Format: `cargo fmt`
 - Mutation testing: `cargo mutants` (output in `mutants.out*/`, gitignored)
+- Parse tree of a file through the grammar registry (field names, anonymous nodes, timings, error count — what a query needs to see): `cargo run --release --example parse_tree -- <file> [depth]`
 - Hot-path timings: `cargo run --release --example perf_probe` (min of a few runs; compare before/after — measure before touching the build profile or a hot path, see docs/decisions.md under ticket #90)

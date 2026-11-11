@@ -3,6 +3,48 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-11-11 — SystemVerilog: the full grammar, vendored; bodies by delimiter (ticket #117)
+
+The first language the author needed that unei lacked (retro-v, a RISC-V
+homebrew on an ECP5 board). Two grammars exist: tree-sitter's own
+`tree-sitter-verilog` (last commit 2024, ABI 14, no queries) and Gonzalo
+Larumbe's `tree-sitter-systemverilog` (IEEE 1800-2023, ~3000 tests, what
+nvim-treesitter, helix and Emacs ship). The latter, as C under `grammars/`
+— its crate pins tree-sitter 0.25, the #108 route. Its cost is a 65 MB
+`parser.c`, so it was measured before being taken: 3.5 s to compile at any
+optimisation level (1.3 GB of compiler memory), +23 MB on the binary (the
+release build goes 9.7 → 32.9 MB), ~3 MB in git once compressed; and
+parse+highlight of a 3 000-line file takes 25 ms in release against 15 ms
+for a Rust file of the same size — inside the full-reparse budget the
+editor already lives in. A hand-written "highlighting-grade" grammar would
+have been smaller and perpetually incomplete; the real one makes modules,
+classes and routines *nodes*, and nodes are what symbols and text objects
+are made of. The queries are nvim-treesitter's, not upstream's: upstream's
+leave bare literals uncoloured, nvim's resolve fully through the theme's
+dotted-prefix mapping (design-unit names read as types, parameters as
+parameters, `always_ff` as a keyword). Verilog-2005 files (`.v`, `.vh`) get
+the same grammar — SystemVerilog is its superset — and the one construct it
+cannot follow is an instantiation whose type is a macro (picorv32's
+`` `PICORV32_REGS cpuregs (…) `` yields nine ERROR nodes in 3 049 lines;
+everything else colours).
+
+The text-object engine (#78) learns a second body shape. Rust has a block
+node, so `nf`'s inner is one `.inner` capture; SystemVerilog has no body
+node at all — items sit between the header's `;` and `endmodule` /
+`endfunction`. Rather than enumerate forty item kinds per design unit, a
+query may declare the delimiters: `.open` (the node before the items) and
+`.close` (the keyword after them); the earliest open and the latest close
+inside the chosen node bound its inner, so nested declarations' own
+delimiters never confuse it. While there, the linewise rule follows vim's
+`i{`: a body on lines of its own is linewise even when it is a single line,
+so `dnf` on a one-statement function leaves the header and the `end`
+keyword and no blank indentation — for Rust too (a change of behaviour,
+tested).
+
+Deliberately not here: a language server (#118 — slang-server, surveyed
+there), indentation rules (unei follows the file's), formatting (treefmt +
+`verible-verilog-format`, external by rule).
+
 ## 2026-10-20 — The picker's list sizes itself to its paths; the directory reads dim (ticket #114)
 
 Daily use found the file list unreadable: the list pane was a quarter of

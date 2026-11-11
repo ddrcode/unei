@@ -1,0 +1,2 @@
+# generated parsers: no textual diffs (65 MB for systemverilog), folded on GitHub
+grammars/*/src/parser.c -diff linguist-generated=true
