@@ -41,6 +41,7 @@ fn by_ext(ext: &str) -> (char, Color) {
     match ext {
         "rs" => ('\u{e7a8}', rgb(222, 165, 132)),
         "s" | "asm" => ('\u{f2db}', rgb(108, 128, 134)), // a chip, fittingly
+        "sv" | "svh" | "v" | "vh" => ('\u{f035b}', rgb(1, 152, 51)), // verilog, as devicons
         "toml" => ('\u{e615}', rgb(157, 66, 33)),
         "yaml" | "yml" => ('\u{e615}', rgb(109, 128, 134)),
         "json" => ('\u{e60b}', rgb(203, 203, 65)),
@@ -74,6 +75,7 @@ mod tests {
     fn resolves_by_extension_and_name() {
         assert_eq!(icon_for("src/main.rs").0, '\u{e7a8}');
         assert_eq!(icon_for("boot.s").0, '\u{f2db}');
+        assert_eq!(icon_for("hdl/blink.sv").0, '\u{f035b}');
         assert_eq!(icon_for("Cargo.toml").0, '\u{e7a8}'); // name beats .toml
         assert_eq!(icon_for("notes.toml").0, '\u{e615}');
         assert_eq!(icon_for(".gitignore").0, '\u{e702}'); // dotfile by name

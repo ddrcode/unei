@@ -68,14 +68,14 @@ After an operator (`d` `c` `y`) or in visual mode, `a` (around) or `n`
 | `p` | paragraph (linewise) |
 | `(` `)` `b`, `{` `}` `B`, `[` `]`, `<` `>` | bracket pair — inner or including the brackets |
 | `"` `'` `` ` `` | quoted string on the line |
-| `f` | **function** — via tree-sitter (`daf` deletes it, `caf` rewrites it, `vaf` selects it); `nf` is the body |
-| `c` | **class / type** — impl, struct, enum, union, trait, mod (`dac`, `vnc`, …) |
+| `f` | **function** — via tree-sitter (`daf` deletes it, `caf` rewrites it, `vaf` selects it); `nf` is the body. Rust functions; SystemVerilog functions and tasks |
+| `c` | **class / type** — impl, struct, enum, union, trait, mod (`dac`, `vnc`, …); SystemVerilog module, interface, program, package, class, checker — `nc` is everything between the header and the `end…` keyword |
 
 `a` is around (includes the brackets/quotes, or a word's trailing space);
 `n` is inner. Counts extend words and paragraphs (`d2nw`). A bare `a`/`n`
 outside this context keeps its normal meaning (append / next match). `f`/`c`
 are **syntax-aware** (tree-sitter): the cursor can be anywhere inside the
-function or type. Rust for now.
+function or type. Rust and SystemVerilog.
 
 ### Mode changes
 
@@ -271,7 +271,7 @@ no `:e {path}` — files open through the picker.
 
 - **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes. The list is as wide as its longest path needs, up to half the picker, so paths read whole (#114); the directory part is dimmed so the eye lands on the name, and a path that still won't fit keeps its first segment and its name — `grammars/…/tree_sitter/alloc.h`. A **preview pane** shows the selected file's head, syntax-highlighted (scroll-free — open it for more; binary/empty files are noted): beside the list on a wide terminal, underneath it on a narrow one.
 - **Buffers** (`Space b`) — the same picker over the open buffers: `:ls`-style rows, a preview of each buffer's own text (unsaved edits included), fuzzy filtering; `Enter` switches, `Ctrl+V`/`Ctrl+X` open in a split, `Ctrl+D` closes the selected buffer (refused with a message when it has unsaved changes; the list stays open either way).
-- **Symbol picker** (`Space s`) — the current file's definitions from tree-sitter (functions, structs, enums, traits, impls, …); type to fuzzy-filter (typing a kind like `fn` narrows to those), `Enter` jumps and records the jumplist. Rust (items) and justfiles (recipes, variables, aliases, modules); conservative by design.
+- **Symbol picker** (`Space s`) — the current file's definitions from tree-sitter (functions, structs, enums, traits, impls, …); type to fuzzy-filter (typing a kind like `fn` narrows to those), `Enter` jumps and records the jumplist. Rust (items), SystemVerilog (modules, interfaces, programs, packages, classes, checkers, functions, tasks, typedefs, parameters) and justfiles (recipes, variables, aliases, modules); conservative by design.
 
 - **Live grep** (`Space g`) — regex-search every line across the project, in-process (the `ignore` walker + unei's own smartcase regex — no `rg` subprocess). Starts empty; from two characters on, each keystroke re-searches. Rows read `path:line: text` with the match accented; the preview shows the hit in context with its line washed. `Enter` opens the file at the match (records the jumplist), `Ctrl+V`/`Ctrl+X` into a split. Capped at 500 matches for responsiveness.
 - **Code actions** — `i`/`k` select, `Enter` applies, `Esc`/`q` dismiss.

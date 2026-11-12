@@ -38,6 +38,64 @@ const JUST_SYMBOLS: &str = r#"
 (module name: (identifier) @mod)
 "#;
 
+unsafe extern "C" {
+    fn tree_sitter_systemverilog() -> *const ();
+}
+/// The SystemVerilog grammar (#117): Gonzalo M. Larumbe's IEEE 1800-2023
+/// parser, vendored under `grammars/systemverilog` and compiled by build.rs
+/// (its crate pins tree-sitter 0.25). Queries are nvim-treesitter's.
+pub const SYSTEMVERILOG_LANGUAGE: tree_sitter_language::LanguageFn =
+    unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_systemverilog) };
+const SV_HIGHLIGHTS: &str = include_str!("../../grammars/systemverilog/queries/highlights.scm");
+const SV_INJECTIONS: &str = include_str!("../../grammars/systemverilog/queries/injections.scm");
+/// Symbols of a SystemVerilog file: design units, packages, classes,
+/// routines, typedefs and parameters — the kind tag is what the picker shows.
+const SV_SYMBOLS: &str = r#"
+(module_ansi_header name: (simple_identifier) @module)
+(module_nonansi_header name: (simple_identifier) @module)
+(interface_ansi_header name: (simple_identifier) @iface)
+(interface_nonansi_header name: (simple_identifier) @iface)
+(program_ansi_header name: (simple_identifier) @prog)
+(program_nonansi_header name: (simple_identifier) @prog)
+(package_declaration name: (simple_identifier) @pkg)
+(class_declaration name: (simple_identifier) @class)
+(interface_class_declaration name: (simple_identifier) @class)
+(checker_declaration name: (simple_identifier) @check)
+(function_body_declaration name: (simple_identifier) @fn)
+(task_body_declaration name: (simple_identifier) @task)
+(type_declaration type_name: (simple_identifier) @type)
+(param_assignment (simple_identifier) @param)
+(type_assignment name: (simple_identifier) @param)
+(property_declaration name: (simple_identifier) @prop)
+(sequence_declaration name: (simple_identifier) @seq)
+(covergroup_declaration name: (simple_identifier) @covgrp)
+"#;
+/// SystemVerilog text objects (#78): routines are `function` objects, design
+/// units and classes are `class` objects. The grammar has no body node —
+/// items sit between the header's `;` and the `end…` keyword — so the inner
+/// is declared by its delimiters: `.open` (the node before the items) and
+/// `.close` (the keyword after them).
+const SV_TEXTOBJECTS: &str = r#"
+(function_declaration) @function.around
+(function_body_declaration ";" @function.open "endfunction" @function.close)
+(task_declaration) @function.around
+(task_body_declaration ";" @function.open "endtask" @function.close)
+(module_declaration) @class.around
+(module_declaration [(module_ansi_header) (module_nonansi_header)] @class.open "endmodule" @class.close)
+(interface_declaration) @class.around
+(interface_declaration [(interface_ansi_header) (interface_nonansi_header)] @class.open "endinterface" @class.close)
+(program_declaration) @class.around
+(program_declaration [(program_ansi_header) (program_nonansi_header)] @class.open "endprogram" @class.close)
+(package_declaration) @class.around
+(package_declaration ";" @class.open "endpackage" @class.close)
+(class_declaration) @class.around
+(class_declaration ";" @class.open "endclass" @class.close)
+(interface_class_declaration) @class.around
+(interface_class_declaration ";" @class.open "endclass" @class.close)
+(checker_declaration) @class.around
+(checker_declaration ";" @class.open "endchecker" @class.close)
+"#;
+
 struct LangSpec {
     /// Registry name; also the key injections resolve (markdown fences name
     /// languages like `rust`, and the block grammar injects `markdown_inline`).
@@ -122,7 +180,7 @@ pub struct LangConfig {
     pub extra_pattern_start: usize,
 }
 
-static LANGUAGES: [LangSpec; 14] = [
+static LANGUAGES: [LangSpec; 15] = [
     LangSpec {
         name: "asm6502",
         aliases: &["6502", "acme"],
@@ -307,6 +365,19 @@ static LANGUAGES: [LangSpec; 14] = [
         textobjects: "",
         cell: OnceLock::new(),
     },
+    LangSpec {
+        name: "systemverilog",
+        aliases: &["verilog", "sv"],
+        extensions: &["sv", "svh", "v", "vh"],
+        filenames: &[],
+        language: || SYSTEMVERILOG_LANGUAGE.into(),
+        highlights_extra: "",
+        highlights: SV_HIGHLIGHTS,
+        injections: SV_INJECTIONS,
+        symbols: SV_SYMBOLS,
+        textobjects: SV_TEXTOBJECTS,
+        cell: OnceLock::new(),
+    },
 ];
 
 /// Longest dotted-prefix match: `keyword.control` falls back to `keyword`.
@@ -398,6 +469,11 @@ mod tests {
         assert_eq!(p("Justfile"), Some("just"));
         assert_eq!(p(".justfile"), Some("just"));
         assert_eq!(p("build.just"), Some("just"));
+        // SystemVerilog by its four extensions; Verilog files share the grammar
+        assert_eq!(p("hdl/blink.sv"), Some("systemverilog"));
+        assert_eq!(p("defs.svh"), Some("systemverilog"));
+        assert_eq!(p("picorv32.v"), Some("systemverilog"));
+        assert_eq!(p("timescale.vh"), Some("systemverilog"));
         assert_eq!(p("script.lua"), None);
         assert_eq!(p("Makefile"), None);
         assert_eq!(detect(None), None);
@@ -418,12 +494,14 @@ mod tests {
             "nix",
             "python",
             "css",
+            "systemverilog",
         ] {
             assert!(config_for(name).is_some(), "{name} must build");
         }
         assert!(config_for("cobol").is_none());
         assert!(config_for("js").is_some()); // alias
         assert!(config_for("py").is_some());
+        assert!(config_for("verilog").is_some()); // macro bodies inject by this name
     }
 
     #[test]

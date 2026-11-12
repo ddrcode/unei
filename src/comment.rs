@@ -22,7 +22,7 @@ pub fn line_comment(buffer: &Buffer) -> Option<String> {
         return crate::lens::asm_line_comment(buffer.rope.lines().map(|l| l.to_string()).take(5));
     }
     let token = match languages::detect(Some(path))? {
-        "rust" | "javascript" => "//",
+        "rust" | "javascript" | "systemverilog" => "//",
         "yaml" | "toml" | "bash" | "nix" | "python" | "just" => "#",
         _ => return None,
     };
@@ -54,6 +54,7 @@ mod tests {
         assert_eq!(line_comment(&buf("a.py", "")).as_deref(), Some("#"));
         assert_eq!(line_comment(&buf("justfile", "")).as_deref(), Some("#"));
         assert_eq!(line_comment(&buf("a.js", "")).as_deref(), Some("//"));
+        assert_eq!(line_comment(&buf("top.sv", "")).as_deref(), Some("//"));
         // no line-comment syntax
         assert_eq!(line_comment(&buf("a.json", "")), None);
         assert_eq!(line_comment(&buf("a.css", "")), None);
