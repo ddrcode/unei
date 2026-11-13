@@ -88,12 +88,13 @@ function or type. Rust and SystemVerilog.
 | `v` `V` `Ctrl+V` | visual char / line / block |
 | `:` | command line |
 
-### Preview (markdown, Rust)
+### Preview (markdown, Rust, CSV)
 
 | Keys | Action |
 |---|---|
-| `gp` | toggle the window between source and its projection: markdown as the reader sees it, Rust as the compiler sees it |
+| `gp` | toggle the window between source and its projection: markdown as the reader sees it, Rust as the compiler sees it, CSV as the spreadsheet shows it |
 | in preview: `i`/`k`, `Ctrl+D/U/F/B`, `g`/`G` | navigate the projection |
+| in a table preview: `j`/`l`, `0`/`$` | scroll by column — one column left/right, first/last column; the gutter stays, a dim `‹` marks hidden columns |
 | in preview: `Enter` | jump to the source at the mapped line |
 | in preview: `h` | jump to the source **and start editing** (insert mode) |
 | in preview: `Esc` | back to source view |
@@ -116,6 +117,17 @@ each diagnostic's full message under its line. Line numbers are the
 source's. Annotations belong to a revision: edit the source and they drop
 out until rust-analyzer has seen the new text, then return. Without a
 server (not a cargo project) the projection is the numbered source.
+
+The **CSV projection** — the spreadsheet's view, for `.csv` and `.tsv` —
+is the file as a grid: one row per record, columns at their natural width
+(at most half the pane each; a clipped cell ends in `…`), a bold header
+over a `─┼─` rule, numeric columns right-aligned, every row numbered with
+its source line. The header stays pinned while the body scrolls, and the
+status line counts columns (`col 3/18`). Quoted fields, `""` escapes,
+delimiters and newlines inside quotes are understood — a multi-line cell
+shows on one row with `⏎` and jumps to its first line; the delimiter is
+sniffed from the header line among `,` `;` tab `|` (a `.tsv` is always
+tab); a UTF-8 byte-order mark and CRLF line ends are tolerated.
 
 ### Search
 

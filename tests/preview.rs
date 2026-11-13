@@ -124,7 +124,7 @@ fn gp_refuses_file_types_without_a_projection() {
             .as_ref()
             .unwrap()
             .text
-            .contains("markdown and rust")
+            .contains("markdown, rust and csv")
     );
 }
 
