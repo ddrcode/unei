@@ -46,6 +46,7 @@ fn by_ext(ext: &str) -> (char, Color) {
         "yaml" | "yml" => ('\u{e615}', rgb(109, 128, 134)),
         "json" => ('\u{e60b}', rgb(203, 203, 65)),
         "md" | "markdown" => ('\u{e73e}', rgb(81, 154, 186)),
+        "csv" | "tsv" => ('\u{e64a}', rgb(137, 224, 81)), // delimited data, as devicons
         "nix" => ('\u{f313}', rgb(126, 186, 228)),
         "lock" => ('\u{f023}', rgb(187, 187, 187)),
         "sh" | "bash" | "zsh" | "fish" => ('\u{f489}', rgb(77, 90, 94)),
@@ -76,6 +77,7 @@ mod tests {
         assert_eq!(icon_for("src/main.rs").0, '\u{e7a8}');
         assert_eq!(icon_for("boot.s").0, '\u{f2db}');
         assert_eq!(icon_for("hdl/blink.sv").0, '\u{f035b}');
+        assert_eq!(icon_for("pcb/bom.csv").0, '\u{e64a}');
         assert_eq!(icon_for("Cargo.toml").0, '\u{e7a8}'); // name beats .toml
         assert_eq!(icon_for("notes.toml").0, '\u{e615}');
         assert_eq!(icon_for(".gitignore").0, '\u{e702}'); // dotfile by name
