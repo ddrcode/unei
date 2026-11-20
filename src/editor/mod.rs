@@ -2258,6 +2258,13 @@ impl Editor {
         }
     }
 
+    /// `expandtab` for the current buffer: the option, unless its language is
+    /// written with hard tabs (a Makefile's recipes must start with one).
+    pub fn expandtab(&self) -> bool {
+        crate::config::OPTIONS.expandtab
+            && !crate::config::languages::hard_tabs(self.buffer.path.as_deref())
+    }
+
     /// `gcc` — toggle line comment on the current line and `count-1` below.
     pub(crate) fn toggle_comment_lines(&mut self, count: usize) {
         let last = self.buffer.rope.len_lines().saturating_sub(1);

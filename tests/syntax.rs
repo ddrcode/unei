@@ -302,6 +302,77 @@ fn justfile_comments_toggle_with_hash() {
     assert_eq!(ed.buffer.rope.to_string(), "name := \"x\"\n");
 }
 
+/// A Makefile the way the author's projects write them: a variable, the
+/// phony list, a rule with a recipe that reads make's variables, a
+/// conditional.
+const MAKEFILE: &str = "# build\nCC := gcc\n.PHONY: all clean\nall: main.o\n\t$(CC) -o $@ main.o\n\t@echo \"done\"\nifeq ($(DEBUG),1)\nCFLAGS += -g\nendif\n";
+
+#[test]
+fn makefile_is_highlighted_and_recipes_inject_bash() {
+    let mut ed = editor_with("Makefile", MAKEFILE);
+    assert!(ed.ensure_syntax(1));
+    assert_eq!(capture_at(&ed, 0, 0), Some("comment"));
+    assert_eq!(capture_at(&ed, 1, 0), Some("string.special"), "CC");
+    assert_eq!(capture_at(&ed, 1, 3), Some("operator"), ":=");
+    assert_eq!(capture_at(&ed, 1, 6), None, "a value is plain");
+    assert_eq!(capture_at(&ed, 2, 0), Some("keyword"), ".PHONY");
+    assert_eq!(
+        capture_at(&ed, 2, 8),
+        Some("function"),
+        "all, listed by .PHONY"
+    );
+    assert_eq!(capture_at(&ed, 3, 0), Some("function"), "all:");
+    assert_eq!(capture_at(&ed, 3, 3), Some("operator"), ":");
+    assert_eq!(capture_at(&ed, 3, 5), None, "prerequisites are plain");
+    // the recipe: make's references keep make's colours, the rest is bash
+    assert_eq!(capture_at(&ed, 4, 1), Some("operator"), "$(");
+    assert_eq!(capture_at(&ed, 4, 3), Some("string.special"), "CC in $(CC)");
+    assert_eq!(capture_at(&ed, 4, 10), Some("variable.builtin"), "$@");
+    assert_eq!(capture_at(&ed, 5, 1), Some("punctuation"), "@ silences");
+    assert_eq!(capture_at(&ed, 5, 2), Some("function"), "echo, via bash");
+    assert_eq!(capture_at(&ed, 5, 7), Some("string"), "\"done\", via bash");
+    assert_eq!(capture_at(&ed, 6, 0), Some("keyword"), "ifeq");
+    assert_eq!(capture_at(&ed, 6, 8), Some("string.special"), "DEBUG");
+    assert_eq!(capture_at(&ed, 7, 0), Some("string.special"), "CFLAGS");
+    assert_eq!(capture_at(&ed, 7, 7), Some("operator"), "+=");
+    assert_eq!(capture_at(&ed, 8, 0), Some("keyword"), "endif");
+}
+
+#[test]
+fn makefile_symbols_are_targets_and_variables() {
+    let mut ed = editor_with("Makefile", MAKEFILE);
+    feed(&mut ed, " s");
+    let p = ed.file_picker.as_ref().expect("symbol picker");
+    let items: Vec<String> = p.matches.iter().map(|m| p.item(m).to_string()).collect();
+    assert!(
+        items
+            .iter()
+            .any(|i| i.starts_with("target") && i.ends_with("all")),
+        "{items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|i| i.starts_with("var") && i.ends_with("CFLAGS")),
+        "{items:?}"
+    );
+    assert!(
+        !items.iter().any(|i| i.ends_with(".PHONY")),
+        "special targets are directives, not symbols: {items:?}"
+    );
+    feed(&mut ed, "all<CR>");
+    assert_eq!(ed.cursor.line, 3, "jumped to the rule");
+}
+
+#[test]
+fn makefile_comments_toggle_with_hash() {
+    let mut ed = editor_with("Makefile", "CC := gcc\n");
+    feed(&mut ed, "gcc");
+    assert_eq!(ed.buffer.rope.to_string(), "# CC := gcc\n");
+    feed(&mut ed, "gcc");
+    assert_eq!(ed.buffer.rope.to_string(), "CC := gcc\n");
+}
+
 /// A package, a class, a parameterised module with an instance and a routine,
 /// an interface — the shapes the SystemVerilog symbol and text-object queries
 /// rely on (#117).

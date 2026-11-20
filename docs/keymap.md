@@ -44,7 +44,7 @@ The tables live in `src/config/keymap.rs` as data. Leader is **Space**.
 | `~` | toggle case |
 | `J` / `gJ` | join lines (with / without a space at the seam) |
 | `Ctrl+A` / `Ctrl+X` | increment / decrement the number under (or after) the cursor — decimal, `0x`/`$` hex, `0b`/`%` binary; keeps width and case, counts multiply (`5 Ctrl+A`) |
-| `>>` `<<`, `>`/`<` + motion | shift lines right / left by a shiftwidth (`3>>`, `>%`, `>G`); one undo step, dot-repeatable |
+| `>>` `<<`, `>`/`<` + motion | shift lines right / left by a shiftwidth (`3>>`, `>%`, `>G`) — by a tab in a Makefile; one undo step, dot-repeatable |
 | `p` `P` | paste the **yank** register after / before (char, line, or block) |
 | `Space p` / `Space P` | paste the **cut** register after / before — the last delete of any shape |
 | `gcc` | toggle line comment on the current line (`3gcc` for three lines) |
@@ -244,7 +244,7 @@ Motions extend the selection; `h` is a left motion here.
 | with the popup open: `Enter` / `Tab` | accept the selected candidate |
 | with the popup open: `Ctrl+E` | dismiss (keep typing); `Esc` dismisses and leaves insert |
 | `Enter` | new line, copying the current indent |
-| `Tab` | spaces to the next 4-column stop |
+| `Tab` | spaces to the next 4-column stop — a hard tab in a Makefile, whose recipes demand one |
 | `Backspace` / `Del` | delete back / forward (joins lines at edges) |
 | `Ctrl+W` | delete word back |
 | `Ctrl+T` / `Ctrl+D` | indent / dedent the current line |
@@ -283,7 +283,7 @@ no `:e {path}` — files open through the picker.
 
 - **File picker** — type to filter; `Ctrl+I`/`Ctrl+K` or arrows select; `Enter` opens, `Ctrl+V`/`Ctrl+X` open in vertical/horizontal split; `Ctrl+Enter` creates the typed path (parents included); `Ctrl+U` clears; `Esc` closes. The list is as wide as its longest path needs, up to half the picker, so paths read whole (#114); the directory part is dimmed so the eye lands on the name, and a path that still won't fit keeps its first segment and its name — `grammars/…/tree_sitter/alloc.h`. A **preview pane** shows the selected file's head, syntax-highlighted (scroll-free — open it for more; binary/empty files are noted): beside the list on a wide terminal, underneath it on a narrow one.
 - **Buffers** (`Space b`) — the same picker over the open buffers: `:ls`-style rows, a preview of each buffer's own text (unsaved edits included), fuzzy filtering; `Enter` switches, `Ctrl+V`/`Ctrl+X` open in a split, `Ctrl+D` closes the selected buffer (refused with a message when it has unsaved changes; the list stays open either way).
-- **Symbol picker** (`Space s`) — the current file's definitions from tree-sitter (functions, structs, enums, traits, impls, …); type to fuzzy-filter (typing a kind like `fn` narrows to those), `Enter` jumps and records the jumplist. Rust (items), SystemVerilog (modules, interfaces, programs, packages, classes, checkers, functions, tasks, typedefs, parameters) and justfiles (recipes, variables, aliases, modules); conservative by design.
+- **Symbol picker** (`Space s`) — the current file's definitions from tree-sitter (functions, structs, enums, traits, impls, …); type to fuzzy-filter (typing a kind like `fn` narrows to those), `Enter` jumps and records the jumplist. Rust (items), SystemVerilog (modules, interfaces, programs, packages, classes, checkers, functions, tasks, typedefs, parameters) justfiles (recipes, variables, aliases, modules) and Makefiles (targets, variables); conservative by design.
 
 - **Live grep** (`Space g`) — regex-search every line across the project, in-process (the `ignore` walker + unei's own smartcase regex — no `rg` subprocess). Starts empty; from two characters on, each keystroke re-searches. Rows read `path:line: text` with the match accented; the preview shows the hit in context with its line washed. `Enter` opens the file at the match (records the jumplist), `Ctrl+V`/`Ctrl+X` into a split. Capped at 500 matches for responsiveness.
 - **Code actions** — `i`/`k` select, `Enter` applies, `Esc`/`q` dismiss.

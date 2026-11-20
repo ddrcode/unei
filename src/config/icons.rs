@@ -29,7 +29,7 @@ fn by_name(name: &str) -> Option<(char, Color)> {
     Some(match name {
         "Cargo.toml" | "Cargo.lock" => ('\u{e7a8}', rgb(222, 165, 132)), // rust
         "flake.lock" => ('\u{f313}', rgb(126, 186, 228)),                // nix
-        "Makefile" | "makefile" => ('\u{e779}', rgb(110, 130, 135)),
+        "Makefile" | "makefile" | "GNUmakefile" => ('\u{e779}', rgb(110, 130, 135)),
         "justfile" | "Justfile" | "JUSTFILE" | ".justfile" => ('\u{e779}', rgb(110, 130, 135)),
         "Dockerfile" => ('\u{f308}', rgb(76, 110, 180)),
         ".gitignore" | ".gitattributes" | ".gitmodules" => ('\u{e702}', rgb(241, 76, 40)),
@@ -50,6 +50,7 @@ fn by_ext(ext: &str) -> (char, Color) {
         "nix" => ('\u{f313}', rgb(126, 186, 228)),
         "lock" => ('\u{f023}', rgb(187, 187, 187)),
         "sh" | "bash" | "zsh" | "fish" => ('\u{f489}', rgb(77, 90, 94)),
+        "mk" | "mak" => ('\u{e779}', rgb(110, 130, 135)), // make fragments
         "js" | "mjs" | "cjs" => ('\u{e74e}', rgb(203, 203, 65)),
         "ts" => ('\u{e628}', rgb(81, 154, 186)),
         "html" | "htm" => ('\u{e736}', rgb(227, 76, 38)),
@@ -78,6 +79,8 @@ mod tests {
         assert_eq!(icon_for("boot.s").0, '\u{f2db}');
         assert_eq!(icon_for("hdl/blink.sv").0, '\u{f035b}');
         assert_eq!(icon_for("pcb/bom.csv").0, '\u{e64a}');
+        assert_eq!(icon_for("GNUmakefile").0, '\u{e779}');
+        assert_eq!(icon_for("platforms/virt.mk").0, '\u{e779}');
         assert_eq!(icon_for("Cargo.toml").0, '\u{e7a8}'); // name beats .toml
         assert_eq!(icon_for("notes.toml").0, '\u{e615}');
         assert_eq!(icon_for(".gitignore").0, '\u{e702}'); // dotfile by name

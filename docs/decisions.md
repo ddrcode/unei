@@ -3,6 +3,46 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-11-20 — Makefiles: nvim's query re-ordered for first-wins; a tab is the language's, not an option
+
+The grammar is the `tree-sitter-make` crate — it depends only on
+`tree-sitter-language`, so unlike just and SystemVerilog it links as a
+crate. Its bundled query is not used: it is written in nvim-treesitter's
+legacy capture names (`@conditional`, `@include`, `@exception`) that the
+theme's dotted-prefix mapping cannot resolve — `ifeq`/`endif` would render
+plain — and it never colours a rule's target, the one thing a Makefile is
+about. unei's own query (`grammars/make/queries/`, after nvim-treesitter's
+current one) is in the theme's vocabulary and *ordered for the engine's
+first-wins ties*: the specific pattern (`.PHONY` as a keyword, a built-in
+variable) precedes the general one (a target, a variable) — the reverse of
+nvim's last-wins order. A variable reads the same colour where it is
+defined and where it is used (`CC = gcc`, `$(CC)`); automatic variables
+(`$@`, `$<`) are `variable.builtin`, make's `self`; values and
+prerequisites stay plain, so a Makefile reads as calm as it does in nvim.
+
+Recipe lines inject bash, as nvim does, and that exposed a gap in the
+engine: it handed an injection the content node's *whole* range, so bash
+would have parsed `$(CC)` as a command substitution and painted `CC` as a
+command. Injections now follow the semantics the queries are written for:
+the content node minus its named children unless the pattern sets
+`injection.include-children` (Rust's macro token trees do), and a layer
+paints only inside its own ranges, so make's `$@` survives inside a bash
+string. Markdown gains from the same fix — a fenced block or paragraph
+inside a blockquote no longer feeds its `> ` prefixes to the injected
+language. The known cosmetic cost is nvim's too: a recipe that starts with
+a variable (`$(CC) -c $<`) shows bash the fragment ` -c ` and bash calls
+`-c` the command.
+
+Indentation: a recipe line must begin with a tab, so in a Makefile `Tab`
+inserts one and `>`/`<`/`Ctrl+T`/`Ctrl+D` shift by one — whatever
+`OPTIONS.expandtab` says. That is a `hard_tabs` fact on the registry
+entry, not a new option: it is the language's requirement, as vim's
+`ftplugin/make.vim` sets `noexpandtab`. What was *not* added is vim's
+`indent/make.vim` behaviour of indenting the line after a rule header by a
+tab on `Enter`: the rules say the editor follows the current indentation
+and never computes it, so after `all: main.o` the recipe's tab is one `Tab`
+away; after a recipe line, `Enter` carries the tab as it always did.
+
 ## 2026-11-13 — CSV: the table as the spreadsheet shows it; wide tables scroll, they do not shrink (#39 phase 3)
 
 Phase 3 of the preview ticket, pulled forward by practice: PCB work means

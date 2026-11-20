@@ -895,9 +895,10 @@ fn linewise_op(ed: &mut Editor, op: Op, l1: usize, l2: usize) {
 }
 
 /// `>`/`<` (and `>>`/`<<`, `>motion`, visual `>`): shift lines `l1..=l2` by
-/// one shiftwidth, preserving tabs-vs-spaces per `expandtab`, in a single
-/// undo step. Blank lines are left untouched. Cursor lands on the first
-/// non-blank of the first shifted line (vim).
+/// one shiftwidth, preserving tabs-vs-spaces per the buffer's `expandtab`
+/// (off in a Makefile), in a single undo step. Blank lines are left
+/// untouched. Cursor lands on the first non-blank of the first shifted line
+/// (vim).
 fn indent_lines(ed: &mut Editor, l1: usize, l2: usize, right: bool, steps: usize) {
     ed.buffer.begin_change(ed.cursor);
     let mut changed = false;
@@ -931,7 +932,7 @@ fn shift_one(ed: &mut Editor, line: usize, right: bool, steps: usize) -> bool {
     if new_cols == cur_cols {
         return false;
     }
-    let new_indent = make_indent(new_cols, OPTIONS.expandtab, OPTIONS.tabstop);
+    let new_indent = make_indent(new_cols, ed.expandtab(), OPTIONS.tabstop);
     let base = ed.buffer.rope.line_to_char(line);
     let old_chars = indent.chars().count();
     ed.buffer.remove(base..base + old_chars);
@@ -954,7 +955,7 @@ pub(crate) fn insert_shift(ed: &mut Editor, right: bool) {
     if new_cols == cur_cols {
         return;
     }
-    let new_indent = make_indent(new_cols, OPTIONS.expandtab, OPTIONS.tabstop);
+    let new_indent = make_indent(new_cols, ed.expandtab(), OPTIONS.tabstop);
     let base = ed.buffer.rope.line_to_char(line);
     let old_chars = indent.chars().count();
     let new_chars = new_indent.chars().count();

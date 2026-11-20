@@ -96,6 +96,19 @@ const SV_TEXTOBJECTS: &str = r#"
 (checker_declaration ";" @class.open "endchecker" @class.close)
 "#;
 
+/// The Makefile grammar: the `tree-sitter-make` crate (it depends only on
+/// `tree-sitter-language`, so it links), with unei's own queries under
+/// `grammars/make/queries/` — the crate's use capture names the theme does
+/// not know and leave a rule's target plain (see docs/decisions.md).
+const MAKE_HIGHLIGHTS: &str = include_str!("../../grammars/make/queries/highlights.scm");
+const MAKE_INJECTIONS: &str = include_str!("../../grammars/make/queries/injections.scm");
+/// Symbols of a Makefile: rule targets (the `.PHONY`-style directives
+/// aside) and variables.
+const MAKE_SYMBOLS: &str = r#"
+((rule (targets (word) @target)) (#not-match? @target "^\\."))
+(variable_assignment name: (word) @var)
+"#;
+
 struct LangSpec {
     /// Registry name; also the key injections resolve (markdown fences name
     /// languages like `rust`, and the block grammar injects `markdown_inline`).
@@ -120,6 +133,10 @@ struct LangSpec {
     /// `@function.around` / `@class.around` and their bodies as
     /// `@function.inner` / `@class.inner`, for `af`/`nf`, `ac`/`nc`.
     textobjects: &'static str,
+    /// Written with hard tabs — `Tab` inserts one, `>` shifts by one —
+    /// whatever `OPTIONS.expandtab` says: a Makefile's recipe lines must
+    /// start with a tab.
+    hard_tabs: bool,
     cell: OnceLock<LangConfig>,
 }
 
@@ -180,7 +197,7 @@ pub struct LangConfig {
     pub extra_pattern_start: usize,
 }
 
-static LANGUAGES: [LangSpec; 15] = [
+static LANGUAGES: [LangSpec; 16] = [
     LangSpec {
         name: "asm6502",
         aliases: &["6502", "acme"],
@@ -192,6 +209,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -205,6 +223,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: tree_sitter_rust::INJECTIONS_QUERY,
         symbols: RUST_SYMBOLS,
         textobjects: RUST_TEXTOBJECTS,
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -218,6 +237,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: tree_sitter_md::INJECTION_QUERY_BLOCK,
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -231,6 +251,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: tree_sitter_md::INJECTION_QUERY_INLINE,
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -246,6 +267,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -259,6 +281,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -272,6 +295,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -285,6 +309,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: tree_sitter_javascript::INJECTIONS_QUERY,
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -298,6 +323,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: tree_sitter_html::INJECTIONS_QUERY,
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -311,6 +337,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -324,6 +351,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: tree_sitter_nix::INJECTIONS_QUERY,
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -337,6 +365,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: JUST_INJECTIONS,
         symbols: JUST_SYMBOLS,
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -350,6 +379,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -363,6 +393,7 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: "",
         symbols: "",
         textobjects: "",
+        hard_tabs: false,
         cell: OnceLock::new(),
     },
     LangSpec {
@@ -376,6 +407,21 @@ static LANGUAGES: [LangSpec; 15] = [
         injections: SV_INJECTIONS,
         symbols: SV_SYMBOLS,
         textobjects: SV_TEXTOBJECTS,
+        hard_tabs: false,
+        cell: OnceLock::new(),
+    },
+    LangSpec {
+        name: "make",
+        aliases: &["makefile", "mk"],
+        extensions: &["mk", "mak"],
+        filenames: &["Makefile", "makefile", "GNUmakefile"],
+        language: || tree_sitter_make::LANGUAGE.into(),
+        highlights_extra: "",
+        highlights: MAKE_HIGHLIGHTS,
+        injections: MAKE_INJECTIONS,
+        symbols: MAKE_SYMBOLS,
+        textobjects: "",
+        hard_tabs: true,
         cell: OnceLock::new(),
     },
 ];
@@ -440,6 +486,11 @@ pub fn detect(path: Option<&Path>) -> Option<&'static str> {
         .map(|spec| spec.name)
 }
 
+/// Whether a file's language is written with hard tabs (`LangSpec::hard_tabs`).
+pub fn hard_tabs(path: Option<&Path>) -> bool {
+    detect(path).is_some_and(|name| LANGUAGES.iter().any(|s| s.name == name && s.hard_tabs))
+}
+
 /// The lazily compiled configuration for a registered language; also the
 /// resolver used for injections.
 pub fn config_for(name: &str) -> Option<&'static LangConfig> {
@@ -474,8 +525,14 @@ mod tests {
         assert_eq!(p("defs.svh"), Some("systemverilog"));
         assert_eq!(p("picorv32.v"), Some("systemverilog"));
         assert_eq!(p("timescale.vh"), Some("systemverilog"));
+        // Makefiles by their three names, fragments by extension
+        assert_eq!(p("Makefile"), Some("make"));
+        assert_eq!(p("sub/makefile"), Some("make"));
+        assert_eq!(p("GNUmakefile"), Some("make"));
+        assert_eq!(p("platforms/virt.mk"), Some("make"));
+        assert_eq!(p("rules.MAK"), Some("make"));
+        assert_eq!(p("Makefile.in"), None, "an autoconf template is not one");
         assert_eq!(p("script.lua"), None);
-        assert_eq!(p("Makefile"), None);
         assert_eq!(detect(None), None);
     }
 
@@ -495,6 +552,7 @@ mod tests {
             "python",
             "css",
             "systemverilog",
+            "make",
         ] {
             assert!(config_for(name).is_some(), "{name} must build");
         }
@@ -509,5 +567,16 @@ mod tests {
         assert_eq!(theme_index("keyword"), theme_index("keyword.control"));
         assert!(theme_index("totally.unknown").is_none());
         assert!(theme_index("none").is_some());
+    }
+
+    #[test]
+    fn hard_tabs_are_a_fact_of_the_language() {
+        let p = |s: &str| hard_tabs(Some(Path::new(s)));
+        assert!(p("Makefile"));
+        assert!(p("common.mk"));
+        assert!(!p("main.rs"));
+        assert!(!p("justfile"), "just takes any indentation");
+        assert!(!p("unknown.xyz"));
+        assert!(!hard_tabs(None));
     }
 }
