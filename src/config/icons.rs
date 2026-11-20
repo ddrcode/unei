@@ -42,6 +42,7 @@ fn by_ext(ext: &str) -> (char, Color) {
         "rs" => ('\u{e7a8}', rgb(222, 165, 132)),
         "s" | "asm" => ('\u{f2db}', rgb(108, 128, 134)), // a chip, fittingly
         "sv" | "svh" | "v" | "vh" => ('\u{f035b}', rgb(1, 152, 51)), // verilog, as devicons
+        "lpf" => ('\u{f034e}', rgb(1, 152, 51)), // a map marker: the pins beside the verilog
         "toml" => ('\u{e615}', rgb(157, 66, 33)),
         "yaml" | "yml" => ('\u{e615}', rgb(109, 128, 134)),
         "json" => ('\u{e60b}', rgb(203, 203, 65)),
@@ -78,6 +79,7 @@ mod tests {
         assert_eq!(icon_for("src/main.rs").0, '\u{e7a8}');
         assert_eq!(icon_for("boot.s").0, '\u{f2db}');
         assert_eq!(icon_for("hdl/blink.sv").0, '\u{f035b}');
+        assert_eq!(icon_for("ulx3s.lpf").0, '\u{f034e}');
         assert_eq!(icon_for("pcb/bom.csv").0, '\u{e64a}');
         assert_eq!(icon_for("GNUmakefile").0, '\u{e779}');
         assert_eq!(icon_for("platforms/virt.mk").0, '\u{e779}');

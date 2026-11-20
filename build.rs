@@ -1,8 +1,9 @@
 //! Compiles the tree-sitter grammars vendored under `grammars/` as
 //! generated C, so the build needs only a C compiler, never the CLI:
-//! 6502/ACME (#18, ours — `parser.c` generated from `grammar.js`),
-//! justfile (#108, upstream's `parser.c` + `scanner.c`) and SystemVerilog
-//! (#117, upstream's 65 MB `parser.c` — ~3.5 s to compile, see its README).
+//! 6502/ACME (#18) and Lattice preference files (lpf) — ours, `parser.c`
+//! generated from `grammar.js` — justfile (#108, upstream's `parser.c` +
+//! `scanner.c`) and SystemVerilog (#117, upstream's 65 MB `parser.c` —
+//! ~3.5 s to compile, see its README).
 
 use std::path::Path;
 
@@ -21,4 +22,5 @@ fn main() {
     grammar("asm6502", &["parser.c"], "tree_sitter_asm6502");
     grammar("just", &["parser.c", "scanner.c"], "tree_sitter_just");
     grammar("systemverilog", &["parser.c"], "tree_sitter_systemverilog");
+    grammar("lpf", &["parser.c"], "tree_sitter_lpf");
 }

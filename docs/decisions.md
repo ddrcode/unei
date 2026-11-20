@@ -3,6 +3,26 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-11-20 — LPF: a thirty-line grammar of its own; keywords by position and case, not by list
+
+Lattice preference files (`.lpf`) are the pin and timing constraints beside
+an ECP5 project's SystemVerilog — `LOCATE COMP "led[0]" SITE "B2";`,
+`IOBUF PORT … PULLMODE=NONE IO_TYPE=LVCMOS33;`, `FREQUENCY PORT … 25 MHZ;`.
+No public tree-sitter grammar covers them, and the rules allow exactly one
+colouring mechanism, so the 6502 route (#18) applies: a bespoke grammar
+under `grammars/lpf/`, its `parser.c` generated from `grammar.js` with the
+tree-sitter CLI (`nix shell nixpkgs#tree-sitter`, node for the DSL) and
+compiled by `build.rs`. The grammar is as small as highlighting allows: a
+preference is a command word, arguments (quoted names, numbers, `KEY=VALUE`
+settings, further words) and a `;`; a comment is `#` or `//` to the end of
+the line. It deliberately enumerates no keywords — Diamond's and nextpnr's
+vocabularies differ and grow, and an unknown command must not become an
+ERROR — so the query colours the command by position and every other
+capitalised word as a keyword (LPF writes keywords in capitals; names are
+quoted or lower-case), a setting as property `=` constant, strings and
+numbers as themselves. Both of the author's files (41 and 598 lines) parse
+without an error node.
+
 ## 2026-11-20 — Makefiles: nvim's query re-ordered for first-wins; a tab is the language's, not an option
 
 The grammar is the `tree-sitter-make` crate — it depends only on

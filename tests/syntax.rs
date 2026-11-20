@@ -450,3 +450,47 @@ fn systemverilog_basics_are_captured() {
     assert_eq!(at(&ed, 2, "// tick"), Some("comment"));
     assert_eq!(at(&ed, 3, "endmodule"), Some("keyword"));
 }
+
+// --- Lattice preference files (no ticket) -----------------------------------
+
+/// The ULX3S constraints as emard ships them: a block directive, a pin, its
+/// buffer settings, a clock, the configuration line, an unquoted name.
+const LPF: &str = "# ULX3S v3.0.3\nBLOCK RESETPATHS;\nLOCATE COMP \"clk_25mhz\" SITE \"G2\";\nIOBUF PORT \"led[0]\" PULLMODE=NONE IO_TYPE=LVCMOS33 DRIVE=4;\nFREQUENCY PORT \"clk_25mhz\" 25 MHZ; // 40 ns\nSYSCONFIG CONFIG_IOVOLTAGE=3.3 COMPRESS_CONFIG=ON;\nUGROUP \"grp\" BBOX 2 2 BLKNAME cpu0;\n";
+
+#[test]
+fn lpf_constraints_are_highlighted() {
+    let mut ed = editor_with("ulx3s.lpf", LPF);
+    assert!(ed.ensure_syntax(1), "the bespoke lpf grammar, by extension");
+    assert_eq!(capture_at(&ed, 0, 0), Some("comment"), "#");
+    assert_eq!(capture_at(&ed, 1, 0), Some("keyword"), "BLOCK");
+    assert_eq!(capture_at(&ed, 1, 6), Some("keyword"), "RESETPATHS");
+    assert_eq!(capture_at(&ed, 1, 16), Some("punctuation"), ";");
+    assert_eq!(capture_at(&ed, 2, 7), Some("keyword"), "COMP");
+    assert_eq!(capture_at(&ed, 2, 12), Some("string"), "\"clk_25mhz\"");
+    assert_eq!(capture_at(&ed, 2, 24), Some("keyword"), "SITE");
+    assert_eq!(capture_at(&ed, 2, 29), Some("string"), "\"G2\"");
+    assert_eq!(capture_at(&ed, 3, 20), Some("property"), "PULLMODE");
+    assert_eq!(capture_at(&ed, 3, 28), Some("operator"), "=");
+    assert_eq!(capture_at(&ed, 3, 29), Some("constant"), "NONE");
+    assert_eq!(capture_at(&ed, 3, 42), Some("constant"), "LVCMOS33");
+    assert_eq!(capture_at(&ed, 3, 57), Some("number"), "DRIVE=4");
+    assert_eq!(capture_at(&ed, 4, 27), Some("number"), "25");
+    assert_eq!(capture_at(&ed, 4, 30), Some("keyword"), "MHZ");
+    assert_eq!(capture_at(&ed, 4, 35), Some("comment"), "// after the ;");
+    assert_eq!(capture_at(&ed, 5, 10), Some("property"), "CONFIG_IOVOLTAGE");
+    assert_eq!(capture_at(&ed, 5, 27), Some("number"), "3.3");
+    assert_eq!(capture_at(&ed, 5, 47), Some("constant"), "ON");
+    assert_eq!(capture_at(&ed, 6, 22), Some("keyword"), "BLKNAME");
+    assert_eq!(
+        capture_at(&ed, 6, 30),
+        None,
+        "cpu0, an unquoted name, is plain"
+    );
+}
+
+#[test]
+fn lpf_comments_toggle_with_hash() {
+    let mut ed = editor_with("ulx3s.lpf", "BLOCK RESETPATHS;\n");
+    feed(&mut ed, "gcc");
+    assert_eq!(ed.buffer.rope.to_string(), "# BLOCK RESETPATHS;\n");
+}
