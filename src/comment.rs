@@ -23,7 +23,7 @@ pub fn line_comment(buffer: &Buffer) -> Option<String> {
     }
     let token = match languages::detect(Some(path))? {
         "rust" | "javascript" | "systemverilog" => "//",
-        "yaml" | "toml" | "bash" | "nix" | "python" | "just" | "make" => "#",
+        "yaml" | "toml" | "bash" | "nix" | "python" | "just" | "make" | "lpf" => "#",
         _ => return None,
     };
     Some(token.to_string())
@@ -55,6 +55,7 @@ mod tests {
         assert_eq!(line_comment(&buf("justfile", "")).as_deref(), Some("#"));
         assert_eq!(line_comment(&buf("Makefile", "")).as_deref(), Some("#"));
         assert_eq!(line_comment(&buf("common.mk", "")).as_deref(), Some("#"));
+        assert_eq!(line_comment(&buf("ulx3s.lpf", "")).as_deref(), Some("#"));
         assert_eq!(line_comment(&buf("a.js", "")).as_deref(), Some("//"));
         assert_eq!(line_comment(&buf("top.sv", "")).as_deref(), Some("//"));
         // no line-comment syntax

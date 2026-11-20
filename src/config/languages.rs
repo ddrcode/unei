@@ -96,6 +96,17 @@ const SV_TEXTOBJECTS: &str = r#"
 (checker_declaration ";" @class.open "endchecker" @class.close)
 "#;
 
+unsafe extern "C" {
+    fn tree_sitter_lpf() -> *const ();
+}
+/// The Lattice preference-file grammar (no ticket): ours, under
+/// `grammars/lpf` — `parser.c` generated from its `grammar.js`, compiled by
+/// build.rs. The pin constraints beside a `.sv` project; no public grammar
+/// covers them.
+pub const LPF_LANGUAGE: tree_sitter_language::LanguageFn =
+    unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_lpf) };
+const LPF_HIGHLIGHTS: &str = include_str!("../../grammars/lpf/queries/highlights.scm");
+
 /// The Makefile grammar: the `tree-sitter-make` crate (it depends only on
 /// `tree-sitter-language`, so it links), with unei's own queries under
 /// `grammars/make/queries/` — the crate's use capture names the theme does
@@ -197,7 +208,7 @@ pub struct LangConfig {
     pub extra_pattern_start: usize,
 }
 
-static LANGUAGES: [LangSpec; 16] = [
+static LANGUAGES: [LangSpec; 17] = [
     LangSpec {
         name: "asm6502",
         aliases: &["6502", "acme"],
@@ -424,6 +435,20 @@ static LANGUAGES: [LangSpec; 16] = [
         hard_tabs: true,
         cell: OnceLock::new(),
     },
+    LangSpec {
+        name: "lpf",
+        aliases: &[],
+        extensions: &["lpf"],
+        filenames: &[],
+        language: || LPF_LANGUAGE.into(),
+        highlights_extra: "",
+        highlights: LPF_HIGHLIGHTS,
+        injections: "",
+        symbols: "",
+        textobjects: "",
+        hard_tabs: false,
+        cell: OnceLock::new(),
+    },
 ];
 
 /// Longest dotted-prefix match: `keyword.control` falls back to `keyword`.
@@ -525,6 +550,8 @@ mod tests {
         assert_eq!(p("defs.svh"), Some("systemverilog"));
         assert_eq!(p("picorv32.v"), Some("systemverilog"));
         assert_eq!(p("timescale.vh"), Some("systemverilog"));
+        // the constraints beside them
+        assert_eq!(p("ulx3s.lpf"), Some("lpf"));
         // Makefiles by their three names, fragments by extension
         assert_eq!(p("Makefile"), Some("make"));
         assert_eq!(p("sub/makefile"), Some("make"));
@@ -553,6 +580,7 @@ mod tests {
             "css",
             "systemverilog",
             "make",
+            "lpf",
         ] {
             assert!(config_for(name).is_some(), "{name} must build");
         }
