@@ -113,6 +113,27 @@ pub fn line_graphemes(line: &str, tabstop: usize) -> Vec<Gr> {
     out
 }
 
+/// A grapheme as the screen shows it: a C0 control character becomes its
+/// Control Picture (`\r` → `␍`, `\x1b` → `␛`), DEL `␡`, any other control
+/// `�` — one cell each, the width `line_graphemes` gives them. A raw
+/// control byte must never reach the terminal: a CR alone drags the rest
+/// of its row back to column 0.
+pub fn visible(g: &str) -> std::borrow::Cow<'_, str> {
+    if !g.contains(char::is_control) {
+        return std::borrow::Cow::Borrowed(g);
+    }
+    std::borrow::Cow::Owned(
+        g.chars()
+            .map(|c| match c as u32 {
+                0..=0x1f => char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}'),
+                0x7f => '\u{2421}',
+                _ if c.is_control() => '\u{fffd}',
+                _ => c,
+            })
+            .collect(),
+    )
+}
+
 /// Index into `grs` of the grapheme containing char column `col`, if any.
 pub fn gr_index_at_col(grs: &[Gr], col: usize) -> Option<usize> {
     grs.iter().position(|g| col < g.char_off + g.chars)
@@ -255,6 +276,18 @@ pub fn max_normal_col(rope: &Rope, line: usize, tabstop: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn control_characters_show_as_control_pictures() {
+        use super::visible;
+        assert_eq!(visible("a"), "a");
+        assert!(matches!(visible("é"), std::borrow::Cow::Borrowed(_)));
+        assert_eq!(visible("\r"), "␍");
+        assert_eq!(visible("\u{1b}"), "␛");
+        assert_eq!(visible("\u{7f}"), "␡");
+        assert_eq!(visible("\u{85}"), "\u{fffd}", "a C1 control has no picture");
+        assert_eq!(visible("x\r"), "x␍");
+    }
+
     use super::*;
 
     fn wrapped(line: &str, width: usize) -> Vec<(usize, usize)> {

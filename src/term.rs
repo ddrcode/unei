@@ -136,7 +136,21 @@ impl<W: Write> Backend for KittyBackend<W> {
                 }
                 style = want;
             }
-            queue!(self.writer, Print(cell.symbol()))?;
+            let symbol = cell.symbol();
+            if symbol.contains(char::is_control) {
+                // ratatui folds a zero-width grapheme — a CR is one — into
+                // the cell before it; printed raw it would move the cursor
+                // and the rest of the row with it. Drop it, keep the cell.
+                let shown: String = symbol.chars().filter(|c| !c.is_control()).collect();
+                let shown = if shown.is_empty() {
+                    " "
+                } else {
+                    shown.as_str()
+                };
+                queue!(self.writer, Print(shown))?;
+            } else {
+                queue!(self.writer, Print(symbol))?;
+            }
         }
         queue!(self.writer, SetAttribute(Attribute::Reset), ResetColor)?;
         Ok(())
@@ -254,4 +268,29 @@ pub fn convert(ev: KeyEvent) -> Option<Key> {
         KeyCode::PageDown => Key::PageDown,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_control_character_inside_a_cell_never_reaches_the_terminal() {
+        let mut backend = KittyBackend::new(Vec::<u8>::new());
+        let mut folded = Cell::default();
+        folded.set_symbol(",\r"); // how ratatui stores a zero-width CR
+        let mut bare = Cell::default();
+        bare.set_symbol("\r");
+        let mut plain = Cell::default();
+        plain.set_symbol("x");
+        backend
+            .draw(vec![(0u16, 0u16, &folded), (1, 0, &bare), (2, 0, &plain)].into_iter())
+            .unwrap();
+        let out = String::from_utf8(backend.writer).unwrap();
+        assert!(!out.contains('\r'), "{out:?}");
+        assert!(
+            out.contains(", x"),
+            "both CR cells keep their width: {out:?}"
+        );
+    }
 }

@@ -3,6 +3,54 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-11-13 — CSV: the table as the spreadsheet shows it; wide tables scroll, they do not shrink (#39 phase 3)
+
+Phase 3 of the preview ticket, pulled forward by practice: PCB work means
+reading a bill of materials several times a day. The projection is
+`preview/csv.rs`, the markdown renderer's shape exactly — a pure function
+of (buffer, width, first visible column), a LineMap of record start lines,
+the same `─┼─` grid the GFM tables draw — but three decisions differ from
+the markdown table because the files differ. Measured on the author's own
+exports: JLCPCB/EasyEDA BOMs (17–18 columns, 300-char lines, every field
+quoted, a UTF-8 byte-order mark first, CJK manufacturer names), a
+60-column 1-click-bom TSV, Digikey carts with CRLF and a trailing empty
+column, 144-row pinouts. **Wide tables scroll by column instead of
+shrinking to fit.** The markdown grid shrinks its widest column until the
+table fits, floor 4 cells; on a 17-column BOM in a 100-cell pane that
+leaves every column at 4–5 cells, which reads as nothing — and the columns
+that matter (`Qty`, `Designator`, `Value`, the LCSC part) are not the
+widest. So columns keep their natural width, capped at half the pane (one
+URL column cannot eat the rest), and `j`/`l` move the first visible column
+— IJKL's left and right, free in the preview — with `0`/`$` to the ends;
+the scroll is per buffer, so it survives `gp` toggles. It is a render
+input: the first visible column is the document's stamp, so scrolling
+re-renders the way resizing does and the UI slices nothing. **The header
+is pinned**: a scrolled table draws its two header rows over the top of the
+pane (`PreviewDoc.frozen`); the nav math keeps the reading line out from
+under them (`top_showing`) and the line↔screen-row relation is unchanged,
+so follow still lands the reading line on the source cursor's row. **No
+grammar**: CSV has nothing to colour in source, so the projection is chosen
+by extension where the grammar registry says nothing
+(`preview::projection_for`, now the one place that decides what `gp`
+does), and parsing is a hand-rolled RFC 4180 reader — quotes, `""`,
+newlines inside quotes (one row, `⏎`, mapped to the record's first line),
+CR before LF, blank lines skipped — with the delimiter sniffed on the
+header line (busiest of `,` `;` tab `|`; `.tsv` is tab regardless).
+Numbers right-align when every non-empty body cell parses as one. Found on
+the way, twice. **A CR in a line corrupted the whole frame**: Digikey carts
+and Lattice pinouts end lines with CRLF, unicode-width gives CR width 0,
+ratatui folds a zero-width grapheme into the cell before it as if it were a
+combining mark, and the backend printed that cell's `,\r` verbatim — the
+terminal's cursor went home and the row's padding overwrote its start;
+later frames, diffed against a model that was never wrong, repaired only
+what changed. Two fixes, one invariant: the source view draws a control
+character as its Control Picture (`␍`, one cell, the width `line_graphemes`
+already gave it — `core::text::visible`), and the backend never emits a
+control byte inside a cell (dropped, the cell kept), whatever path put it
+there. And the newest EasyEDA Pro exports are UTF-16LE with tabs under a
+`.csv` name; their NUL bytes read as binary today and the file opens as a
+hex dump — decoding on open is a ticket of its own, not a preview concern.
+
 ## 2026-11-11 — SystemVerilog: the full grammar, vendored; bodies by delimiter (ticket #117)
 
 The first language the author needed that unei lacked (retro-v, a RISC-V

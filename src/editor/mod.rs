@@ -249,6 +249,9 @@ pub struct Editor {
     preview_nav: std::collections::HashMap<WinId, (usize, usize)>,
     /// Rendered documents, cached per buffer (version+width checked).
     preview_docs: std::collections::HashMap<BufId, crate::preview::PreviewDoc>,
+    /// Per buffer: the first visible column of its table projection — a
+    /// scrolled CSV stays scrolled across `gp` toggles and windows.
+    preview_col: std::collections::HashMap<BufId, usize>,
     /// rust-analyzer's hints for a buffer, with the revision they describe
     /// (#93): only shown while the buffer is still at that revision.
     inlay_hints: std::collections::HashMap<BufId, (u64, Vec<crate::lsp::InlayHint>)>,
@@ -356,6 +359,7 @@ impl Editor {
             preview_windows: std::collections::HashSet::new(),
             preview_nav: std::collections::HashMap::new(),
             preview_docs: std::collections::HashMap::new(),
+            preview_col: std::collections::HashMap::new(),
             inlay_hints: std::collections::HashMap::new(),
             diag_epoch: 0,
             prompt: Prompt::Command,
@@ -2101,9 +2105,10 @@ impl Editor {
     /// Whether the current buffer has a projection (`gp` and the preview
     /// splits share the gate); says why not otherwise.
     fn announce_projection(&mut self) -> bool {
-        match crate::config::languages::detect(self.buffer.path.as_deref()) {
-            Some("markdown") => true,
-            Some("rust") => {
+        use crate::preview::Projection;
+        match crate::preview::projection_for(self.buffer.path.as_deref()) {
+            Some(Projection::Markdown | Projection::Csv { .. }) => true,
+            Some(Projection::Rust) => {
                 // the compiler's-eye view (#93): annotations arrive from
                 // rust-analyzer a round-trip later; say so when it's absent
                 if self.lsp.is_none() {
@@ -2113,8 +2118,8 @@ impl Editor {
                 }
                 true
             }
-            _ => {
-                self.msg("no preview for this file type (markdown and rust)");
+            None => {
+                self.msg("no preview for this file type (markdown, rust and csv)");
                 false
             }
         }
@@ -2129,10 +2134,9 @@ impl Editor {
         let (width, rows) = self.window_text_size(id);
         let source_line = self.cursor.line;
         let row = self.cursor_display_pos().0.min(rows - 1);
-        let view_line = self
-            .preview_doc_for(self.current, width)
-            .view_line_for_source(source_line);
-        let top = view_line.saturating_sub(row);
+        let doc = self.preview_doc_for(self.current, width);
+        let view_line = doc.view_line_for_source(source_line);
+        let top = doc.top_showing(view_line.saturating_sub(row), view_line);
         self.preview_nav.insert(id, (view_line, top));
     }
 
@@ -2148,34 +2152,47 @@ impl Editor {
     }
 
     /// The cached rendered document for a buffer, rebuilt when stale:
-    /// markdown as the reader sees it, Rust as the compiler sees it (#93).
+    /// markdown as the reader sees it, Rust as the compiler sees it (#93),
+    /// CSV as the spreadsheet shows it (#39 phase 3).
     pub fn preview_doc_for(&mut self, buf: BufId, width: usize) -> &crate::preview::PreviewDoc {
+        use crate::preview::Projection;
         let version = self.buffer_ref(buf).version();
-        let rust =
-            crate::config::languages::detect(self.buffer_ref(buf).path.as_deref()) == Some("rust");
-        let (width, stamp) = if rust {
-            (width.max(20), self.projection_stamp(buf))
-        } else {
-            (width.clamp(20, 100), 0) // prose width
+        let projection = crate::preview::projection_for(self.buffer_ref(buf).path.as_deref());
+        let (width, stamp) = match projection {
+            Some(Projection::Rust) => (width.max(20), self.projection_stamp(buf)),
+            // the table takes the whole pane; its stamp is the first visible column
+            Some(Projection::Csv { .. }) => (
+                width.max(20),
+                self.preview_col.get(&buf).copied().unwrap_or(0) as u64,
+            ),
+            _ => (width.clamp(20, 100), 0), // prose width
         };
         let fresh = self
             .preview_docs
             .get(&buf)
             .is_some_and(|d| d.is_fresh(version, width, stamp));
         if !fresh {
-            let doc = if rust {
-                let hints = self.fresh_inlay_hints(buf);
-                let diags = self.buffer_diagnostics(buf);
-                crate::preview::rust::render(
+            let doc = match projection {
+                Some(Projection::Rust) => {
+                    let hints = self.fresh_inlay_hints(buf);
+                    let diags = self.buffer_diagnostics(buf);
+                    crate::preview::rust::render(
+                        &self.buffer_ref(buf).rope,
+                        version,
+                        width,
+                        &hints,
+                        &diags,
+                        stamp,
+                    )
+                }
+                Some(Projection::Csv { tab }) => crate::preview::csv::render(
                     &self.buffer_ref(buf).rope,
                     version,
                     width,
-                    &hints,
-                    &diags,
-                    stamp,
-                )
-            } else {
-                crate::preview::markdown::render(&self.buffer_ref(buf).rope, version, width)
+                    stamp as usize,
+                    tab,
+                ),
+                _ => crate::preview::markdown::render(&self.buffer_ref(buf).rope, version, width),
             };
             self.preview_docs.insert(buf, doc);
         }
@@ -2234,10 +2251,9 @@ impl Editor {
             // the source window's would re-render it every frame whenever
             // the two differ by a column
             let (width, rows) = self.window_text_size(id);
-            let view_line = self
-                .preview_doc_for(buf, width)
-                .view_line_for_source(src_line);
-            let top = view_line.saturating_sub(row.min(rows - 1));
+            let doc = self.preview_doc_for(buf, width);
+            let view_line = doc.view_line_for_source(src_line);
+            let top = doc.top_showing(view_line.saturating_sub(row.min(rows - 1)), view_line);
             self.preview_nav.insert(id, (view_line, top));
         }
     }
@@ -2371,16 +2387,35 @@ impl Editor {
     }
 
     /// Keyboard when a preview window has focus: navigation over the
-    /// rendered document; Enter/gd jumps to source; gp/Esc projects back.
+    /// rendered document, by column too when it is a table; Enter/h jump to
+    /// source; gp/Esc project back.
     pub(crate) fn preview_key(&mut self, key: Key) {
         use crate::config::keymap::Key as K;
         let id = self.focused_win;
         let width = self.view.width.saturating_sub(2);
         let height = self.view.height.max(2);
-        let total = self.preview_doc_for(self.current, width).line_count();
+        let (total, columns) = {
+            let doc = self.preview_doc_for(self.current, width);
+            (doc.line_count(), doc.columns)
+        };
         let (mut line, mut top) = self.preview_nav_state(id);
         let last = total.saturating_sub(1);
         match key {
+            // a table scrolls by column: j/l one column over, 0/$ to the ends
+            K::Char('j' | 'l' | '0' | '$') | K::Left | K::Right => {
+                let Some((first, count)) = columns else {
+                    return;
+                };
+                let last_col = count.saturating_sub(1);
+                let col = match key {
+                    K::Char('l') | K::Right => (first + 1).min(last_col),
+                    K::Char('j') | K::Left => first.saturating_sub(1),
+                    K::Char('0') => 0,
+                    _ => last_col,
+                };
+                self.preview_col.insert(self.current, col);
+                return;
+            }
             K::Char('k') | K::Down => line = (line + 1).min(last),
             K::Char('i') | K::Up => line = line.saturating_sub(1),
             K::Ctrl('d') => line = (line + height / 2).min(last),
@@ -2424,7 +2459,9 @@ impl Editor {
         if line + margin >= top + height {
             top = (line + margin + 1).saturating_sub(height);
         }
-        top = top.min(last);
+        top = self
+            .preview_doc_for(self.current, width)
+            .top_showing(top.min(last), line);
         self.preview_nav.insert(id, (line, top));
     }
 

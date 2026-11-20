@@ -8,7 +8,7 @@ use ropey::Rope;
 use tree_sitter::{Node, Parser};
 use unicode_width::UnicodeWidthStr;
 
-use super::{Frag, PreviewDoc};
+use super::{Frag, PreviewDoc, clip_frags};
 use crate::config::palette;
 
 // ----------------------------------------------------------------------
@@ -572,31 +572,6 @@ fn render_table(node: Node, src: &str, r: &mut Renderer) {
         }
     }
     r.blank(node.start_position().row);
-}
-
-/// Clips styled fragments to a display width, ending with an ellipsis.
-fn clip_frags(frags: Vec<Frag>, max: usize) -> Vec<Frag> {
-    let total: usize = frags.iter().map(|(t, _)| t.width()).sum();
-    if total <= max {
-        return frags;
-    }
-    let mut out: Vec<Frag> = Vec::new();
-    let mut used = 0usize;
-    for (text, style) in frags {
-        for g in text.chars() {
-            let w = unicode_width::UnicodeWidthChar::width(g).unwrap_or(0);
-            if used + w > max.saturating_sub(1) {
-                out.push(("…".to_string(), dim()));
-                return out;
-            }
-            match out.last_mut() {
-                Some((prev, s)) if *s == style => prev.push(g),
-                _ => out.push((g.to_string(), style)),
-            }
-            used += w;
-        }
-    }
-    out
 }
 
 fn heading_level(node: Node, _src: &str) -> usize {

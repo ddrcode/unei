@@ -7,7 +7,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::{OPTIONS, gutter_width, palette};
-use crate::core::text::{cell_at_col, line_content, line_graphemes, text_lines, wrap_rows};
+use crate::core::text::{
+    cell_at_col, line_content, line_graphemes, text_lines, visible, wrap_rows,
+};
 use crate::editor::{Editor, Mode};
 
 /// Everything a window needs to draw itself, resolved from either the live
@@ -345,9 +347,15 @@ fn draw_preview_window(
     let doc = ed.preview_doc_for(buf, width);
 
     let base = Style::default().bg(palette::BG).fg(palette::FG);
+    // a scrolled table keeps its header rows pinned over the top of the pane
+    let pinned = if top > 0 && doc.frozen < text_rect.height as usize {
+        doc.frozen
+    } else {
+        0
+    };
     let mut rows: Vec<Line> = Vec::with_capacity(text_rect.height as usize);
     for row in 0..text_rect.height as usize {
-        let idx = top + row;
+        let idx = if row < pinned { row } else { top + row };
         let Some(frags) = doc.lines.get(idx) else {
             rows.push(Line::default());
             continue;
@@ -406,8 +414,12 @@ fn draw_preview_window(
     }
     let left = format!(" {name} [P]");
     let pct = (cursor_line + 1) * 100 / doc.line_count().max(1);
+    let cols = match doc.columns {
+        Some((first, count)) if count > 1 => format!("  col {}/{count}", first + 1),
+        _ => String::new(),
+    };
     let right = if focused {
-        format!(" {}/{}  {pct}% ", cursor_line + 1, doc.line_count())
+        format!(" {}/{}  {pct}%{cols} ", cursor_line + 1, doc.line_count())
     } else {
         String::new()
     };
@@ -1013,7 +1025,7 @@ fn styled_visible(
         let piece: String = if g == "\t" || start < left || cell > end {
             " ".repeat(vis_to.saturating_sub(vis_from))
         } else {
-            g.to_string()
+            visible(g).into_owned() // a CR is `␍`, never a raw control byte
         };
         let selected = match selection {
             SelSpan::None => false,
