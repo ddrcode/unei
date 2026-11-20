@@ -4,9 +4,11 @@
 //! The engine drives tree-sitter core directly with deterministic layering
 //! (the ready-made highlighter mangles event order across injection layers):
 //! captures paint a per-byte canvas parents-before-children, injected
-//! languages (markdown fences, inline markdown, …) are parsed with included
-//! ranges and painted on top, innermost last. The canvas is folded into
-//! per-line char spans for the renderer.
+//! languages (markdown fences, inline markdown, make recipes, …) are parsed
+//! with included ranges — the content node minus its named children, unless
+//! the query says `injection.include-children` — and painted on top, only
+//! inside those ranges, innermost last. The canvas is folded into per-line
+//! char spans for the renderer.
 //!
 //! A buffer re-highlights whenever its version changes (checked lazily at
 //! render); unregistered languages render in the default color.
@@ -371,7 +373,21 @@ fn paint_layer(
     });
     let canvas_len = canvas.len();
     for (start, end, theme, _) in paints {
-        canvas[start..end.min(canvas_len)].fill(theme);
+        let end = end.min(canvas_len);
+        match ranges {
+            None => canvas[start..end].fill(theme),
+            // an injected layer paints only inside its own ranges — never over
+            // a parent's node that was excluded from it (make's `$@` inside a
+            // bash string stays make's)
+            Some(ranges) => {
+                for r in ranges {
+                    let (s, e) = (start.max(r.start_byte), end.min(r.end_byte));
+                    if s < e {
+                        canvas[s..e].fill(theme);
+                    }
+                }
+            }
+        }
     }
 
     // injections: each match contributes content node(s) + a language name
@@ -394,14 +410,17 @@ fn paint_layer(
     let mut cursor = QueryCursor::new();
     let mut it = cursor.matches(injections, tree.root_node(), source);
     while let Some(m) = it.next() {
+        let settings = injections.property_settings(m.pattern_index);
         // language: #set! injection.language "x", or the captured node's text
-        let mut language = injections
-            .property_settings(m.pattern_index)
+        let mut language = settings
             .iter()
             .find(|p| p.key.as_ref() == "injection.language")
             .and_then(|p| p.value.as_ref())
             .map(|v| v.to_string());
-        let mut content: Vec<Node> = Vec::new();
+        let include_children = settings
+            .iter()
+            .any(|p| p.key.as_ref() == "injection.include-children");
+        let mut ranges: Vec<tree_sitter::Range> = Vec::new();
         for cap in m.captures() {
             if Some(cap.index as usize) == language_idx {
                 language = cap
@@ -410,19 +429,54 @@ fn paint_layer(
                     .ok()
                     .map(|s| s.trim().to_string());
             } else if cap.index as usize == content_idx {
-                content.push(cap.node);
+                content_ranges(cap.node, include_children, &mut ranges);
             }
         }
+        // nothing left (a recipe line that is one `$(MAKE)`): nothing to
+        // inject — an empty range list would mean "the whole document"
         if let Some(language) = language
-            && !content.is_empty()
+            && !ranges.is_empty()
         {
-            jobs.push((language, content.iter().map(Node::range).collect()));
+            jobs.push((language, ranges));
         }
     }
     for (language, ranges) in jobs {
         if let Some(inner) = languages::config_for(&language) {
             paint_layer(source, inner, Some(&ranges), depth + 1, canvas);
         }
+    }
+}
+
+/// The byte ranges an injection covers: the content node whole when the
+/// pattern sets `injection.include-children` (Rust's macro token trees);
+/// otherwise — the default, nvim's semantics the queries are written for —
+/// the node minus its named children: make's `$(CC)` inside a recipe line
+/// stays make's, a blockquote's `> ` prefixes stay markdown's.
+fn content_ranges(node: Node, include_children: bool, out: &mut Vec<tree_sitter::Range>) {
+    if include_children || node.named_child_count() == 0 {
+        out.push(node.range());
+        return;
+    }
+    let (mut from, mut from_point) = (node.start_byte(), node.start_position());
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.start_byte() > from {
+            out.push(tree_sitter::Range {
+                start_byte: from,
+                end_byte: child.start_byte(),
+                start_point: from_point,
+                end_point: child.start_position(),
+            });
+        }
+        (from, from_point) = (child.end_byte(), child.end_position());
+    }
+    if node.end_byte() > from {
+        out.push(tree_sitter::Range {
+            start_byte: from,
+            end_byte: node.end_byte(),
+            start_point: from_point,
+            end_point: node.end_position(),
+        });
     }
 }
 

@@ -42,7 +42,7 @@ pub fn handle_key(ed: &mut Editor, key: Key) {
             insert_text(ed, &format!("\n{indent}"));
         }
         Key::Tab => {
-            if OPTIONS.expandtab {
+            if ed.expandtab() {
                 let grs = line_graphemes(
                     &line_content(&ed.buffer.rope, ed.cursor.line),
                     OPTIONS.tabstop,
