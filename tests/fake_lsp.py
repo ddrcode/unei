@@ -1,17 +1,39 @@
 #!/usr/bin/env python3
-"""A canned rust-analyzer stand-in for the LSP integration tests.
+"""A canned language server for the LSP integration tests.
 
 Speaks Content-Length framing on stdio. On didOpen it publishes one error
 and one warning diagnostic; hover, definition, code actions, inlay hints
 and macro expansion return fixed data the tests assert on.
+
+It plays whichever server UNEI_FAKE_LSP_NAME names (rust-analyzer by
+default). As `slang-server` it behaves like the real one where that
+matters to the editor: no signatureHelpProvider in its capabilities, and a
+method it doesn't know — signatureHelp, rust-analyzer/expandMacro — gets
+no answer at all (#118).
 """
 import json
 import os
 import sys
 
+NAME = os.environ.get("UNEI_FAKE_LSP_NAME", "rust-analyzer")
+
 # Every didOpen/didChange is appended (one JSON object per line) to the file
-# named by UNEI_FAKE_LSP_LOG, so tests can assert what text the server holds.
+# named by UNEI_FAKE_LSP_LOG, so tests can assert what text the server holds
+# — and which server holds it.
 LOG = os.environ.get("UNEI_FAKE_LSP_LOG")
+
+CAPABILITIES = {
+    "positionEncoding": "utf-8",
+    "hoverProvider": True,
+    "definitionProvider": True,
+    "referencesProvider": True,
+    "renameProvider": True,
+    "codeActionProvider": {"resolveProvider": True},
+    "completionProvider": {"triggerCharacters": ["."]},
+    "inlayHintProvider": True,
+}
+if NAME != "slang-server":
+    CAPABILITIES["signatureHelpProvider"] = {"triggerCharacters": ["("]}
 
 
 def log(method, params):
@@ -23,7 +45,8 @@ def log(method, params):
         changes = params.get("contentChanges", [])
         text = changes[-1].get("text") if changes else None
     with open(LOG, "a") as f:
-        f.write(json.dumps({"method": method, "uri": doc.get("uri"),
+        f.write(json.dumps({"server": NAME, "method": method, "uri": doc.get("uri"),
+                            "languageId": doc.get("languageId"),
                             "version": doc.get("version"), "text": text}) + "\n")
 
 
@@ -59,7 +82,11 @@ while True:
 
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {
-            "capabilities": {"positionEncoding": "utf-8"}}})
+            "capabilities": CAPABILITIES,
+            "serverInfo": {"name": NAME}}})
+    elif NAME == "slang-server" and method in ("textDocument/signatureHelp",
+                                               "rust-analyzer/expandMacro"):
+        pass  # the real slang-server logs "not found" and never answers
     elif method == "textDocument/didChange":
         log(method, msg["params"])
     elif method == "textDocument/didOpen":

@@ -203,9 +203,12 @@ pub struct Editor {
     pub view: View,
     pub file_picker: Option<file_picker::FilePicker>,
     pub syntax: crate::syntax::Syntax,
-    /// rust-analyzer session (ticket #6), started lazily.
-    pub(crate) lsp: Option<crate::lsp::Client>,
-    lsp_broken: bool,
+    /// Language-server sessions (tickets #6, #118), one per server in
+    /// `config::servers`, each started lazily when a file of its language
+    /// is first shown.
+    pub(crate) lsp: Vec<crate::lsp::Client>,
+    /// Servers not to try again: not on PATH, or exited.
+    lsp_broken: std::collections::HashSet<&'static str>,
     /// Buffers with edits the server hasn't seen yet, and when they were
     /// last touched. Per buffer, not one global timer: an edit in A followed
     /// by a switch to B used to let B consume the debounce and leave A stale
@@ -252,8 +255,8 @@ pub struct Editor {
     /// Per buffer: the first visible column of its table projection — a
     /// scrolled CSV stays scrolled across `gp` toggles and windows.
     preview_col: std::collections::HashMap<BufId, usize>,
-    /// rust-analyzer's hints for a buffer, with the revision they describe
-    /// (#93): only shown while the buffer is still at that revision.
+    /// The server's inlay hints for a buffer, with the revision they
+    /// describe (#93): only shown while the buffer is still at that revision.
     inlay_hints: std::collections::HashMap<BufId, (u64, Vec<crate::lsp::InlayHint>)>,
     /// Bumped whenever diagnostics change, so projections that print them
     /// re-render.
@@ -338,8 +341,8 @@ impl Editor {
             },
             file_picker: None,
             syntax: crate::syntax::Syntax::default(),
-            lsp: None,
-            lsp_broken: false,
+            lsp: Vec::new(),
+            lsp_broken: std::collections::HashSet::new(),
             lsp_dirty: std::collections::HashMap::new(),
             info_float: None,
             actions_menu: None,
@@ -1808,7 +1811,7 @@ impl Editor {
                 None => self.msg("edit: nothing to apply"),
             },
             _ => {
-                if let Some(client) = &mut self.lsp {
+                if let Some((_, client)) = self.current_client("code action") {
                     client.resolve_action(action.raw);
                 }
             }
@@ -2111,7 +2114,7 @@ impl Editor {
             Some(Projection::Rust) => {
                 // the compiler's-eye view (#93): annotations arrive from
                 // rust-analyzer a round-trip later; say so when it's absent
-                if self.lsp.is_none() {
+                if !self.lsp_running() {
                     self.msg("compiler's-eye view — no rust-analyzer here, source only");
                 } else {
                     self.msg("compiler's-eye view");
@@ -2331,7 +2334,7 @@ impl Editor {
     /// `K` — the one "tell me about this" verb: LSP hover where a server
     /// exists, the machine lens (#45) everywhere else.
     pub(crate) fn hover(&mut self) {
-        if self.current_rust_file().is_some() {
+        if self.current_served_file().is_some() {
             self.analyzer_hover();
         } else {
             self.lens_hover();

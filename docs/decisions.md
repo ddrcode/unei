@@ -3,6 +3,34 @@
 Append-only log of decisions that shape the implementation. Rules live in
 [rules.md](rules.md); this file records how they get applied.
 
+## 2026-11-24 — Language servers: one generic client, a compiled-in table, a server per language (ticket #118)
+
+slang-server now serves SystemVerilog beside rust-analyzer for Rust. The
+client under `lsp/` was generic LSP but for three things — the command, the
+`Cargo.toml` root rule, the `initialize` options — so those became a table
+in `config/servers.rs` (`ServerSpec`: command, languages served,
+`languageId`, root rule, init options, and whether it answers
+rust-analyzer's macro-expansion extension), and the editor keeps one client
+per server, side by side, routing every document by the language its path
+detects. Rust-only features stay so by spec, not by accident: `Space r m`
+asks nobody but rust-analyzer; the compiler's-eye view keys on the
+language. Three facts measured against slang-server 0.3.1 shaped the rest.
+It speaks utf-8 columns when offered them, so the byte-column rule holds (a
+server answering utf-16 — or nothing, which the protocol defines as utf-16
+— is warned about once). It takes its workspace from `rootUri` and crawls
+that folder for the design's other files, so the root rule is the nearest
+`.slang/` or `.git`, else the working folder when the file lies inside it,
+else the file's own folder — never a tree the user did not point at. And
+it never answers a method it doesn't know (`textDocument/signatureHelp` is
+logged "not found" and dropped), which would leave a request pending for
+good — so a request is sent only when `initialize` advertised its provider,
+the message line saying "slang-server does not offer it" otherwise, and
+`gK` skips its signature follow-up for such a server and shows the
+annotated line alone. A server's own refusal (an error response) reaches
+the message line too, where a null used to pass for "nothing here".
+Verible stays the formatter, through treefmt, where the rules put
+formatting.
+
 ## 2026-11-20 — LPF: a thirty-line grammar of its own; keywords by position and case, not by list
 
 Lattice preference files (`.lpf`) are the pin and timing constraints beside

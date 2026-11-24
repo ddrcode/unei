@@ -109,13 +109,17 @@ fn empty_prefix_keeps_all_candidates() {
 }
 
 #[test]
-fn trigger_in_non_rust_is_inert() {
+fn trigger_without_a_server_for_the_language_is_inert() {
     let mut e = ed("notes.txt", "hello\n");
     feed(&mut e, "A");
-    feed(&mut e, "<C-n>"); // triggers request_completion → rust-only guard
+    feed(&mut e, "<C-n>"); // triggers request_completion → no server for .txt
     assert!(e.completion.is_none());
     assert!(
-        e.message.as_ref().unwrap().text.contains("Rust only"),
-        "expected a rust-only message"
+        e.message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("no language server for this file"),
+        "expected the no-server message"
     );
 }

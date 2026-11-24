@@ -127,7 +127,8 @@ pub enum Token {
     AlternateBuffer,
     /// `Ctrl+p` — file picker.
     FilePicker,
-    /// `K` — hover: type/docs of the item under the cursor (rust-analyzer).
+    /// `K` — hover: type/docs of the item under the cursor (the language
+    /// server; the machine lens where there is none).
     Hover,
     CmdLine,
     /// `/` and `?` — incremental search prompts.
@@ -154,7 +155,7 @@ pub enum LeaderCmd {
     WindowPrefix,
     /// `<leader>c…` — code chord (`ca` = code actions).
     CodePrefix,
-    /// `<leader>r…` — rust chord (`rm` = expand macro).
+    /// `<leader>r…` — rust chord (`rm` = expand macro, rust-analyzer's own).
     RustPrefix,
     /// `<leader>d…` — diagnostics chord (`dh` = toggle ghost text).
     DiagPrefix,

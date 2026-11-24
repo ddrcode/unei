@@ -156,9 +156,9 @@ tab); a UTF-8 byte-order mark and CRLF line ends are tolerated.
 
 ### Machine lens
 
-`K` is the single "tell me about this" key. Rust files ask rust-analyzer
-(below); everywhere else the editor answers from compiled-in knowledge.
-Any key dismisses the float.
+`K` is the single "tell me about this" key. Files whose language has a
+server — Rust, SystemVerilog — ask it (below); everywhere else the editor
+answers from compiled-in knowledge. Any key dismisses the float.
 
 | Context | `K` shows |
 |---|---|
@@ -173,7 +173,17 @@ whatever comment leader your assembler accepts (`;`, `#`, `//`, …).
 disagrees the float shows both, and 65C02-only instructions are called
 out in a `6502` file.
 
-### rust-analyzer
+### Language servers
+
+One client per server, started when a file of its language is first shown,
+side by side when a repo holds both: **rust-analyzer** for Rust (the
+outermost `Cargo.toml` is the project root) and **slang-server** for
+SystemVerilog (`.sv`, `.svh`, `.v`, `.vh`; the root is the nearest `.slang/`
+or `.git`, else the working folder — the server crawls it for the design's
+other files, so no file list is needed). Each must be on PATH; a missing one
+is reported once. The statusline shows `ra:` / `slang:` while a server
+indexes. A method a server never advertised is never asked of it — the
+message line says so instead.
 
 | Keys | Action |
 |---|---|
@@ -182,9 +192,9 @@ out in a `6502` file.
 | `gK` | line-scope hover: the line with all types spliced in, plus the call signature |
 | `Space c a` | code actions menu |
 | `Space c r` | references to the symbol under the cursor, as a **location list**: `path:line: text` rows with the name accented, project-relative, fuzzy-filterable, previewed on the line; `Enter` jumps (records the jumplist), `Ctrl+V`/`Ctrl+X` open in a split |
-| `Space d d` | every diagnostic rust-analyzer has published, all files, errors first — the same location list with the severity (`E`/`W`/`I`) accented |
-| `Space c n` | rename the symbol under the cursor: the prompt opens pre-filled with its name (`Ctrl+U` clears it), `Enter` applies rust-analyzer's edit across every file — opening buffers as needed, one undo step per file — and reports the count; `:wa` then writes them all |
-| `Space r m` | expand macro (into a split) |
+| `Space d d` | every diagnostic any server has published, all files, errors first — the same location list with the severity (`E`/`W`/`I`) accented |
+| `Space c n` | rename the symbol under the cursor: the prompt opens pre-filled with its name (`Ctrl+U` clears it), `Enter` applies the server's edit across every file — opening buffers as needed, one undo step per file — and reports the count; `:wa` then writes them all |
+| `Space r m` | expand macro (into a split) — rust-analyzer's own method, asked of no other server |
 | `Space d h` | toggle end-of-line diagnostic text |
 
 ### Windows (`Ctrl+W` or `Space w`, then…)
@@ -240,7 +250,7 @@ Motions extend the selection; `h` is a left motion here.
 | Keys | Action |
 |---|---|
 | `Esc`, `Ctrl+C`, `Ctrl+[` | back to normal |
-| `Ctrl+N` / `Ctrl+P` | completion: open at the cursor, then cycle next / previous (rust-analyzer, Rust only) |
+| `Ctrl+N` / `Ctrl+P` | completion: open at the cursor, then cycle next / previous (from the file's language server: Rust, SystemVerilog) |
 | with the popup open: `Enter` / `Tab` | accept the selected candidate |
 | with the popup open: `Ctrl+E` | dismiss (keep typing); `Esc` dismisses and leaves insert |
 | `Enter` | new line, copying the current indent |
