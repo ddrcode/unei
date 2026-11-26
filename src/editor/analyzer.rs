@@ -1,11 +1,14 @@
-//! Editor-side rust-analyzer glue (ticket #6): lifecycle, document sync,
-//! request commands, and event handling. LSP positions are utf-8 BYTE
-//! columns (negotiated); editor columns are chars — conversion happens here.
+//! Editor-side language-server glue (tickets #6, #118): lifecycle, document
+//! sync, request commands, and event handling — for every server in
+//! `config::servers`, one client each, side by side, routed by the language
+//! of the file at hand. LSP positions are utf-8 BYTE columns (negotiated);
+//! editor columns are chars — conversion happens here.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::config::servers::{self, ServerSpec};
 use crate::core::text::{line_content, text_lines};
 use crate::editor::windows::SplitDir;
 use crate::lsp::{self, Event, Severity};
@@ -92,15 +95,33 @@ fn rank_completions(all: &[lsp::CompletionItem], prefix: &str) -> Vec<usize> {
     scored.into_iter().take(200).map(|(_, _, i)| i).collect()
 }
 
-/// The canonical `.rs` path of a buffer, if it is one — the document identity
-/// the server knows it by.
-fn rust_file_of(buffer: &crate::core::buffer::Buffer) -> Option<PathBuf> {
+/// The canonical path of a buffer whose language has a server — the
+/// document identity that server knows it by — with the server's spec.
+fn served_file_of(buffer: &crate::core::buffer::Buffer) -> Option<(PathBuf, &'static ServerSpec)> {
     let path = buffer.path.as_ref()?;
-    if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-        Some(std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
-    } else {
-        None
-    }
+    let spec = servers::server_for_path(Some(path))?;
+    Some((
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+        spec,
+    ))
+}
+
+/// The running client started from `spec`, if any. Free functions over the
+/// client list, so a caller can hold one while reading other editor fields.
+fn client_mut<'a>(
+    clients: &'a mut [lsp::Client],
+    spec: &ServerSpec,
+) -> Option<&'a mut lsp::Client> {
+    clients.iter_mut().find(|c| std::ptr::eq(c.spec(), spec))
+}
+
+fn client_ref<'a>(clients: &'a [lsp::Client], spec: &ServerSpec) -> Option<&'a lsp::Client> {
+    clients.iter().find(|c| std::ptr::eq(c.spec(), spec))
+}
+
+/// The running client serving a path's language, if any.
+fn client_for_path<'a>(clients: &'a [lsp::Client], path: &Path) -> Option<&'a lsp::Client> {
+    client_ref(clients, servers::server_for_path(Some(path))?)
 }
 
 fn byte_to_char_col(line: &str, byte_col: usize) -> usize {
@@ -167,8 +188,38 @@ fn char_to_byte_col(line: &str, char_col: usize) -> usize {
 }
 
 impl Editor {
-    pub(crate) fn current_rust_file(&self) -> Option<PathBuf> {
-        rust_file_of(&self.buffer)
+    /// The current buffer's document path and the server serving its
+    /// language — running or not.
+    pub(crate) fn current_served_file(&self) -> Option<(PathBuf, &'static ServerSpec)> {
+        served_file_of(&self.buffer)
+    }
+
+    /// Whether the current buffer's language has its server running.
+    pub(crate) fn lsp_running(&self) -> bool {
+        self.current_served_file()
+            .is_some_and(|(_, spec)| client_ref(&self.lsp, spec).is_some())
+    }
+
+    /// The running client for the current buffer, with the document path
+    /// to address — or the reason there is none, on the message line.
+    pub(crate) fn current_client(&mut self, what: &str) -> Option<(PathBuf, &mut lsp::Client)> {
+        let Some((file, spec)) = self.current_served_file() else {
+            self.msg(format!("{what}: no language server for this file"));
+            return None;
+        };
+        if client_ref(&self.lsp, spec).is_none() {
+            self.err(format!("{what}: {} is not running", spec.command));
+            return None;
+        }
+        client_mut(&mut self.lsp, spec).map(|client| (file, client))
+    }
+
+    /// Every running server: (command, project root).
+    pub fn lsp_servers(&self) -> Vec<(&'static str, PathBuf)> {
+        self.lsp
+            .iter()
+            .map(|c| (c.spec().command, c.root().to_path_buf()))
+            .collect()
     }
 
     /// Cursor position as (line, utf-8 byte column) for requests.
@@ -183,35 +234,44 @@ impl Editor {
         self.lsp_ensure_started();
         self.lsp_sync_current();
 
-        let Some(client) = &mut self.lsp else {
-            return false;
-        };
-        let events = client.drain();
-        if events.is_empty() {
-            return false;
+        let mut changed = false;
+        let mut i = 0;
+        while i < self.lsp.len() {
+            let events = self.lsp[i].drain();
+            changed |= !events.is_empty();
+            let exited = events.iter().any(|e| matches!(e, Event::ServerExited(_)));
+            for event in events {
+                self.handle_lsp_event(event);
+            }
+            if exited {
+                // gone for good: no restart loop against a server that keeps dying
+                let client = self.lsp.remove(i);
+                self.lsp_broken.insert(client.spec().command);
+            } else {
+                i += 1;
+            }
         }
-        for event in events {
-            self.handle_lsp_event(event);
-        }
-        true
+        changed
     }
 
-    /// Starts rust-analyzer when a Rust file inside a cargo project shows up.
+    /// Starts the current buffer's server when its language has one and its
+    /// root rule finds a project — one client per server; one that could not
+    /// be started, or that exited, is not tried again.
     fn lsp_ensure_started(&mut self) {
-        if self.lsp.is_some() || self.lsp_broken {
+        let Some((file, spec)) = self.current_served_file() else {
+            return;
+        };
+        if self.lsp_broken.contains(spec.command) || client_ref(&self.lsp, spec).is_some() {
             return;
         }
-        let Some(file) = self.current_rust_file() else {
+        let Some(root) = (spec.root)(&file, self.root()) else {
             return;
         };
-        let Some(root) = lsp::project_root(&file) else {
-            return;
-        };
-        match lsp::Client::start(root) {
-            Some(client) => self.lsp = Some(client),
+        match lsp::Client::start(spec, root) {
+            Some(client) => self.lsp.push(client),
             None => {
-                self.lsp_broken = true;
-                self.err("rust-analyzer not found on PATH");
+                self.lsp_broken.insert(spec.command);
+                self.err(format!("{} not found on PATH", spec.command));
             }
         }
     }
@@ -220,8 +280,8 @@ impl Editor {
     /// for *every* buffer that has some — parked ones included, so switching
     /// away mid-debounce can't strand a change (#82 §9).
     fn lsp_sync_current(&mut self) {
-        if let Some(file) = self.current_rust_file()
-            && let Some(client) = &mut self.lsp
+        if let Some((file, spec)) = self.current_served_file()
+            && let Some(client) = client_mut(&mut self.lsp, spec)
             && file.starts_with(client.root())
             && !client.is_open(&file)
         {
@@ -245,11 +305,11 @@ impl Editor {
                 continue; // closed meanwhile
             }
             let buffer = self.buffer_ref(id);
-            let Some(file) = rust_file_of(buffer) else {
+            let Some((file, spec)) = served_file_of(buffer) else {
                 continue;
             };
             let (content, version) = (buffer.rope.to_string(), buffer.version() as i64);
-            if let Some(client) = &mut self.lsp
+            if let Some(client) = client_mut(&mut self.lsp, spec)
                 && client.is_open(&file)
             {
                 client.did_change(&file, &content, version);
@@ -270,11 +330,11 @@ impl Editor {
             return; // the flush that sends the text asks afterwards
         }
         let buffer = self.buffer_ref(id);
-        let Some(file) = rust_file_of(buffer) else {
+        let Some((file, spec)) = served_file_of(buffer) else {
             return;
         };
         let (lines, version) = (text_lines(&buffer.rope), buffer.version());
-        if let Some(client) = &mut self.lsp
+        if let Some(client) = client_mut(&mut self.lsp, spec)
             && client.is_open(&file)
         {
             client.inlay_document(&file, lines, version);
@@ -302,8 +362,7 @@ impl Editor {
             return Vec::new();
         };
         let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-        self.lsp
-            .as_ref()
+        client_for_path(&self.lsp, &canon)
             .and_then(|c| c.diagnostics.get(&canon))
             .cloned()
             .unwrap_or_default()
@@ -335,7 +394,9 @@ impl Editor {
     pub(crate) fn lsp_did_save(&mut self, path: &Path) {
         let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         // make sure the server sees the latest content before the save event
-        if let Some(client) = &mut self.lsp {
+        if let Some(spec) = servers::server_for_path(Some(&abs))
+            && let Some(client) = client_mut(&mut self.lsp, spec)
+        {
             let version = self.buffer.version() as i64;
             if client.is_open(&abs) {
                 client.did_change(&abs, &self.buffer.rope.to_string(), version);
@@ -353,7 +414,9 @@ impl Editor {
             (b.rope.to_string(), b.version() as i64)
         };
         self.lsp_dirty.remove(&id);
-        if let Some(client) = &mut self.lsp {
+        if let Some(spec) = servers::server_for_path(Some(&abs))
+            && let Some(client) = client_mut(&mut self.lsp, spec)
+        {
             if client.is_open(&abs) {
                 client.did_change(&abs, &content, version);
             }
@@ -363,20 +426,26 @@ impl Editor {
 
     pub(crate) fn lsp_did_close(&mut self, path: &Path) {
         let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        if let Some(client) = &mut self.lsp {
+        if let Some(spec) = servers::server_for_path(Some(&abs))
+            && let Some(client) = client_mut(&mut self.lsp, spec)
+        {
             client.did_close(&abs);
         }
         self.diag_views.retain(|p, _| *p != abs);
     }
 
     pub fn lsp_shutdown(&mut self) {
-        if let Some(mut client) = self.lsp.take() {
+        for mut client in self.lsp.drain(..) {
             client.shutdown();
         }
     }
 
-    pub fn lsp_progress(&self) -> Option<&str> {
-        self.lsp.as_ref()?.progress.as_deref()
+    /// The current buffer's server's indexing progress, with the server's
+    /// tag, for the statusline.
+    pub fn lsp_progress(&self) -> Option<(&'static str, &str)> {
+        let (_, spec) = self.current_served_file()?;
+        let client = client_ref(&self.lsp, spec)?;
+        Some((spec.tag, client.progress.as_deref()?))
     }
 
     // ------------------------------------------------------------------
@@ -384,56 +453,47 @@ impl Editor {
     // ------------------------------------------------------------------
 
     pub(crate) fn analyzer_hover(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            self.err("hover: not a rust buffer");
-            return;
-        };
         let (line, col) = self.cursor_lsp_pos();
-        if let Some(client) = &mut self.lsp {
+        if let Some((file, client)) = self.current_client("hover") {
             client.hover(&file, line, col);
         }
     }
 
     pub(crate) fn analyzer_definition(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            return;
-        };
         let (line, col) = self.cursor_lsp_pos();
-        if let Some(client) = &mut self.lsp {
+        if let Some((file, client)) = self.current_client("definition") {
             client.definition(&file, line, col);
         }
     }
 
     pub(crate) fn analyzer_code_actions(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            return;
-        };
         let (line, col) = self.cursor_lsp_pos();
         let diags: Vec<serde_json::Value> = Vec::new();
-        if let Some(client) = &mut self.lsp {
+        if let Some((file, client)) = self.current_client("code actions") {
             client.code_actions(&file, line, col, col + 1, diags);
         }
     }
 
+    /// `Space r m`: rust-analyzer's own method — no other server is asked.
     pub(crate) fn analyzer_expand_macro(&mut self) {
-        let Some(file) = self.current_rust_file() else {
+        let (line, col) = self.cursor_lsp_pos();
+        let Some((file, client)) = self.current_client("macro expansion") else {
             return;
         };
-        let (line, col) = self.cursor_lsp_pos();
-        if let Some(client) = &mut self.lsp {
-            client.expand_macro(&file, line, col);
+        if !client.spec().expands_macros {
+            let name = client.spec().command;
+            self.msg(format!("macro expansion: rust-analyzer only, not {name}"));
+            return;
         }
+        client.expand_macro(&file, line, col);
     }
 
     /// The line-scope hover: current line with all inlay hints spliced in.
     pub(crate) fn analyzer_inlay_line(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            return;
-        };
         let (line, col) = self.cursor_lsp_pos();
         let text = line_content(&self.buffer.rope, line);
         let len = text.len();
-        if let Some(client) = &mut self.lsp {
+        if let Some((file, client)) = self.current_client("line hover") {
             client.inlay_line(&file, line, col, text, len);
         }
     }
@@ -441,13 +501,8 @@ impl Editor {
     /// `Space c n`: open the rename prompt pre-filled with the identifier
     /// under the cursor — edit the name, don't retype it (#97).
     pub(crate) fn analyzer_rename_prompt(&mut self) {
-        if self.current_rust_file().is_none() {
-            self.err("rename: not a rust buffer");
-            return;
-        }
-        if self.lsp.is_none() {
-            self.err("rename: rust-analyzer is not running");
-            return;
+        if self.current_client("rename").is_none() {
+            return; // said why
         }
         let line = line_content(&self.buffer.rope, self.cursor.line);
         let Some((start, end)) = identifier_at(&line, self.cursor.col) else {
@@ -467,9 +522,6 @@ impl Editor {
 
     /// Enter on the rename prompt: validate and ask the server (#97).
     pub(crate) fn analyzer_rename(&mut self, line: usize, col: usize, new_name: &str) {
-        let Some(file) = self.current_rust_file() else {
-            return;
-        };
         if new_name.is_empty() {
             self.msg("rename cancelled");
             return;
@@ -488,7 +540,7 @@ impl Editor {
             self.msg("rename: same name");
             return;
         }
-        if let Some(client) = &mut self.lsp {
+        if let Some((file, client)) = self.current_client("rename") {
             client.rename(&file, line, col, new_name);
             self.msg(format!("renaming to `{new_name}`…"));
         }
@@ -500,8 +552,8 @@ impl Editor {
     /// server spells it. Rows still jump by absolute path.
     fn display_root(&self) -> PathBuf {
         let root = self
-            .lsp
-            .as_ref()
+            .current_served_file()
+            .and_then(|(_, spec)| client_ref(&self.lsp, spec))
             .map(|c| c.root().to_path_buf())
             .unwrap_or_else(|| self.root().to_path_buf());
         std::fs::canonicalize(&root).unwrap_or(root)
@@ -510,17 +562,10 @@ impl Editor {
     /// `Space c r`: every reference to the symbol under the cursor, as a
     /// location list once the server answers (#98).
     pub(crate) fn analyzer_references(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            self.err("references: not a rust buffer");
-            return;
-        };
         let (line, col) = self.cursor_lsp_pos();
-        match &mut self.lsp {
-            Some(client) => {
-                client.references(&file, line, col);
-                self.msg("finding references…");
-            }
-            None => self.err("references: rust-analyzer is not running"),
+        if let Some((file, client)) = self.current_client("references") {
+            client.references(&file, line, col);
+            self.msg("finding references…");
         }
     }
 
@@ -581,17 +626,18 @@ impl Editor {
         self.msg(format!("{n} reference(s)"));
     }
 
-    /// `Space d d`: every diagnostic the server has published, all files,
+    /// `Space d d`: every diagnostic every server has published, all files,
     /// errors first, as a location list (#99).
     pub(crate) fn open_diagnostics_list(&mut self) {
-        let Some(client) = &self.lsp else {
-            self.err("diagnostics: rust-analyzer is not running");
+        if self.lsp.is_empty() {
+            self.err("diagnostics: no language server is running");
             return;
-        };
+        }
         let root = self.display_root();
-        let mut all: Vec<(u8, PathBuf, lsp::Diagnostic)> = client
-            .diagnostics
+        let mut all: Vec<(u8, PathBuf, lsp::Diagnostic)> = self
+            .lsp
             .iter()
+            .flat_map(|client| client.diagnostics.iter())
             .flat_map(|(path, ds)| {
                 ds.iter().map(move |d| {
                     let rank = match d.severity {
@@ -661,14 +707,10 @@ impl Editor {
 
     // ---- completion (ticket #22, iteration one) ----------------------
 
-    /// Trigger completion at the cursor (Ctrl+N/Ctrl+P in insert mode).
-    /// Rust only for now — a request whose response opens the popup a tick
-    /// later, through the same `lsp_tick` pump as hover.
+    /// Trigger completion at the cursor (Ctrl+N/Ctrl+P in insert mode) —
+    /// a request whose response opens the popup a tick later, through the
+    /// same `lsp_tick` pump as hover.
     pub(crate) fn request_completion(&mut self) {
-        let Some(file) = self.current_rust_file() else {
-            self.msg("completion: Rust only for now");
-            return;
-        };
         let line = line_content(&self.buffer.rope, self.cursor.line);
         let chars: Vec<char> = line.chars().collect();
         let mut start = self.cursor.col.min(chars.len());
@@ -678,11 +720,12 @@ impl Editor {
         {
             start -= 1;
         }
-        self.completion_req = Some((self.cursor.line, start));
         let (l, c) = self.cursor_lsp_pos();
-        if let Some(client) = &mut self.lsp {
-            client.completion(&file, l, c);
-        }
+        let Some((file, client)) = self.current_client("completion") else {
+            return;
+        };
+        client.completion(&file, l, c);
+        self.completion_req = Some((self.cursor.line, start));
     }
 
     /// A completion response arrived: open the popup unless the cursor has
@@ -879,11 +922,9 @@ impl Editor {
                 self.open_expansion(&name, &text);
             }
             Event::ExpandedMacro(None) => self.msg("no macro under cursor"),
-            Event::ServerExited(e) => {
-                self.lsp = None;
-                self.lsp_broken = true;
-                self.err(e);
-            }
+            Event::Notice(text) => self.err(text),
+            // the client itself is dropped by `lsp_tick`, which saw it go
+            Event::ServerExited(e) => self.err(e),
         }
     }
 
@@ -951,7 +992,9 @@ impl Editor {
             self.diag_views.remove(path);
             return;
         };
-        let Some(client) = &self.lsp else { return };
+        let Some(client) = client_for_path(&self.lsp, path) else {
+            return;
+        };
         let Some(diags) = client.diagnostics.get(path) else {
             return;
         };

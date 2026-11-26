@@ -1110,8 +1110,8 @@ fn draw_statusline(f: &mut Frame, ed: &Editor, view: &WinView, area: Rect) {
     let pct = (view.cursor_line + 1) * 100 / lines_total.max(1);
     let right = if view.focused {
         let mut ra = String::new();
-        if let Some(p) = ed.lsp_progress() {
-            ra = format!(" ra:{p} ");
+        if let Some((tag, p)) = ed.lsp_progress() {
+            ra = format!(" {tag}:{p} ");
         } else if let Some(d) = ed.diag_view(view.buf_id) {
             let (e, w) = d.counts;
             if e + w > 0 {

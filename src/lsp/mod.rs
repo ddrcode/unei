@@ -1,6 +1,11 @@
-//! The rust-analyzer client (ticket #6). One language server, spawned when a
-//! Rust file inside a cargo project is first shown; utf-8 position encoding
-//! is negotiated so all offsets are plain byte columns — no utf-16 math.
+//! The language-server client (tickets #6, #118): generic LSP over stdio,
+//! one instance per server in `config::servers` (rust-analyzer for Rust,
+//! slang-server for SystemVerilog), spawned when a file of its language is
+//! first shown. utf-8 position encoding is negotiated so all offsets are
+//! plain byte columns — no utf-16 math. A server may never answer a method
+//! it doesn't know (slang-server logs "not found" and moves on), so a
+//! request goes out only when `initialize` advertised its provider; the
+//! editor hears why otherwise.
 
 mod transport;
 
@@ -10,6 +15,8 @@ use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
 use transport::Transport;
+
+use crate::config::servers::ServerSpec;
 
 /// Severity subset the editor renders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +108,10 @@ pub enum Event {
     Renamed(String, Result<Value, String>),
     ApplyEdit(Box<Value>),
     Progress(Option<String>),
+    /// For the message line: a request the server never advertised and so
+    /// was not sent, a request it declined, a warning it raised itself.
+    Notice(String),
+    /// The server is gone; the message names it.
     ServerExited(String),
 }
 
@@ -120,18 +131,44 @@ enum Pending {
     Rename { new_name: String },
 }
 
+impl Pending {
+    /// The request as the message line names it.
+    fn what(&self) -> &'static str {
+        match self {
+            Pending::Initialize => "initialize",
+            Pending::Hover => "hover",
+            Pending::Definition => "definition",
+            Pending::References => "references",
+            Pending::Actions => "code actions",
+            Pending::Completion => "completion",
+            Pending::ResolveAction => "code action",
+            Pending::ExpandMacro => "macro expansion",
+            Pending::InlayLine { .. } => "line hover",
+            Pending::SignatureFor { .. } => "signature",
+            Pending::InlayDoc { .. } => "inlay hints",
+            Pending::Rename { .. } => "rename",
+        }
+    }
+}
+
 pub struct Client {
     transport: Transport,
+    spec: &'static ServerSpec,
     root: PathBuf,
     next_id: i64,
     pending: HashMap<i64, Pending>,
     initialized: bool,
+    /// The server's `initialize` result capabilities, once it answered.
+    caps: Value,
     /// Documents opened on the server, with the last version sent.
     open_docs: HashMap<PathBuf, i64>,
     pub diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
     /// Latest indexing progress label, for the statusline.
     pub progress: Option<String>,
     queued: Vec<Value>,
+    /// Events raised on this side (a refused request), handed out with the
+    /// server's at the next drain.
+    local: Vec<Event>,
     /// Position of the in-flight gK request (for the signature follow-up).
     inlay_pos: Option<(PathBuf, usize, usize)>,
 }
@@ -144,26 +181,38 @@ fn uri_to_path(uri: &str) -> Option<PathBuf> {
     uri.strip_prefix("file://").map(PathBuf::from)
 }
 
-/// The cargo project root governing `file`, if any.
-pub fn project_root(file: &Path) -> Option<PathBuf> {
-    let mut dir = file.parent()?;
-    let mut found = None;
-    loop {
-        if dir.join("Cargo.toml").is_file() {
-            found = Some(dir.to_path_buf()); // keep climbing: workspace root wins
-        }
-        match dir.parent() {
-            Some(p) => dir = p,
-            None => return found,
-        }
-    }
+/// The `initialize` capability behind a request method — what a server must
+/// have advertised before the editor asks. Server extensions have none: the
+/// spec says who gets asked those.
+fn provider_of(method: &str) -> Option<&'static str> {
+    Some(match method {
+        "textDocument/hover" => "hoverProvider",
+        "textDocument/definition" => "definitionProvider",
+        "textDocument/references" => "referencesProvider",
+        "textDocument/completion" => "completionProvider",
+        "textDocument/codeAction" | "codeAction/resolve" => "codeActionProvider",
+        "textDocument/rename" => "renameProvider",
+        "textDocument/inlayHint" => "inlayHintProvider",
+        "textDocument/signatureHelp" => "signatureHelpProvider",
+        _ => return None,
+    })
+}
+
+/// Whether a capabilities object advertises a provider: `true` or an
+/// options object means yes; absent, `null` or `false` means no.
+fn advertised(caps: &Value, provider: &str) -> bool {
+    !matches!(
+        caps.get(provider),
+        None | Some(Value::Null) | Some(Value::Bool(false))
+    )
 }
 
 impl Client {
-    /// Spawns rust-analyzer for a project root. Returns None when the binary
-    /// is unavailable.
-    pub fn start(root: PathBuf) -> Option<Self> {
-        let child = Command::new("rust-analyzer")
+    /// Spawns `spec`'s server for a project root. Returns None when the
+    /// binary is unavailable.
+    pub fn start(spec: &'static ServerSpec, root: PathBuf) -> Option<Self> {
+        let child = Command::new(spec.command)
+            .args(spec.args)
             .current_dir(&root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -173,22 +222,35 @@ impl Client {
         let transport = Transport::new(child).ok()?;
         let mut client = Self {
             transport,
+            spec,
             root,
             next_id: 0,
             pending: HashMap::new(),
             initialized: false,
+            caps: Value::Null,
             open_docs: HashMap::new(),
             diagnostics: HashMap::new(),
             progress: Some("starting".into()),
             queued: Vec::new(),
+            local: Vec::new(),
             inlay_pos: None,
         };
+        let folder = client
+            .root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         client.request(
             Pending::Initialize,
             "initialize",
             json!({
                 "processId": std::process::id(),
+                "clientInfo": { "name": "unei" },
+                // the workspace in both spellings — the root fields and the
+                // folder list — since servers read one or the other
                 "rootUri": uri(&client.root),
+                "rootPath": client.root.to_string_lossy(),
+                "workspaceFolders": [{ "uri": uri(&client.root), "name": folder }],
                 "capabilities": {
                     "general": { "positionEncodings": ["utf-8"] },
                     "textDocument": {
@@ -211,32 +273,10 @@ impl Client {
                             }
                         }
                     },
-                    "window": { "workDoneProgress": true },
+                    "window": { "workDoneProgress": true, "showMessage": {} },
                     "workspace": { "applyEdit": true, "workspaceEdit": { "documentChanges": true } }
                 },
-                "initializationOptions": {
-                    "checkOnSave": true,
-                    // direnv's `.direnv/flake-profile-*` symlinks into the nix
-                    // store's shell environment; rust-analyzer's scanner
-                    // follows it and never finishes loading the workspace —
-                    // no hover, no hints, no diagnostics, silently (#93)
-                    "files": { "excludeDirs": [".direnv"] },
-                    // every hint kind the compiler's-eye view (#93) prints;
-                    // nothing is shown inline, so the breadth costs nothing
-                    "inlayHints": {
-                        "maxLength": null,
-                        "typeHints": { "enable": true, "hideClosureInitialization": false, "hideNamedConstructor": false },
-                        "parameterHints": { "enable": true },
-                        "chainingHints": { "enable": true },
-                        "closingBraceHints": { "enable": true, "minLines": 25 },
-                        "closureReturnTypeHints": { "enable": "always" },
-                        "lifetimeElisionHints": { "enable": "always", "useParameterNames": true },
-                        // not expressionAdjustmentHints: every auto-ref/deref
-                        // as `&**&x` is the MIR's eye, not the compiler's, and
-                        // "reborrow" hides almost none of them (tried, #93)
-                        "bindingModeHints": { "enable": true }
-                    }
-                }
+                "initializationOptions": (spec.init_options)(),
             }),
         );
         Some(client)
@@ -246,17 +286,50 @@ impl Client {
         &self.root
     }
 
+    /// The table entry this client was started from.
+    pub fn spec(&self) -> &'static ServerSpec {
+        self.spec
+    }
+
+    /// Whether `initialize` advertised a provider (`"hoverProvider"`).
+    fn offers(&self, provider: &str) -> bool {
+        advertised(&self.caps, provider)
+    }
+
     fn request(&mut self, pending: Pending, method: &str, params: Value) -> i64 {
         self.next_id += 1;
         let id = self.next_id;
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        if self.initialized || matches!(pending, Pending::Initialize) {
+        if matches!(pending, Pending::Initialize) {
             let _ = self.transport.send(&msg);
+        } else if !self.initialized {
+            self.queued.push(msg); // checked against the capabilities when they arrive
+        } else if self.refused(method, &pending) {
+            return id;
         } else {
-            self.queued.push(msg);
+            let _ = self.transport.send(&msg);
         }
         self.pending.insert(id, pending);
         id
+    }
+
+    /// Whether the server never advertised the provider behind `method` —
+    /// then the request is not sent, and the message line says so. A server
+    /// may simply not answer a method it doesn't know, which would leave the
+    /// request pending for good.
+    fn refused(&mut self, method: &str, pending: &Pending) -> bool {
+        let Some(provider) = provider_of(method) else {
+            return false; // a server extension: the spec decides who is asked
+        };
+        if self.offers(provider) {
+            return false;
+        }
+        self.local.push(Event::Notice(format!(
+            "{}: {} does not offer it",
+            pending.what(),
+            self.spec.command
+        )));
+        true
     }
 
     fn notify(&mut self, method: &str, params: Value) {
@@ -286,7 +359,7 @@ impl Client {
         self.notify(
             "textDocument/didOpen",
             json!({ "textDocument": {
-                "uri": uri(path), "languageId": "rust", "version": version, "text": text
+                "uri": uri(path), "languageId": self.spec.language_id, "version": version, "text": text
             }}),
         );
     }
@@ -479,9 +552,10 @@ impl Client {
     // incoming
     // ------------------------------------------------------------------
 
-    /// Drains server messages into editor-facing events.
+    /// Drains server messages — and this side's own notices — into
+    /// editor-facing events.
     pub fn drain(&mut self) -> Vec<Event> {
-        let mut events = Vec::new();
+        let mut events = std::mem::take(&mut self.local);
         loop {
             let msg = match self.transport.incoming.try_recv() {
                 Ok(m) => m,
@@ -490,13 +564,14 @@ impl Client {
                     if self.initialized || !self.pending.is_empty() {
                         self.initialized = false;
                         self.pending.clear();
-                        events.push(Event::ServerExited("rust-analyzer exited".into()));
+                        events.push(Event::ServerExited(format!("{} exited", self.spec.command)));
                     }
                     break;
                 }
             };
             self.handle(msg, &mut events);
         }
+        events.append(&mut self.local);
         events
     }
 
@@ -542,6 +617,15 @@ impl Client {
                         events.push(Event::DiagnosticsUpdated(path));
                     }
                 }
+                "window/showMessage" => {
+                    // 1 error, 2 warning: the message line; info and log are not
+                    let params = &msg["params"];
+                    if params["type"].as_i64().unwrap_or(3) <= 2
+                        && let Some(text) = params["message"].as_str()
+                    {
+                        events.push(Event::Notice(format!("{}: {text}", self.spec.command)));
+                    }
+                }
                 "$/progress" => {
                     let params = &msg["params"];
                     let value = &params["value"];
@@ -576,13 +660,58 @@ impl Client {
             .and_then(|e| e.get("message"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        // a declined request is said so, not passed off as "nothing here";
+        // rename has its own wording, the document-wide hints of the
+        // compiler's-eye view are asked again on the next edit anyway, and
+        // a declined signature still leaves gK its annotated line
+        if let Some(e) = &error
+            && !matches!(
+                pending,
+                Pending::Initialize
+                    | Pending::Rename { .. }
+                    | Pending::InlayDoc { .. }
+                    | Pending::SignatureFor { .. }
+            )
+        {
+            if matches!(pending, Pending::InlayLine { .. }) {
+                self.inlay_pos = None;
+            }
+            events.push(Event::Notice(format!("{}: {e}", pending.what())));
+            return;
+        }
         match pending {
             Pending::Initialize => {
                 self.initialized = true;
+                self.caps = result.get("capabilities").cloned().unwrap_or(Value::Null);
+                // "starting" is over; what the server reports from here on
+                // comes through `$/progress` — or not at all: slang-server
+                // indexes a project in a millisecond and says nothing
+                self.progress = None;
                 let _ = self
                     .transport
                     .send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
+                // columns are bytes here; a server that insists on utf-16
+                // (the default when it says nothing) would misplace
+                // everything past a line's first non-ASCII char
+                let encoding = self.caps["positionEncoding"].as_str().unwrap_or("utf-16");
+                if encoding != "utf-8" {
+                    events.push(Event::Notice(format!(
+                        "{} speaks {encoding} columns; non-ASCII lines may misplace",
+                        self.spec.command
+                    )));
+                }
+                // what waited for the handshake goes out now — unless the
+                // capabilities just ruled it out
                 for queued in std::mem::take(&mut self.queued) {
+                    let method = queued["method"].as_str().unwrap_or("").to_string();
+                    if let Some(id) = queued["id"].as_i64()
+                        && let Some(waiting) = self.pending.remove(&id)
+                    {
+                        if self.refused(&method, &waiting) {
+                            continue;
+                        }
+                        self.pending.insert(id, waiting);
+                    }
                     let _ = self.transport.send(&queued);
                 }
             }
@@ -624,18 +753,19 @@ impl Client {
             }
             Pending::InlayLine { text } => {
                 // second half of gK: the active call signature carries the
-                // parameter TYPES the inlay hints lack
+                // parameter TYPES the inlay hints lack — where the server
+                // has signatures to give at all
                 let annotated = splice_inlay_hints(&text, &result);
                 let pos = self.inlay_pos.take();
                 match pos {
-                    Some((path, line, col)) => {
+                    Some((path, line, col)) if self.offers("signatureHelpProvider") => {
                         self.request(
                             Pending::SignatureFor { annotated },
                             "textDocument/signatureHelp",
                             Self::doc_pos(&path, line, col),
                         );
                     }
-                    None => events.push(Event::InlayLine(annotated, None)),
+                    _ => events.push(Event::InlayLine(annotated, None)),
                 }
             }
             Pending::Rename { new_name } => {
@@ -711,7 +841,11 @@ fn parse_completion(result: &Value) -> Vec<CompletionItem> {
             Some(CompletionItem {
                 filter_text: v["filterText"].as_str().unwrap_or(&label).to_string(),
                 sort_text: v["sortText"].as_str().unwrap_or(&label).to_string(),
-                detail: v["detail"].as_str().map(str::to_string),
+                // slang-server puts the kind and type in labelDetails only
+                detail: v["detail"]
+                    .as_str()
+                    .or_else(|| v["labelDetails"]["detail"].as_str())
+                    .map(|d| d.trim().to_string()),
                 kind: v["kind"].as_i64(),
                 insert_text,
                 label,
@@ -912,14 +1046,57 @@ mod tests {
     }
 
     #[test]
-    fn project_root_prefers_outermost_cargo_toml() {
-        let base = std::env::temp_dir().join(format!("unei-lsp-root-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("member/src")).unwrap();
-        std::fs::write(base.join("Cargo.toml"), "[workspace]\n").unwrap();
-        std::fs::write(base.join("member/Cargo.toml"), "[package]\n").unwrap();
-        let file = base.join("member/src/lib.rs");
-        assert_eq!(project_root(&file), Some(base.clone()));
-        assert_eq!(project_root(Path::new("/tmp/nowhere/x.rs")), None);
+    fn a_request_needs_its_provider_advertised() {
+        // slang-server 0.3.1's answer, abridged: no signatureHelpProvider
+        let caps = serde_json::json!({
+            "positionEncoding": "utf-8",
+            "hoverProvider": true,
+            "definitionProvider": true,
+            "renameProvider": true,
+            "codeActionProvider": true,
+            "inlayHintProvider": { "resolveProvider": false },
+            "completionProvider": { "triggerCharacters": ["`", "."] },
+            "documentHighlightProvider": false,
+            "foldingRangeProvider": null
+        });
+        let ok = |m: &str| advertised(&caps, provider_of(m).unwrap());
+        assert!(ok("textDocument/hover"));
+        assert!(ok("textDocument/inlayHint"), "an options object counts");
+        assert!(ok("textDocument/completion"));
+        assert!(
+            ok("codeAction/resolve"),
+            "resolving shares the actions provider"
+        );
+        assert!(
+            !ok("textDocument/signatureHelp"),
+            "never advertised: never sent"
+        );
+        assert!(
+            !advertised(&caps, "documentHighlightProvider"),
+            "false is no"
+        );
+        assert!(!advertised(&caps, "foldingRangeProvider"), "null is no");
+        assert_eq!(
+            provider_of("rust-analyzer/expandMacro"),
+            None,
+            "an extension has no provider: the server spec gates it"
+        );
+    }
+
+    #[test]
+    fn completion_detail_falls_back_to_label_details() {
+        // slang-server's shape: the kind rides in labelDetails, no `detail`
+        let list = serde_json::json!([
+            { "label": "adder8", "labelDetails": { "detail": " Module" }, "kind": 9,
+              "textEdit": { "newText": "adder8" } },
+            { "label": "clk", "detail": "input logic", "labelDetails": { "detail": " ignored" } }
+        ]);
+        let items = parse_completion(&list);
+        assert_eq!(items[0].detail.as_deref(), Some("Module"));
+        assert_eq!(
+            items[1].detail.as_deref(),
+            Some("input logic"),
+            "detail wins"
+        );
     }
 }

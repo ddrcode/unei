@@ -5,6 +5,7 @@ pub mod icons;
 pub mod keymap;
 pub mod languages;
 pub mod palette;
+pub mod servers;
 pub mod theme;
 
 /// Editor options, mirroring the author's nvim `settings.lua`.
